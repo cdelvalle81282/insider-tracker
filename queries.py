@@ -158,6 +158,61 @@ def get_summary_stats(conn: sqlite3.Connection, target_date: date, hide_10b5_1: 
     }
 
 
+def get_cluster_activity(
+    conn: sqlite3.Connection,
+    target_date: date,
+    min_insiders: int = 2,
+    hide_10b5_1: bool = True,
+) -> list[dict]:
+    """
+    Return tickers where 2+ distinct insiders traded on the same day.
+    Each row covers one ticker+direction combo (buys separate from sells).
+    Sorted by total value desc.
+    """
+    d = target_date.isoformat()
+    ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
+
+    rows = conn.execute(f"""
+        SELECT
+            issuer_ticker,
+            issuer_name,
+            CASE WHEN SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) > 0
+                  AND SUM(CASE WHEN transaction_code='S' THEN 1 ELSE 0 END) > 0
+                 THEN 'mixed'
+                 WHEN SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) > 0
+                 THEN 'buy'
+                 ELSE 'sell'
+            END AS direction,
+            COUNT(DISTINCT insider_cik) AS insider_count,
+            COUNT(*) AS tx_count,
+            COALESCE(SUM(total_value), 0) AS total_value,
+            GROUP_CONCAT(DISTINCT insider_name) AS insider_names,
+            GROUP_CONCAT(DISTINCT COALESCE(insider_title, '')) AS insider_titles
+        FROM filings
+        WHERE DATE(filed_at) = ?
+          AND transaction_code IN ('P', 'S')
+          {ten_b}
+          AND issuer_ticker IS NOT NULL
+        GROUP BY issuer_ticker, issuer_name
+        HAVING COUNT(DISTINCT insider_cik) >= ?
+        ORDER BY total_value DESC
+    """, [d, min_insiders]).fetchall()
+
+    result = []
+    for r in rows:
+        d_row = dict(r)
+        d_row["total_value_fmt"] = _fmt_value(d_row["total_value"])
+        # Split and zip names/titles into a list of insiders
+        names = [n.strip() for n in (d_row["insider_names"] or "").split(",") if n.strip()]
+        titles = [t.strip() for t in (d_row["insider_titles"] or "").split(",")]
+        d_row["insiders"] = [
+            {"name": n, "title": titles[i] if i < len(titles) else ""}
+            for i, n in enumerate(names)
+        ]
+        result.append(d_row)
+    return result
+
+
 def get_filing_detail(conn: sqlite3.Connection, transaction_id: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM filings WHERE transaction_id = ?", [transaction_id]

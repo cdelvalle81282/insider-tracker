@@ -25,6 +25,78 @@
   .stat-pill { @apply px-3 py-1 rounded-full text-xs font-medium; }
 </style>
 
+<!-- Cluster activity -->
+{% if clusters %}
+<div class="mb-6">
+  <h2 class="text-yellow-400 font-semibold text-sm uppercase tracking-widest mb-2 flex items-center gap-2">
+    <span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
+    Cluster Activity — {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} with 2+ insiders
+  </h2>
+  <div class="overflow-x-auto rounded-lg border border-yellow-900/40">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+        <tr>
+          <th class="px-3 py-2 text-left">Ticker</th>
+          <th class="px-3 py-2 text-left">Company</th>
+          <th class="px-3 py-2 text-center">Direction</th>
+          <th class="px-3 py-2 text-center">Insiders</th>
+          <th class="px-3 py-2 text-right">Total $</th>
+          <th class="px-3 py-2 text-left">Who</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for c in clusters %}
+        <tr class="hover:bg-gray-800/40 transition-colors border-l-2
+                   {% if c.direction == 'buy' %}border-green-600
+                   {% elif c.direction == 'sell' %}border-red-600
+                   {% else %}border-yellow-600{% endif %}">
+          <td class="px-3 py-2">
+            {% if c.issuer_ticker %}
+            <a href="/issuer/{{ c.issuer_ticker }}" class="font-bold text-white hover:text-yellow-400">
+              {{ c.issuer_ticker }}
+            </a>
+            {% else %}—{% endif %}
+          </td>
+          <td class="px-3 py-2 text-gray-400 text-xs max-w-[160px] truncate">{{ c.issuer_name }}</td>
+          <td class="px-3 py-2 text-center">
+            {% if c.direction == 'buy' %}
+            <span class="text-xs font-semibold text-green-400">▲ BUY</span>
+            {% elif c.direction == 'sell' %}
+            <span class="text-xs font-semibold text-red-400">▼ SELL</span>
+            {% else %}
+            <span class="text-xs font-semibold text-yellow-400">↕ MIXED</span>
+            {% endif %}
+          </td>
+          <td class="px-3 py-2 text-center">
+            <span class="bg-yellow-900/50 text-yellow-300 border border-yellow-800 text-xs font-bold px-2 py-0.5 rounded-full">
+              {{ c.insider_count }}
+            </span>
+          </td>
+          <td class="px-3 py-2 text-right font-semibold
+                     {% if c.direction == 'buy' %}text-green-400{% elif c.direction == 'sell' %}text-red-400{% else %}text-yellow-400{% endif %}">
+            {{ c.total_value_fmt or '—' }}
+          </td>
+          <td class="px-3 py-2 text-gray-400 text-xs">
+            <div class="flex flex-wrap gap-x-3 gap-y-0.5">
+              {% for insider in c.insiders[:5] %}
+              <span>
+                <span class="text-gray-300">{{ insider.name }}</span>
+                {% if insider.title %}<span class="text-gray-600"> · {{ insider.title }}</span>{% endif %}
+              </span>
+              {% endfor %}
+              {% if c.insiders | length > 5 %}
+              <span class="text-gray-600">+{{ c.insiders | length - 5 }} more</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <!-- Tables -->
 <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 

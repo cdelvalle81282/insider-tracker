@@ -75,11 +75,13 @@ async def index(
         search=search,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
+    clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
 
     return templates.TemplateResponse(request, "index.html", {
         "buys": buys,
         "sells": sells,
         "stats": stats,
+        "clusters": clusters,
         "target_date": target_date.isoformat(),
         "prev_date": (target_date - timedelta(days=1)).isoformat(),
         "next_date": (target_date + timedelta(days=1)).isoformat(),
@@ -121,10 +123,12 @@ async def htmx_filings(
         search=search,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
+    clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
     return templates.TemplateResponse(request, "_tables_partial.html", {
         "buys": buys,
         "sells": sells,
         "stats": stats,
+        "clusters": clusters,
         "target_date": target_date.isoformat(),
     })
 
