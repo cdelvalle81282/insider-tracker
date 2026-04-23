@@ -16,9 +16,14 @@ def _text(el: etree._Element | None, tag: str, default: str | None = None) -> st
     if el is None:
         return default
     child = el.find(tag)
-    if child is None or child.text is None:
+    if child is None:
         return default
-    return child.text.strip()
+    # Values are often wrapped in a <value> child element
+    value_el = child.find("value")
+    text = (value_el.text if value_el is not None else child.text)
+    if text is None:
+        return default
+    return text.strip()
 
 
 def _float(el: etree._Element | None, tag: str) -> float | None:
