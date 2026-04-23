@@ -127,6 +127,19 @@
 </div>
 {% endif %}
 
+{# Sort helper macro — renders a clickable column header #}
+{% macro sort_th(label, col, align="right") %}
+<th class="px-3 py-2 text-{{ align }} cursor-pointer hover:text-white select-none whitespace-nowrap"
+    onclick="sortBy('{{ col }}')">
+  {{ label }}
+  {% if filters and filters.sort_by == col %}
+    {{ '↑' if filters.sort_order == 'asc' else '↓' }}
+  {% else %}
+    <span class="text-gray-700">↕</span>
+  {% endif %}
+</th>
+{% endmacro %}
+
 <!-- Tables -->
 <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
@@ -138,16 +151,17 @@
     </h2>
     <div class="overflow-x-auto rounded-lg border border-gray-800">
       <table class="w-full text-sm">
-        <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+        <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
           <tr>
-            <th class="px-3 py-2 text-left">Ticker</th>
+            {{ sort_th("Ticker", "ticker", "left") }}
             <th class="px-3 py-2 text-left">Company</th>
-            <th class="px-3 py-2 text-left">Insider</th>
+            {{ sort_th("Insider", "insider", "left") }}
             <th class="px-3 py-2 text-left">Title</th>
-            <th class="px-3 py-2 text-right">Shares</th>
-            <th class="px-3 py-2 text-right">Price</th>
-            <th class="px-3 py-2 text-right font-bold">$ Value</th>
-            <th class="px-3 py-2 text-right">Filed</th>
+            {{ sort_th("Shares", "shares") }}
+            {{ sort_th("Price", "price") }}
+            {{ sort_th("$ Value", "value") }}
+            <th class="px-3 py-2 text-right">% Held</th>
+            {{ sort_th("Filed", "filed") }}
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-800">
@@ -162,18 +176,21 @@
               <span class="text-gray-500 text-xs">—</span>
               {% endif %}
             </td>
-            <td class="px-3 py-2 text-gray-400 text-xs max-w-[160px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-gray-400 text-xs max-w-[140px] truncate">{{ row.issuer_name }}</td>
             <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
-            <td class="px-3 py-2 text-gray-500 text-xs max-w-[120px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs max-w-[110px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
             <td class="px-3 py-2 text-right font-semibold text-green-400">{{ row.total_value_fmt or '—' }}</td>
+            <td class="px-3 py-2 text-right text-xs {% if row.pct_holdings and row.pct_holdings|replace('%','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
+              {{ row.pct_holdings or '—' }}
+            </td>
             <td class="px-3 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
               <a href="/filing/{{ row.transaction_id }}" class="hover:text-white">{{ row.filed_rel }}</a>
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="8" class="px-3 py-6 text-center text-gray-600 text-sm">No buys matching current filters</td></tr>
+          <tr><td colspan="9" class="px-3 py-6 text-center text-gray-600 text-sm">No buys matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -188,17 +205,18 @@
     </h2>
     <div class="overflow-x-auto rounded-lg border border-gray-800">
       <table class="w-full text-sm">
-        <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+        <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
           <tr>
-            <th class="px-3 py-2 text-left">Ticker</th>
+            {{ sort_th("Ticker", "ticker", "left") }}
             <th class="px-3 py-2 text-left">Company</th>
-            <th class="px-3 py-2 text-left">Insider</th>
+            {{ sort_th("Insider", "insider", "left") }}
             <th class="px-3 py-2 text-left">Title</th>
-            <th class="px-3 py-2 text-right">Shares</th>
-            <th class="px-3 py-2 text-right">Price</th>
-            <th class="px-3 py-2 text-right font-bold">$ Value</th>
+            {{ sort_th("Shares", "shares") }}
+            {{ sort_th("Price", "price") }}
+            {{ sort_th("$ Value", "value") }}
+            <th class="px-3 py-2 text-right">% Held</th>
             <th class="px-3 py-2 text-right">10b5-1</th>
-            <th class="px-3 py-2 text-right">Filed</th>
+            {{ sort_th("Filed", "filed") }}
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-800">
@@ -215,10 +233,13 @@
             </td>
             <td class="px-3 py-2 text-gray-400 text-xs max-w-[140px] truncate">{{ row.issuer_name }}</td>
             <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
-            <td class="px-3 py-2 text-gray-500 text-xs max-w-[120px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs max-w-[110px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
             <td class="px-3 py-2 text-right font-semibold text-red-400">{{ row.total_value_fmt or '—' }}</td>
+            <td class="px-3 py-2 text-right text-xs {% if row.pct_holdings and row.pct_holdings|replace('%','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
+              {{ row.pct_holdings or '—' }}
+            </td>
             <td class="px-3 py-2 text-center">
               {% if row.is_10b5_1 %}
               <span class="text-xs bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded">Plan</span>
@@ -229,7 +250,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="9" class="px-3 py-6 text-center text-gray-600 text-sm">No sells matching current filters</td></tr>
+          <tr><td colspan="10" class="px-3 py-6 text-center text-gray-600 text-sm">No sells matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>

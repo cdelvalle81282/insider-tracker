@@ -48,13 +48,50 @@ def _enrich(rows: list[sqlite3.Row]) -> list[dict]:
         d["total_value_fmt"] = _fmt_value(d.get("total_value"))
         d["price_fmt"] = _fmt_value(d.get("price_per_share"))
         d["filed_rel"] = _relative_time(d.get("filed_at"))
+        d["pct_holdings"] = _pct_holdings(d)
         result.append(d)
     return result
+
+
+def _pct_holdings(row: dict) -> str | None:
+    """
+    % of position this transaction represents.
+    Buy:  shares_bought / shares_owned_after          (how much of new stake was this purchase)
+    Sell: shares_sold   / (shares_owned_after + shares_sold)  (how much of prior stake was sold)
+    Returns formatted string like "12.3%" or None if data missing.
+    """
+    shares = row.get("shares")
+    after = row.get("shares_owned_after")
+    code = row.get("transaction_code")
+    if not shares or not after or after <= 0:
+        return None
+    if code == "P":
+        pct = shares / after * 100
+    elif code == "S":
+        pct = shares / (after + shares) * 100
+    else:
+        return None
+    if pct < 0.1:
+        return "<0.1%"
+    if pct >= 100:
+        return "100%"
+    return f"{pct:.1f}%"
 
 
 # ---------------------------------------------------------------------------
 # Dashboard queries
 # ---------------------------------------------------------------------------
+
+# Whitelisted sort columns → actual SQL column names
+_SORT_COLUMNS = {
+    "value":   "total_value",
+    "shares":  "shares",
+    "price":   "price_per_share",
+    "ticker":  "issuer_ticker",
+    "insider": "insider_name",
+    "filed":   "filed_at",
+}
+
 
 def get_filings_for_date(
     conn: sqlite3.Connection,
@@ -64,6 +101,10 @@ def get_filings_for_date(
     hide_10b5_1: bool = True,
     roles: list[str] | None = None,
     search: str | None = None,
+    ceo_cfo_only: bool = False,
+    ceo_cfo_keywords: list[str] | None = None,
+    sort_by: str = "value",
+    sort_order: str = "desc",
 ) -> tuple[list[dict], list[dict]]:
     """Return (buys, sells) for the given date, applying all filters."""
     codes = transaction_codes or ["P", "S"]
@@ -78,22 +119,36 @@ def get_filings_for_date(
         if "ten_pct" in roles:
             role_clauses.append("is_ten_percent_owner = 1")
 
+    # CEO/CFO filter: fuzzy title match against configurable keywords
+    ceo_clauses = []
+    if ceo_cfo_only and ceo_cfo_keywords:
+        for kw in ceo_cfo_keywords:
+            ceo_clauses.append(f"insider_title LIKE ?")
+            params_for_ceo = [f"%{kw}%"] * len(ceo_cfo_keywords)
+
+    order_col = _SORT_COLUMNS.get(sort_by, "total_value")
+    order_dir = "ASC" if sort_order == "asc" else "DESC"
+
     base_where = """
         WHERE DATE(filed_at) = ?
           AND transaction_code IN ({codes})
           AND (total_value IS NULL OR total_value >= ?)
           {ten_b}
           {role}
+          {ceo}
           {search}
     """.format(
         codes=",".join("?" * len(codes)),
         ten_b="AND is_10b5_1 = 0" if hide_10b5_1 else "",
         role=("AND (" + " OR ".join(role_clauses) + ")") if role_clauses else "",
+        ceo=("AND (" + " OR ".join(f"insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")") if ceo_cfo_only and ceo_cfo_keywords else "",
         search="AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else "",
     )
 
     params += codes
     params.append(min_value)
+    if ceo_cfo_only and ceo_cfo_keywords:
+        params += [f"%{kw}%" for kw in ceo_cfo_keywords]
     if search:
         s = f"%{search}%"
         params += [s, s, s]
@@ -103,11 +158,11 @@ def get_filings_for_date(
                issuer_ticker, issuer_name,
                insider_name, insider_title,
                transaction_code, shares, price_per_share, total_value,
-               is_10b5_1, is_director, is_officer, is_ten_percent_owner,
-               ownership_type, table_type
+               shares_owned_after, is_10b5_1, is_director, is_officer,
+               is_ten_percent_owner, ownership_type, table_type
         FROM filings
         {base_where}
-        ORDER BY total_value DESC NULLS LAST
+        ORDER BY {order_col} {order_dir} NULLS LAST
     """
 
     rows = conn.execute(sql, params).fetchall()

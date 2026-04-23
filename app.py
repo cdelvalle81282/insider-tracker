@@ -56,6 +56,9 @@ async def index(
     codes: list[str] = Query(default=None),
     roles: list[str] = Query(default=None),
     search: str | None = Query(default=None),
+    ceo_cfo: str = Query(default="0"),
+    sort_by: str = Query(default="value"),
+    sort_order: str = Query(default="desc"),
 ):
     active_config = cfg.load_config()
     fd = active_config["filter_defaults"]
@@ -64,6 +67,7 @@ async def index(
     effective_min = min_value if min_value is not None else fd["min_value"]
     effective_hide = (hide_10b5_1 != "0") if hide_10b5_1 is not None else fd["hide_10b5_1"]
     effective_codes = codes if codes else fd["transaction_codes"]
+    ceo_cfo_only = ceo_cfo == "1"
 
     db = _db(request)
     buys, sells = queries.get_filings_for_date(
@@ -73,6 +77,10 @@ async def index(
         hide_10b5_1=effective_hide,
         roles=roles,
         search=search,
+        ceo_cfo_only=ceo_cfo_only,
+        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
     clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
@@ -92,6 +100,9 @@ async def index(
             "codes": effective_codes,
             "roles": roles or [],
             "search": search or "",
+            "ceo_cfo": ceo_cfo_only,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
         },
         "config": active_config,
     })
@@ -110,9 +121,14 @@ async def htmx_filings(
     codes: list[str] = Query(default=["P", "S"]),
     roles: list[str] = Query(default=None),
     search: str | None = Query(default=None),
+    ceo_cfo: str = Query(default="0"),
+    sort_by: str = Query(default="value"),
+    sort_order: str = Query(default="desc"),
 ):
+    active_config = cfg.load_config()
     target_date = _parse_date(d)
     effective_hide = hide_10b5_1 != "0"
+    ceo_cfo_only = ceo_cfo == "1"
     db = _db(request)
     buys, sells = queries.get_filings_for_date(
         db, target_date,
@@ -121,6 +137,10 @@ async def htmx_filings(
         hide_10b5_1=effective_hide,
         roles=roles,
         search=search,
+        ceo_cfo_only=ceo_cfo_only,
+        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
     clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
@@ -130,6 +150,10 @@ async def htmx_filings(
         "stats": stats,
         "clusters": clusters,
         "target_date": target_date.isoformat(),
+        "filters": {
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        },
     })
 
 

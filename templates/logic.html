@@ -105,6 +105,72 @@
         </div>
       </section>
 
+      <!-- % Holdings calculation -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-white font-semibold mb-1">% Holdings Column</h2>
+        <p class="text-gray-500 text-xs mb-4">
+          The <span class="text-white font-medium">% Held</span> column shows how significant this trade was relative to the insider's total position.
+          A high % means this trade moved their stake materially — low % means it was a small slice.
+        </p>
+        <div class="space-y-3 text-xs text-gray-400 leading-relaxed">
+          <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+            <p class="text-white font-medium mb-1">For Buys (code P)</p>
+            <code class="text-indigo-400">shares_bought ÷ shares_owned_after × 100</code>
+            <p class="mt-1 text-gray-500">Example: bought 10,000 shares, now owns 50,000 → <span class="text-white">20%</span> — they added 20% to their existing stake.</p>
+          </div>
+          <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+            <p class="text-white font-medium mb-1">For Sells (code S)</p>
+            <code class="text-indigo-400">shares_sold ÷ (shares_owned_after + shares_sold) × 100</code>
+            <p class="mt-1 text-gray-500">Example: sold 10,000, still owns 40,000 → prior position was 50,000 → <span class="text-white">20%</span> sold.</p>
+          </div>
+          <p class="text-gray-600">
+            Values above 20% are highlighted in yellow — a strong signal that the insider has real conviction (or is dramatically reducing exposure).
+            Blank means <code class="text-gray-500">shares_owned_after</code> was not reported in the filing.
+          </p>
+        </div>
+      </section>
+
+      <!-- C-Suite filter -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-white font-semibold mb-1">C-Suite Filter</h2>
+        <p class="text-gray-500 text-xs mb-4">
+          The <span class="text-white font-medium">C-Suite only</span> toggle on the dashboard restricts both tables to insiders whose title
+          contains any of the keywords below. Titles on Form 4s are free-text and highly inconsistent — fuzzy matching catches most cases.
+        </p>
+        <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50 text-xs">
+          <p class="text-gray-500 mb-1">Current keywords (edit above in Alert Rules):</p>
+          <div class="flex flex-wrap gap-2">
+            {% for kw in config.alert_rules.insider_title_keywords %}
+            <span class="bg-indigo-900/50 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded-full">{{ kw }}</span>
+            {% endfor %}
+          </div>
+          <p class="text-gray-600 mt-2">Matching is case-insensitive and partial — "CEO" matches "Co-CEO", "Chief Executive Officer", etc.</p>
+        </div>
+      </section>
+
+      <!-- Sortable columns -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-white font-semibold mb-1">Sortable Columns</h2>
+        <p class="text-gray-500 text-xs mb-4">
+          Click any column header on the dashboard to sort. Click again to reverse. The sort is applied server-side — the full filtered dataset is re-ranked, not just the visible page.
+        </p>
+        <table class="w-full text-xs">
+          <thead><tr class="text-gray-600 border-b border-gray-800">
+            <th class="pb-1 text-left font-normal">Column</th>
+            <th class="pb-1 text-left font-normal">Sorts by</th>
+            <th class="pb-1 text-left font-normal">Default direction</th>
+          </tr></thead>
+          <tbody class="divide-y divide-gray-800/60 text-gray-400">
+            <tr><td class="py-1.5 text-white font-medium pr-4">$ Value</td><td class="pr-4"><code class="text-indigo-400">total_value</code></td><td>Desc (largest first) ← default</td></tr>
+            <tr><td class="py-1.5 text-white font-medium pr-4">Shares</td><td class="pr-4"><code class="text-indigo-400">shares</code></td><td>Desc</td></tr>
+            <tr><td class="py-1.5 text-white font-medium pr-4">Price</td><td class="pr-4"><code class="text-indigo-400">price_per_share</code></td><td>Desc</td></tr>
+            <tr><td class="py-1.5 text-white font-medium pr-4">Ticker</td><td class="pr-4"><code class="text-indigo-400">issuer_ticker</code></td><td>Asc (A→Z)</td></tr>
+            <tr><td class="py-1.5 text-white font-medium pr-4">Insider</td><td class="pr-4"><code class="text-indigo-400">insider_name</code></td><td>Asc (A→Z)</td></tr>
+            <tr><td class="py-1.5 text-white font-medium pr-4">Filed</td><td class="pr-4"><code class="text-indigo-400">filed_at</code></td><td>Desc (newest first)</td></tr>
+          </tbody>
+        </table>
+      </section>
+
       <div class="flex justify-end">
         <button type="submit"
                 class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm px-5 py-2 rounded-lg transition-colors">
