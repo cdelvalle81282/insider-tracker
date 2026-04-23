@@ -202,12 +202,22 @@ def get_cluster_activity(
     for r in rows:
         d_row = dict(r)
         d_row["total_value_fmt"] = _fmt_value(d_row["total_value"])
-        # Split and zip names/titles into a list of insiders
-        names = [n.strip() for n in (d_row["insider_names"] or "").split(",") if n.strip()]
-        titles = [t.strip() for t in (d_row["insider_titles"] or "").split(",")]
-        d_row["insiders"] = [
-            {"name": n, "title": titles[i] if i < len(titles) else ""}
-            for i, n in enumerate(names)
+
+        # Fetch the individual transactions for the expanded view
+        tx_rows = conn.execute(f"""
+            SELECT transaction_id, insider_name, insider_title,
+                   transaction_code, shares, price_per_share, total_value, is_10b5_1
+            FROM filings
+            WHERE DATE(filed_at) = ? AND issuer_ticker = ?
+              AND transaction_code IN ('P','S') {ten_b}
+            ORDER BY total_value DESC NULLS LAST
+        """, [d, d_row["issuer_ticker"]]).fetchall()
+
+        d_row["transactions"] = [
+            {**dict(tx),
+             "total_value_fmt": _fmt_value(tx["total_value"]),
+             "price_fmt": _fmt_value(tx["price_per_share"])}
+            for tx in tx_rows
         ]
         result.append(d_row)
     return result

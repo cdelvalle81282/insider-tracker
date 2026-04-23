@@ -3,11 +3,14 @@
 
 {% block content %}
 
-<div class="mb-4 flex items-center justify-between">
+<div class="mb-5 flex items-center justify-between flex-wrap gap-3">
   <div>
     <h1 class="text-2xl font-bold text-white">${{ ticker }}</h1>
     {% if filings %}
-    <p class="text-gray-500 text-sm mt-0.5">{{ filings | length }} transactions · last {{ days }} days</p>
+    <p class="text-gray-500 text-sm mt-0.5">
+      {{ filings | length }} transactions across
+      {{ filings | map(attribute='transaction_date') | unique | list | length }} dates · last {{ days }} days
+    </p>
     {% endif %}
   </div>
   <div class="flex gap-2">
@@ -20,61 +23,116 @@
   </div>
 </div>
 
-<div class="overflow-x-auto rounded-lg border border-gray-800">
-  <table class="w-full text-sm">
-    <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
-      <tr>
-        <th class="px-3 py-2 text-left">Date</th>
-        <th class="px-3 py-2 text-left">Type</th>
-        <th class="px-3 py-2 text-left">Insider</th>
-        <th class="px-3 py-2 text-left">Title</th>
-        <th class="px-3 py-2 text-right">Shares</th>
-        <th class="px-3 py-2 text-right">Price</th>
-        <th class="px-3 py-2 text-right">$ Value</th>
-        <th class="px-3 py-2 text-center">10b5-1</th>
-        <th class="px-3 py-2 text-right">Filed</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-gray-800">
-      {% for row in filings %}
-      <tr class="{% if row.transaction_code == 'P' %}row-buy{% elif row.transaction_code == 'S' %}row-sell{% endif %}
-                 hover:bg-gray-800/40 transition-colors {% if row.is_10b5_1 %}row-dimmed{% endif %}">
-        <td class="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{{ row.transaction_date }}</td>
-        <td class="px-3 py-2">
-          {% if row.transaction_code == 'P' %}
-          <span class="text-xs font-medium text-green-400">BUY</span>
-          {% elif row.transaction_code == 'S' %}
-          <span class="text-xs font-medium text-red-400">SELL</span>
-          {% else %}
-          <span class="text-xs text-gray-500">{{ row.transaction_code }}</span>
-          {% endif %}
-        </td>
-        <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
-        <td class="px-3 py-2 text-gray-500 text-xs max-w-[140px] truncate">{{ row.insider_title or '—' }}</td>
-        <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
-        <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
-        <td class="px-3 py-2 text-right font-semibold text-xs
-                   {% if row.transaction_code == 'P' %}text-green-400{% elif row.transaction_code == 'S' %}text-red-400{% else %}text-gray-300{% endif %}">
-          {{ row.total_value_fmt or '—' }}
-        </td>
-        <td class="px-3 py-2 text-center">
-          {% if row.is_10b5_1 %}
-          <span class="text-xs bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded">Plan</span>
-          {% endif %}
-        </td>
-        <td class="px-3 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
-          <a href="/filing/{{ row.transaction_id }}" class="hover:text-white">{{ row.filed_rel }}</a>
-        </td>
-      </tr>
-      {% else %}
-      <tr>
-        <td colspan="9" class="px-3 py-10 text-center text-gray-600">
-          No Form 4 filings found for ${{ ticker }} in the last {{ days }} days
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% if not filings %}
+<div class="text-center py-16 text-gray-600">
+  No Form 4 filings found for ${{ ticker }} in the last {{ days }} days
 </div>
+{% else %}
+
+{# Group filings by transaction_date #}
+{% set dates = filings | map(attribute='transaction_date') | unique | list %}
+
+<div class="space-y-2">
+  {% for tx_date in dates %}
+  {% set day_rows = filings | selectattr('transaction_date', 'equalto', tx_date) | list %}
+  {% set day_buys  = day_rows | selectattr('transaction_code', 'equalto', 'P') | list %}
+  {% set day_sells = day_rows | selectattr('transaction_code', 'equalto', 'S') | list %}
+  {% set day_other = day_rows | rejectattr('transaction_code', 'in', ['P','S']) | list %}
+  {% set buy_total  = day_buys  | map(attribute='total_value') | select | sum %}
+  {% set sell_total = day_sells | map(attribute='total_value') | select | sum %}
+
+  <details class="group rounded-lg border border-gray-800 bg-gray-900/40" {% if loop.first %}open{% endif %}>
+
+    <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer list-none select-none hover:bg-white/5 rounded-lg transition-colors">
+      <span class="text-gray-600 group-open:rotate-90 transition-transform text-xs shrink-0">▶</span>
+
+      <!-- Date -->
+      <span class="text-white font-mono text-sm w-28 shrink-0">{{ tx_date }}</span>
+
+      <!-- Transaction pills -->
+      <div class="flex gap-2 flex-wrap flex-1">
+        {% if day_buys %}
+        <span class="text-xs font-medium text-green-400 bg-green-950/50 border border-green-900/60 px-2 py-0.5 rounded-full">
+          ▲ {{ day_buys | length }} buy{% if day_buys | length != 1 %}s{% endif %}
+          {% if buy_total %} · ${{ "%.1fM" | format(buy_total / 1e6) if buy_total >= 1e6 else "%.0fK" | format(buy_total / 1e3) if buy_total >= 1e3 else "$%.0f" | format(buy_total) }}{% endif %}
+        </span>
+        {% endif %}
+        {% if day_sells %}
+        <span class="text-xs font-medium text-red-400 bg-red-950/50 border border-red-900/60 px-2 py-0.5 rounded-full">
+          ▼ {{ day_sells | length }} sell{% if day_sells | length != 1 %}s{% endif %}
+          {% if sell_total %} · ${{ "%.1fM" | format(sell_total / 1e6) if sell_total >= 1e6 else "%.0fK" | format(sell_total / 1e3) if sell_total >= 1e3 else "$%.0f" | format(sell_total) }}{% endif %}
+        </span>
+        {% endif %}
+        {% if day_other %}
+        <span class="text-xs text-gray-500 bg-gray-800/50 border border-gray-700/60 px-2 py-0.5 rounded-full">
+          {{ day_other | length }} other
+        </span>
+        {% endif %}
+      </div>
+
+      <!-- Insider count -->
+      {% set n_insiders = day_rows | map(attribute='insider_name') | unique | list | length %}
+      {% if n_insiders > 1 %}
+      <span class="text-xs text-yellow-400 bg-yellow-900/30 border border-yellow-800/50 px-2 py-0.5 rounded-full shrink-0">
+        ⚡ {{ n_insiders }} insiders
+      </span>
+      {% endif %}
+    </summary>
+
+    <!-- Expanded rows -->
+    <div class="px-4 pb-3 pt-1">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-600 border-b border-gray-800">
+            <th class="pb-1.5 text-left font-normal">Insider</th>
+            <th class="pb-1.5 text-left font-normal">Title</th>
+            <th class="pb-1.5 text-center font-normal">Type</th>
+            <th class="pb-1.5 text-right font-normal">Shares</th>
+            <th class="pb-1.5 text-right font-normal">Price</th>
+            <th class="pb-1.5 text-right font-normal">$ Value</th>
+            <th class="pb-1.5 text-center font-normal">10b5-1</th>
+            <th class="pb-1.5 text-right font-normal">Filed</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800/60">
+          {% for row in day_rows %}
+          <tr class="{% if row.is_10b5_1 %}opacity-40{% endif %} hover:bg-white/5">
+            <td class="py-1.5 pr-3 text-gray-200">{{ row.insider_name }}</td>
+            <td class="py-1.5 pr-3 text-gray-500 max-w-[160px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="py-1.5 text-center">
+              {% if row.transaction_code == 'P' %}
+              <span class="text-green-400 font-semibold">▲ Buy</span>
+              {% elif row.transaction_code == 'S' %}
+              <span class="text-red-400 font-semibold">▼ Sell</span>
+              {% else %}
+              <span class="text-gray-500">{{ row.transaction_code }}</span>
+              {% endif %}
+            </td>
+            <td class="py-1.5 text-right text-gray-300">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+            <td class="py-1.5 text-right text-gray-400">{{ row.price_fmt or '—' }}</td>
+            <td class="py-1.5 text-right font-medium
+                       {% if row.transaction_code == 'P' %}text-green-400
+                       {% elif row.transaction_code == 'S' %}text-red-400
+                       {% else %}text-gray-400{% endif %}">
+              {{ row.total_value_fmt or '—' }}
+            </td>
+            <td class="py-1.5 text-center">
+              {% if row.is_10b5_1 %}
+              <span class="text-gray-500 bg-gray-800 px-1.5 py-0.5 rounded">Plan</span>
+              {% endif %}
+            </td>
+            <td class="py-1.5 text-right text-gray-600 whitespace-nowrap">
+              <a href="/filing/{{ row.transaction_id }}" class="hover:text-white">{{ row.filed_rel }}</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </details>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% endblock %}
