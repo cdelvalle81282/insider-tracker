@@ -76,8 +76,7 @@ async def index(
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
 
-    return templates.TemplateResponse("index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "index.html", {
         "buys": buys,
         "sells": sells,
         "stats": stats,
@@ -122,8 +121,7 @@ async def htmx_filings(
         search=search,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
-    return templates.TemplateResponse("_tables_partial.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "_tables_partial.html", {
         "buys": buys,
         "sells": sells,
         "stats": stats,
@@ -140,8 +138,7 @@ async def filing_detail(request: Request, transaction_id: str):
     filing = queries.get_filing_detail(_db(request), transaction_id)
     if filing is None:
         raise HTTPException(status_code=404, detail="Filing not found")
-    return templates.TemplateResponse("filing.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "filing.html", {
         "filing": filing,
     })
 
@@ -153,8 +150,7 @@ async def filing_detail(request: Request, transaction_id: str):
 @app.get("/issuer/{ticker}", response_class=HTMLResponse)
 async def issuer_view(request: Request, ticker: str, days: int = Query(default=90)):
     filings = queries.get_issuer_filings(_db(request), ticker, days=days)
-    return templates.TemplateResponse("issuer.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "issuer.html", {
         "ticker": ticker.upper(),
         "filings": filings,
         "days": days,
@@ -168,8 +164,7 @@ async def issuer_view(request: Request, ticker: str, days: int = Query(default=9
 @app.get("/run-log", response_class=HTMLResponse)
 async def run_log(request: Request):
     log = queries.get_run_log(_db(request))
-    return templates.TemplateResponse("run_log.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "run_log.html", {
         "log": log,
     })
 
@@ -182,8 +177,7 @@ async def run_log(request: Request):
 async def logic_page(request: Request):
     active_config = cfg.load_config()
     stats = queries.get_10b5_1_stats(_db(request))
-    return templates.TemplateResponse("logic.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "logic.html", {
         "config": active_config,
         "stats": stats,
         "transaction_codes": cfg.TRANSACTION_CODES,
