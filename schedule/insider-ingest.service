@@ -1,0 +1,12 @@
+[Unit]
+Description=Insider Tracker — Form 4 Ingest Run
+After=network.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+ExecStart=/home/deploy/insider-tracker/.venv/bin/python ingest.py --date today
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+StandardOutput=journal
+StandardError=journal

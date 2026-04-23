@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Filing — {{ filing.issuer_ticker or filing.issuer_name }}{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="javascript:history.back()" class="text-gray-500 hover:text-white text-sm">← Back</a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <!-- Main detail card -->
+  <div class="lg:col-span-2 space-y-6">
+
+    <!-- Header -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          {% if filing.issuer_ticker %}
+          <a href="/issuer/{{ filing.issuer_ticker }}"
+             class="text-2xl font-bold text-white hover:text-indigo-400">
+            ${{ filing.issuer_ticker }}
+          </a>
+          {% endif %}
+          <p class="text-gray-400 text-sm mt-0.5">{{ filing.issuer_name }}</p>
+        </div>
+        <div class="text-right">
+          {% if filing.transaction_code == 'P' %}
+          <span class="px-3 py-1 rounded-full bg-green-900 text-green-300 text-sm font-semibold border border-green-700">
+            ▲ BUY
+          </span>
+          {% elif filing.transaction_code == 'S' %}
+          <span class="px-3 py-1 rounded-full bg-red-900 text-red-300 text-sm font-semibold border border-red-700">
+            ▼ SELL
+          </span>
+          {% else %}
+          <span class="px-3 py-1 rounded-full bg-gray-700 text-gray-300 text-sm font-semibold border border-gray-600">
+            {{ filing.transaction_code }}
+          </span>
+          {% endif %}
+          {% if filing.is_10b5_1 %}
+          <div class="mt-1">
+            <span class="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded-full">10b5-1 Plan</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div class="bg-gray-800/60 rounded-lg p-3">
+          <p class="text-gray-500 text-xs uppercase">$ Value</p>
+          <p class="text-white font-bold text-lg mt-0.5">{{ filing.total_value_fmt or '—' }}</p>
+        </div>
+        <div class="bg-gray-800/60 rounded-lg p-3">
+          <p class="text-gray-500 text-xs uppercase">Shares</p>
+          <p class="text-white font-semibold mt-0.5">{{ "{:,.0f}".format(filing.shares) if filing.shares else '—' }}</p>
+        </div>
+        <div class="bg-gray-800/60 rounded-lg p-3">
+          <p class="text-gray-500 text-xs uppercase">Price</p>
+          <p class="text-white font-semibold mt-0.5">{{ filing.price_fmt or '—' }}</p>
+        </div>
+        <div class="bg-gray-800/60 rounded-lg p-3">
+          <p class="text-gray-500 text-xs uppercase">Filed</p>
+          <p class="text-white font-semibold mt-0.5 text-sm">{{ filing.filed_rel }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Insider info -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-gray-400 text-xs uppercase tracking-widest mb-3">Insider</h3>
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <p class="text-gray-500 text-xs">Name</p>
+          <p class="text-white">{{ filing.insider_name }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Title</p>
+          <p class="text-white">{{ filing.insider_title or '—' }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">CIK</p>
+          <p class="text-gray-400 font-mono text-xs">{{ filing.insider_cik }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Roles</p>
+          <div class="flex gap-1 flex-wrap mt-0.5">
+            {% if filing.is_director %}<span class="role-badge">Director</span>{% endif %}
+            {% if filing.is_officer %}<span class="role-badge">Officer</span>{% endif %}
+            {% if filing.is_ten_percent_owner %}<span class="role-badge">10% Owner</span>{% endif %}
+            {% if filing.is_other %}<span class="role-badge">Other</span>{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Transaction details -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-gray-400 text-xs uppercase tracking-widest mb-3">Transaction Details</h3>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+        <div>
+          <p class="text-gray-500 text-xs">Transaction Date</p>
+          <p class="text-white">{{ filing.transaction_date }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Code</p>
+          <p class="text-white font-mono">{{ filing.transaction_code }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Table</p>
+          <p class="text-white">{{ 'Non-Derivative' if filing.table_type == 'ND' else 'Derivative' }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Ownership</p>
+          <p class="text-white">{{ 'Direct' if filing.ownership_type == 'D' else ('Indirect' if filing.ownership_type == 'I' else '—') }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Equity Swap</p>
+          <p class="text-white">{{ 'Yes' if filing.equity_swap else 'No' }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Shares After</p>
+          <p class="text-white">{{ "{:,.0f}".format(filing.shares_owned_after) if filing.shares_owned_after else '—' }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footnotes -->
+    {% if filing.footnote_text %}
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h3 class="text-gray-400 text-xs uppercase tracking-widest mb-2">Footnotes</h3>
+      <p class="text-gray-400 text-sm leading-relaxed">{{ filing.footnote_text }}</p>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- Sidebar -->
+  <div class="space-y-4">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <h3 class="text-gray-400 text-xs uppercase tracking-widest mb-3">Filing Info</h3>
+      <div class="space-y-2 text-sm">
+        <div>
+          <p class="text-gray-500 text-xs">Accession No.</p>
+          <p class="text-gray-300 font-mono text-xs break-all">{{ filing.accession_no }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Form Type</p>
+          <p class="text-gray-300">{{ filing.form_type }}</p>
+        </div>
+        <div>
+          <p class="text-gray-500 text-xs">Issuer CIK</p>
+          <p class="text-gray-400 font-mono text-xs">{{ filing.issuer_cik }}</p>
+        </div>
+        <div class="pt-2 border-t border-gray-800">
+          <a href="{{ filing.raw_xml_url }}" target="_blank"
+             class="text-indigo-400 hover:text-indigo-300 text-xs">
+            View raw EDGAR XML →
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 2 placeholders -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 opacity-50">
+      <h3 class="text-gray-500 text-xs uppercase tracking-widest mb-2">Insider History</h3>
+      <p class="text-gray-600 text-xs italic">Coming in Phase 2 — historical buy/sell pattern for this insider</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 opacity-50">
+      <h3 class="text-gray-500 text-xs uppercase tracking-widest mb-2">Other Insiders at {{ filing.issuer_ticker or filing.issuer_name }}</h3>
+      <p class="text-gray-600 text-xs italic">Coming in Phase 2 — all insiders active at this issuer this quarter</p>
+    </div>
+  </div>
+
+</div>
+
+<style>
+  .role-badge { @apply bg-gray-700 text-gray-300 text-xs px-2 py-0.5 rounded; }
+</style>
+
+{% endblock %}

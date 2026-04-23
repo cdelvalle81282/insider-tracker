@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Run Log — Insider Tracker{% endblock %}
+{% block nav_runlog %}active{% endblock %}
+
+{% block content %}
+
+<h1 class="text-xl font-bold text-white mb-5">Ingestion Run Log</h1>
+
+<div class="overflow-x-auto rounded-lg border border-gray-800">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+      <tr>
+        <th class="px-3 py-2 text-left">Date</th>
+        <th class="px-3 py-2 text-left">Started</th>
+        <th class="px-3 py-2 text-left">Finished</th>
+        <th class="px-3 py-2 text-right">Filings</th>
+        <th class="px-3 py-2 text-right">Rows</th>
+        <th class="px-3 py-2 text-right">Errors</th>
+        <th class="px-3 py-2 text-left">Detail</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for run in log %}
+      <tr class="hover:bg-gray-800/40 {% if run.errors > 0 %}border-l-2 border-red-800{% endif %}">
+        <td class="px-3 py-2 text-white font-mono text-xs">{{ run.date_processed }}</td>
+        <td class="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{{ run.started_at[:19].replace('T',' ') }}</td>
+        <td class="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{{ run.finished_at[:19].replace('T',' ') if run.finished_at else '…' }}</td>
+        <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ run.filings_found }}</td>
+        <td class="px-3 py-2 text-right text-green-400 text-xs font-medium">+{{ run.rows_inserted }}</td>
+        <td class="px-3 py-2 text-right {% if run.errors > 0 %}text-red-400{% else %}text-gray-600{% endif %} text-xs">
+          {{ run.errors }}
+        </td>
+        <td class="px-3 py-2 text-gray-600 text-xs max-w-[320px] truncate" title="{{ run.error_detail or '' }}">
+          {{ run.error_detail or '' }}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="px-3 py-10 text-center text-gray-600">
+          No runs yet. Try: <code class="text-indigo-400">python ingest.py --date today</code>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

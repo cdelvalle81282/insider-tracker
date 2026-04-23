@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}${{ ticker }} — Insider Activity{% endblock %}
+
+{% block content %}
+
+<div class="mb-4 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-bold text-white">${{ ticker }}</h1>
+    {% if filings %}
+    <p class="text-gray-500 text-sm mt-0.5">{{ filings | length }} transactions · last {{ days }} days</p>
+    {% endif %}
+  </div>
+  <div class="flex gap-2">
+    {% for d in [30, 90, 180, 365] %}
+    <a href="/issuer/{{ ticker }}?days={{ d }}"
+       class="px-2 py-1 rounded text-xs border {% if days == d %}bg-gray-700 border-gray-600 text-white{% else %}border-gray-800 text-gray-500 hover:text-white{% endif %}">
+      {{ d }}d
+    </a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="overflow-x-auto rounded-lg border border-gray-800">
+  <table class="w-full text-sm">
+    <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
+      <tr>
+        <th class="px-3 py-2 text-left">Date</th>
+        <th class="px-3 py-2 text-left">Type</th>
+        <th class="px-3 py-2 text-left">Insider</th>
+        <th class="px-3 py-2 text-left">Title</th>
+        <th class="px-3 py-2 text-right">Shares</th>
+        <th class="px-3 py-2 text-right">Price</th>
+        <th class="px-3 py-2 text-right">$ Value</th>
+        <th class="px-3 py-2 text-center">10b5-1</th>
+        <th class="px-3 py-2 text-right">Filed</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for row in filings %}
+      <tr class="{% if row.transaction_code == 'P' %}row-buy{% elif row.transaction_code == 'S' %}row-sell{% endif %}
+                 hover:bg-gray-800/40 transition-colors {% if row.is_10b5_1 %}row-dimmed{% endif %}">
+        <td class="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{{ row.transaction_date }}</td>
+        <td class="px-3 py-2">
+          {% if row.transaction_code == 'P' %}
+          <span class="text-xs font-medium text-green-400">BUY</span>
+          {% elif row.transaction_code == 'S' %}
+          <span class="text-xs font-medium text-red-400">SELL</span>
+          {% else %}
+          <span class="text-xs text-gray-500">{{ row.transaction_code }}</span>
+          {% endif %}
+        </td>
+        <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
+        <td class="px-3 py-2 text-gray-500 text-xs max-w-[140px] truncate">{{ row.insider_title or '—' }}</td>
+        <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+        <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
+        <td class="px-3 py-2 text-right font-semibold text-xs
+                   {% if row.transaction_code == 'P' %}text-green-400{% elif row.transaction_code == 'S' %}text-red-400{% else %}text-gray-300{% endif %}">
+          {{ row.total_value_fmt or '—' }}
+        </td>
+        <td class="px-3 py-2 text-center">
+          {% if row.is_10b5_1 %}
+          <span class="text-xs bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded">Plan</span>
+          {% endif %}
+        </td>
+        <td class="px-3 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
+          <a href="/filing/{{ row.transaction_id }}" class="hover:text-white">{{ row.filed_rel }}</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="9" class="px-3 py-10 text-center text-gray-600">
+          No Form 4 filings found for ${{ ticker }} in the last {{ days }} days
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

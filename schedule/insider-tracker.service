@@ -1,0 +1,16 @@
+[Unit]
+Description=Insider Tracker Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+ExecStart=/home/deploy/insider-tracker/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8002
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Insider Tracker — {{ target_date }}{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block content %}
+
+<!-- Date nav + filter bar -->
+<div class="flex flex-wrap items-center gap-3 mb-5">
+
+  <!-- Date selector -->
+  <div class="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg px-2 py-1">
+    <a href="/?d={{ prev_date }}" class="text-gray-500 hover:text-white px-1">‹</a>
+    <input
+      type="date"
+      value="{{ target_date }}"
+      max="{{ target_date if is_today else '' }}"
+      onchange="window.location='/?d='+this.value"
+      class="bg-transparent text-white text-sm focus:outline-none"
+    />
+    {% if not is_today %}
+    <a href="/?d={{ next_date }}" class="text-gray-500 hover:text-white px-1">›</a>
+    {% endif %}
+  </div>
+
+  <!-- Filters (HTMX-driven) -->
+  <form
+    id="filter-form"
+    hx-get="/htmx/filings"
+    hx-trigger="change, input delay:400ms"
+    hx-target="#filings-container"
+    hx-include="#filter-form"
+    class="flex flex-wrap items-center gap-2"
+  >
+    <input type="hidden" name="d" value="{{ target_date }}" />
+
+    <!-- Min value -->
+    <div class="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded px-2 py-1">
+      <span class="text-gray-500 text-xs">Min $</span>
+      <input
+        type="number"
+        name="min_value"
+        value="{{ filters.min_value | int }}"
+        step="10000"
+        min="0"
+        class="bg-transparent text-white text-sm w-24 focus:outline-none"
+      />
+    </div>
+
+    <!-- Hide 10b5-1 -->
+    <label class="flex items-center gap-1.5 cursor-pointer bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs text-gray-400">
+      <input type="checkbox" name="hide_10b5_1" value="1"
+             {% if filters.hide_10b5_1 %}checked{% endif %}
+             class="accent-indigo-500" />
+      Hide 10b5-1 plans
+    </label>
+
+    <!-- Role filters -->
+    <div class="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs text-gray-400">
+      <span>Role:</span>
+      <label class="flex items-center gap-1 cursor-pointer">
+        <input type="checkbox" name="roles" value="director"
+               {% if 'director' in filters.roles %}checked{% endif %}
+               class="accent-indigo-500" /> Dir
+      </label>
+      <label class="flex items-center gap-1 cursor-pointer">
+        <input type="checkbox" name="roles" value="officer"
+               {% if 'officer' in filters.roles %}checked{% endif %}
+               class="accent-indigo-500" /> Officer
+      </label>
+      <label class="flex items-center gap-1 cursor-pointer">
+        <input type="checkbox" name="roles" value="ten_pct"
+               {% if 'ten_pct' in filters.roles %}checked{% endif %}
+               class="accent-indigo-500" /> 10%
+      </label>
+    </div>
+
+    <!-- Search -->
+    <input
+      type="text"
+      name="search"
+      value="{{ filters.search }}"
+      placeholder="Search ticker / name…"
+      class="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-gray-600 w-44"
+    />
+  </form>
+</div>
+
+<!-- Tables container — swapped by HTMX -->
+<div id="filings-container">
+  {% include "_tables_partial.html" %}
+</div>
+
+{% endblock %}

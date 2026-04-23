@@ -1,0 +1,137 @@
+{# HTMX partial — re-rendered on filter change. No <html> wrapper. #}
+
+<!-- Stats bar -->
+<div class="flex flex-wrap gap-3 mb-5" id="stats-bar">
+  <span class="stat-pill bg-green-950 text-green-300 border border-green-800">
+    ▲ {{ stats.buy_count }} buys · {{ stats.buy_total_fmt }}
+  </span>
+  <span class="stat-pill bg-red-950 text-red-300 border border-red-800">
+    ▼ {{ stats.sell_count }} sells · {{ stats.sell_total_fmt }}
+  </span>
+  <span class="stat-pill bg-gray-800 text-gray-300 border border-gray-700">
+    Net {{ stats.net_flow_fmt }}
+  </span>
+  <span class="stat-pill bg-gray-800 text-gray-300 border border-gray-700">
+    {{ stats.issuer_count }} issuers
+  </span>
+  {% if stats.cluster_count > 0 %}
+  <span class="stat-pill bg-yellow-900 text-yellow-300 border border-yellow-700">
+    ⚡ {{ stats.cluster_count }} cluster{{ 's' if stats.cluster_count != 1 }}
+  </span>
+  {% endif %}
+</div>
+
+<style>
+  .stat-pill { @apply px-3 py-1 rounded-full text-xs font-medium; }
+</style>
+
+<!-- Tables -->
+<div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+  <!-- Buys -->
+  <div>
+    <h2 class="text-green-400 font-semibold text-sm uppercase tracking-widest mb-2 flex items-center gap-2">
+      <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
+      Buys ({{ buys | length }})
+    </h2>
+    <div class="overflow-x-auto rounded-lg border border-gray-800">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+          <tr>
+            <th class="px-3 py-2 text-left">Ticker</th>
+            <th class="px-3 py-2 text-left">Company</th>
+            <th class="px-3 py-2 text-left">Insider</th>
+            <th class="px-3 py-2 text-left">Title</th>
+            <th class="px-3 py-2 text-right">Shares</th>
+            <th class="px-3 py-2 text-right">Price</th>
+            <th class="px-3 py-2 text-right font-bold">$ Value</th>
+            <th class="px-3 py-2 text-right">Filed</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {% for row in buys %}
+          <tr class="row-buy hover:bg-gray-800/40 transition-colors">
+            <td class="px-3 py-2">
+              {% if row.issuer_ticker %}
+              <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-green-400">
+                {{ row.issuer_ticker }}
+              </a>
+              {% else %}
+              <span class="text-gray-500 text-xs">—</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 text-gray-400 text-xs max-w-[160px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs max-w-[120px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+            <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
+            <td class="px-3 py-2 text-right font-semibold text-green-400">{{ row.total_value_fmt or '—' }}</td>
+            <td class="px-3 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
+              <a href="/filing/{{ row.transaction_id }}" class="hover:text-white">{{ row.filed_rel }}</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="px-3 py-6 text-center text-gray-600 text-sm">No buys matching current filters</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Sells -->
+  <div>
+    <h2 class="text-red-400 font-semibold text-sm uppercase tracking-widest mb-2 flex items-center gap-2">
+      <span class="inline-block w-2 h-2 rounded-full bg-red-500"></span>
+      Sells ({{ sells | length }})
+    </h2>
+    <div class="overflow-x-auto rounded-lg border border-gray-800">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+          <tr>
+            <th class="px-3 py-2 text-left">Ticker</th>
+            <th class="px-3 py-2 text-left">Company</th>
+            <th class="px-3 py-2 text-left">Insider</th>
+            <th class="px-3 py-2 text-left">Title</th>
+            <th class="px-3 py-2 text-right">Shares</th>
+            <th class="px-3 py-2 text-right">Price</th>
+            <th class="px-3 py-2 text-right font-bold">$ Value</th>
+            <th class="px-3 py-2 text-right">10b5-1</th>
+            <th class="px-3 py-2 text-right">Filed</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {% for row in sells %}
+          <tr class="row-sell hover:bg-gray-800/40 transition-colors {% if row.is_10b5_1 %}row-dimmed{% endif %}">
+            <td class="px-3 py-2">
+              {% if row.issuer_ticker %}
+              <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-red-400">
+                {{ row.issuer_ticker }}
+              </a>
+              {% else %}
+              <span class="text-gray-500 text-xs">—</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 text-gray-400 text-xs max-w-[140px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs max-w-[120px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+            <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
+            <td class="px-3 py-2 text-right font-semibold text-red-400">{{ row.total_value_fmt or '—' }}</td>
+            <td class="px-3 py-2 text-center">
+              {% if row.is_10b5_1 %}
+              <span class="text-xs bg-gray-700 text-gray-400 px-1.5 py-0.5 rounded">Plan</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
+              <a href="/filing/{{ row.transaction_id }}" class="hover:text-white">{{ row.filed_rel }}</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="9" class="px-3 py-6 text-center text-gray-600 text-sm">No sells matching current filters</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>

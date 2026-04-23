@@ -1,0 +1,8 @@
+.env
+data/*.db
+data/company_tickers.json
+config_overrides.json
+__pycache__/
+*.pyc
+.venv/
+venv/
