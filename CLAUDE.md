@@ -33,6 +33,8 @@ Pulls Form 4 filings (insider buys/sells) from SEC EDGAR, stores them in SQLite,
 | `alerts.py` | Slack push alerts — big buy, C-suite buy, cluster detection |
 | `queries.py` | All SQL queries + EnrichContext dataclass — no SQL in app.py |
 | `app.py` | FastAPI routes + `render_sparkline()` + `_resolve_date_range()` helpers |
+| `polygon_client.py` | Polygon.io daily OHLCV bars for chart page |
+| `templates/chart.html` | Candlestick chart page with insider markers (TradingView Lightweight Charts) |
 | `templates/logic.html` | Logic & Config tab — editable thresholds, conviction weights, research basis |
 | `templates/watchlist.html` | Watchlist management page |
 
@@ -123,8 +125,16 @@ ctx = EnrichContext(
 - **Sector enrichment** — SIC codes from EDGAR, 11-bucket mapping, filter by sector
 - **Watchlist** — pin tickers/insiders, gold ★ in dashboard, "Watched only" filter
 - **Date range** — Today/7d/30d presets + custom range; daily summary for ranges >7 days
+- **Buy/Sell/Both toggle** — 3-way button group at top of filter bar; sets transaction codes via JS
 - **CSV export** — downloads current filtered view (SQL-capped at 10k rows before enrichment)
 - **Sparkline** — 6-month buy/sell trend on issuer pages, Monday-date week keys
+- **Chart page** — `/chart/{ticker}` candlestick chart (Polygon.io) with insider buy/sell markers; 1m/3m/6m/1y timeframes; Buys/Sells/Both toggle. Requires `POLYGON_API_KEY` in `.env`
+
+## Environment variables (on server)
+
+Set in `/home/deploy/insider-tracker/.env`, loaded by systemd `EnvironmentFile`:
+- `SLACK_WEBHOOK_URL` — Slack incoming webhook for alerts
+- `POLYGON_API_KEY` — Polygon.io API key for chart price data
 
 ## Known gotchas
 
@@ -139,6 +149,8 @@ ctx = EnrichContext(
 - **Alert dedup:** `INSERT OR IGNORE` + `cursor.rowcount` before commit (not `changes()` after)
 - **Buy alert keys:** Unified `buy:` prefix — prevents double-firing when a trade matches both big_buy and insider_buy thresholds
 - **`_resolve_date_range(d, start_date, end_date)`:** Use this helper in any route that accepts date params — don't inline the parsing block again
+- **Lightweight Charts:** Always use `autoSize: true` — never `width: element.clientWidth` at init time (clientWidth can be 0 before CSS applies). Pin CDN version: `@4.2.0`
+- **Duplicate form inputs:** Never have two `<input>` elements with the same `name` in the HTMX filter form — FastAPI receives them as a list and may 422 or silently mishandle. The sector `<select>` is the only sector input; there is no hidden sector input.
 
 ## SEC compliance
 
