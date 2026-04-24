@@ -322,9 +322,12 @@ def get_daily_summary(
     end_date: date,
     hide_10b5_1: bool = True,
     min_value: float = 0,
+    transaction_codes: list[str] | None = None,
 ) -> list[dict]:
     """Per-day aggregates for the date range summary view (shown when range > 7 days)."""
+    codes = transaction_codes or ["P", "S"]
     ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
+    code_placeholders = ",".join("?" * len(codes))
     rows = conn.execute(f"""
         SELECT
             DATE(filed_at) AS day,
@@ -335,13 +338,13 @@ def get_daily_summary(
             COUNT(DISTINCT CASE WHEN transaction_code='P' THEN issuer_cik END) AS issuers
         FROM filings
         WHERE DATE(filed_at) BETWEEN ? AND ?
-          AND transaction_code IN ('P','S')
+          AND transaction_code IN ({code_placeholders})
           AND (total_value IS NULL OR total_value >= ?)
           AND superseded_by IS NULL
           {ten_b}
         GROUP BY DATE(filed_at)
         ORDER BY day DESC
-    """, [start_date.isoformat(), end_date.isoformat(), min_value]).fetchall()
+    """, [start_date.isoformat(), end_date.isoformat(), *codes, min_value]).fetchall()
 
     result = []
     for r in rows:
@@ -507,8 +510,14 @@ def get_cluster_activity(
     target_date: date,
     min_insiders: int = 2,
     hide_10b5_1: bool = True,
+    date_range: tuple[date, date] | None = None,
 ) -> list[dict]:
-    d = target_date.isoformat()
+    if date_range:
+        date_condition = "DATE(filed_at) BETWEEN ? AND ?"
+        date_params: list = [date_range[0].isoformat(), date_range[1].isoformat()]
+    else:
+        date_condition = "DATE(filed_at) = ?"
+        date_params = [target_date.isoformat()]
     ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
 
     rows = conn.execute(f"""
@@ -527,7 +536,7 @@ def get_cluster_activity(
             GROUP_CONCAT(DISTINCT insider_name) AS insider_names,
             GROUP_CONCAT(DISTINCT COALESCE(insider_title, '')) AS insider_titles
         FROM filings
-        WHERE DATE(filed_at) = ?
+        WHERE {date_condition}
           AND transaction_code IN ('P', 'S')
           AND superseded_by IS NULL
           {ten_b}
@@ -535,7 +544,7 @@ def get_cluster_activity(
         GROUP BY issuer_ticker, issuer_name
         HAVING COUNT(DISTINCT insider_cik) >= ?
         ORDER BY total_value DESC
-    """, [d, min_insiders]).fetchall()
+    """, [*date_params, min_insiders]).fetchall()
 
     result = []
     for r in rows:
@@ -546,10 +555,10 @@ def get_cluster_activity(
             SELECT transaction_id, insider_name, insider_title,
                    transaction_code, shares, price_per_share, total_value, is_10b5_1
             FROM filings
-            WHERE DATE(filed_at) = ? AND issuer_ticker = ?
+            WHERE {date_condition} AND issuer_ticker = ?
               AND transaction_code IN ('P','S') {ten_b}
             ORDER BY total_value DESC NULLS LAST
-        """, [d, d_row["issuer_ticker"]]).fetchall()
+        """, [*date_params, d_row["issuer_ticker"]]).fetchall()
 
         d_row["transactions"] = [
             {**dict(tx),

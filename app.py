@@ -163,9 +163,15 @@ async def index(
         ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
-    clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
+    clusters = queries.get_cluster_activity(
+        db, target_date, hide_10b5_1=effective_hide,
+        date_range=date_range_arg,
+    )
     daily_summary = (
-        queries.get_daily_summary(db, range_start, range_end, effective_hide, effective_min)
+        queries.get_daily_summary(
+            db, range_start, range_end, effective_hide, effective_min,
+            transaction_codes=effective_codes,
+        )
         if summary_mode else []
     )
     all_sectors = queries.get_all_sectors(db)
@@ -252,9 +258,15 @@ async def htmx_filings(
         ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
-    clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
+    clusters = queries.get_cluster_activity(
+        db, target_date, hide_10b5_1=effective_hide,
+        date_range=date_range_arg,
+    )
     daily_summary = (
-        queries.get_daily_summary(db, range_start, range_end, effective_hide, min_value)
+        queries.get_daily_summary(
+            db, range_start, range_end, effective_hide, min_value,
+            transaction_codes=codes,
+        )
         if summary_mode else []
     )
     return templates.TemplateResponse(request, "_tables_partial.html", {

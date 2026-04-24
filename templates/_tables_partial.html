@@ -2,10 +2,13 @@
 
 <!-- Daily summary (shown when range > 7 days) -->
 {% if summary_mode and daily_summary %}
-<div class="mb-5">
-  <h2 class="text-gray-400 font-semibold text-sm uppercase tracking-widest mb-2">
-    Daily Summary — {{ range_start }} to {{ range_end }}
-  </h2>
+<details class="group mb-5" open>
+  <summary class="flex items-center gap-2 cursor-pointer list-none select-none mb-2">
+    <span class="text-gray-600 group-open:rotate-90 transition-transform text-xs">▶</span>
+    <h2 class="text-gray-400 font-semibold text-sm uppercase tracking-widest">
+      Daily Summary — {{ range_start }} to {{ range_end }}
+    </h2>
+  </summary>
   <div class="overflow-x-auto rounded-lg border border-gray-800">
     <table class="w-full text-xs">
       <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
@@ -39,7 +42,7 @@
     </table>
   </div>
   <p class="text-gray-600 text-xs mt-2">Click any date to view its individual transactions.</p>
-</div>
+</details>
 {% endif %}
 
 <!-- Stats bar -->
