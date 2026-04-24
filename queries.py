@@ -242,6 +242,16 @@ def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[d
             d["conviction_reasons"] = []
             d["conviction_tier"] = "low"
 
+        # Watchlist flag
+        if ctx:
+            ticker = d.get("issuer_ticker") or ""
+            insider = d.get("insider_cik") or ""
+            d["is_watched"] = (
+                ticker in ctx.watched_tickers or insider in ctx.watched_insiders
+            )
+        else:
+            d["is_watched"] = False
+
         result.append(d)
     return result
 
@@ -259,6 +269,44 @@ _SORT_COLUMNS = {
     "insider": "insider_name",
     "filed":   "filed_at",
 }
+
+
+def list_watchlist(conn: sqlite3.Connection) -> dict[str, list[dict]]:
+    """Return {'tickers': [...], 'insiders': [...]} for the watchlist page."""
+    rows = conn.execute(
+        "SELECT id, type, value, label, created_at FROM watchlist ORDER BY created_at DESC"
+    ).fetchall()
+    tickers = [dict(r) for r in rows if r["type"] == "ticker"]
+    insiders = [dict(r) for r in rows if r["type"] == "insider"]
+    return {"tickers": tickers, "insiders": insiders}
+
+
+def add_watch(conn: sqlite3.Connection, watch_type: str, value: str, label: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO watchlist (type, value, label) VALUES (?, ?, ?)",
+        [watch_type, value.strip(), label.strip()],
+    )
+    conn.commit()
+
+
+def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
+    conn.execute("DELETE FROM watchlist WHERE id = ?", [watch_id])
+    conn.commit()
+
+
+def watched_tickers(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute(
+        "SELECT value FROM watchlist WHERE type = 'ticker'"
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def watched_insiders(conn: sqlite3.Connection) -> set[str]:
+    """Returns a set of insider_cik values."""
+    rows = conn.execute(
+        "SELECT value FROM watchlist WHERE type = 'insider'"
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 def get_all_sectors(conn: sqlite3.Connection) -> list[str]:
@@ -281,6 +329,7 @@ def get_filings_for_date(
     sort_by: str = "value",
     sort_order: str = "desc",
     sector: str | None = None,
+    watched_only: bool = False,
     ctx: EnrichContext | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return (buys, sells) for the given date, applying all filters."""
@@ -313,6 +362,7 @@ def get_filings_for_date(
           {ceo}
           {search}
           {sec}
+          {watched}
     """.format(
         codes=",".join("?" * len(codes)),
         ten_b="AND is_10b5_1 = 0" if hide_10b5_1 else "",
@@ -320,6 +370,10 @@ def get_filings_for_date(
         ceo=("AND (" + " OR ".join("insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")") if ceo_cfo_only and ceo_cfo_keywords else "",
         search="AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else "",
         sec="AND sector = ?" if sector else "",
+        watched="" if not watched_only else (
+            "AND (issuer_ticker IN (SELECT value FROM watchlist WHERE type='ticker') "
+            "OR insider_cik IN (SELECT value FROM watchlist WHERE type='insider'))"
+        ),
     )
 
     params += codes

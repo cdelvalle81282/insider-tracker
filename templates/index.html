@@ -34,6 +34,7 @@
     <input type="hidden" name="d" value="{{ target_date }}" />
     <input type="hidden" name="sort_by" id="sort_by" value="{{ filters.sort_by }}" />
     <input type="hidden" name="sort_order" id="sort_order" value="{{ filters.sort_order }}" />
+    <input type="hidden" name="sector" value="{{ filters.sector }}" />
 
     <!-- Min value -->
     <div class="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded px-2 py-1">
@@ -92,6 +93,15 @@
              {% if filters.ceo_cfo %}checked{% endif %}
              class="accent-indigo-500" />
       C-Suite only
+    </label>
+
+    <!-- Watched only -->
+    <label class="flex items-center gap-1.5 cursor-pointer px-2 py-1 rounded text-xs border transition-colors
+                  {% if filters.watched_only %}bg-yellow-900 border-yellow-700 text-yellow-300{% else %}bg-gray-900 border-gray-800 text-gray-400{% endif %}">
+      <input type="checkbox" name="watched_only" value="1"
+             {% if filters.watched_only %}checked{% endif %}
+             class="accent-yellow-500" />
+      ★ Watched only
     </label>
 
     <!-- Sector filter -->

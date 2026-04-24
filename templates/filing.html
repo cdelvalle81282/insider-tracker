@@ -98,7 +98,19 @@
 
     <!-- Insider info -->
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-      <h3 class="text-gray-400 text-xs uppercase tracking-widest mb-3">Insider</h3>
+      <div class="flex items-start justify-between mb-3">
+        <h3 class="text-gray-400 text-xs uppercase tracking-widest">Insider</h3>
+        <form method="POST" action="/watchlist/add">
+          <input type="hidden" name="watch_type" value="insider" />
+          <input type="hidden" name="value" value="{{ filing.insider_cik }}" />
+          <input type="hidden" name="label" value="{{ filing.insider_name }}" />
+          <button type="submit"
+                  class="text-xs text-gray-500 hover:text-yellow-400 transition-colors"
+                  title="Watch this insider">
+            ★ Watch
+          </button>
+        </form>
+      </div>
       <div class="grid grid-cols-2 gap-3 text-sm">
         <div>
           <p class="text-gray-500 text-xs">Name</p>

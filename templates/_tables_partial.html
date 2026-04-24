@@ -185,6 +185,7 @@
               <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-green-400">
                 {{ row.issuer_ticker }}
               </a>
+              {% if row.is_watched %}<span class="ml-1 text-yellow-400 text-xs" title="Watched">★</span>{% endif %}
               {% else %}
               <span class="text-gray-500 text-xs">—</span>
               {% endif %}
@@ -193,7 +194,10 @@
               <div class="text-gray-400 truncate">{{ row.issuer_name }}</div>
               {% if row.sector %}<div class="text-gray-600 text-xs">{{ row.sector }}</div>{% endif %}
             </td>
-            <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
+            <td class="px-3 py-2 text-xs text-gray-200">
+              {{ row.insider_name }}
+              {% if row.is_watched and not row.issuer_ticker %}<span class="ml-1 text-yellow-400" title="Watched">★</span>{% endif %}
+            </td>
             <td class="px-3 py-2 text-gray-500 text-xs max-w-[100px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>

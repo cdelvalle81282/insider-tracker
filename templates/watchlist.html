@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Watchlist — Insider Tracker{% endblock %}
+{% block nav_watchlist %}active{% endblock %}
+
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-xl font-bold text-white">Watchlist</h1>
+  <p class="text-gray-500 text-sm mt-1">
+    Pin tickers and insiders. Watched items are marked with ★ on the dashboard and can be filtered to with "Watched only."
+  </p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Watched Tickers -->
+  <div class="space-y-4">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-white font-semibold mb-4">Watched Tickers</h2>
+
+      <form method="POST" action="/watchlist/add" class="flex gap-2 mb-4">
+        <input type="hidden" name="watch_type" value="ticker" />
+        <input type="text" name="value" placeholder="e.g. AAPL" maxlength="10"
+               class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500 uppercase"
+               style="text-transform:uppercase" />
+        <input type="text" name="label" placeholder="Label (optional)"
+               class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500" />
+        <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-1.5 rounded-lg transition-colors shrink-0">
+          + Add
+        </button>
+      </form>
+
+      {% if watchlist.tickers %}
+      <ul class="space-y-2">
+        {% for item in watchlist.tickers %}
+        <li class="flex items-center gap-3 py-2 border-b border-gray-800/60 last:border-0">
+          <span class="text-yellow-400">★</span>
+          <a href="/issuer/{{ item.value }}"
+             class="font-bold text-white hover:text-indigo-400 flex-1">
+            ${{ item.value }}
+          </a>
+          {% if item.label and item.label != item.value %}
+          <span class="text-gray-500 text-xs truncate">{{ item.label }}</span>
+          {% endif %}
+          <form method="POST" action="/watchlist/remove" class="shrink-0">
+            <input type="hidden" name="watch_id" value="{{ item.id }}" />
+            <button type="submit" class="text-gray-600 hover:text-red-400 text-xs transition-colors">✕</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-gray-600 text-sm">No tickers watched yet. Add one above.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Watched Insiders -->
+  <div class="space-y-4">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-white font-semibold mb-4">Watched Insiders</h2>
+      <p class="text-gray-500 text-xs mb-4">
+        Add insiders from a <a href="/" class="text-indigo-400 hover:text-indigo-300">filing detail page</a>
+        using the "Watch this insider" button. Insiders are tracked by CIK — stable even if their name changes.
+      </p>
+
+      {% if watchlist.insiders %}
+      <ul class="space-y-2">
+        {% for item in watchlist.insiders %}
+        <li class="flex items-center gap-3 py-2 border-b border-gray-800/60 last:border-0">
+          <span class="text-yellow-400">★</span>
+          <span class="text-white flex-1">{{ item.label }}</span>
+          <span class="text-gray-600 font-mono text-xs">{{ item.value[:12] }}…</span>
+          <form method="POST" action="/watchlist/remove" class="shrink-0">
+            <input type="hidden" name="watch_id" value="{{ item.id }}" />
+            <button type="submit" class="text-gray-600 hover:text-red-400 text-xs transition-colors">✕</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-gray-600 text-sm">No insiders watched yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

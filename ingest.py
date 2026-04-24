@@ -119,6 +119,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
             fetched_at  TEXT
         )
     """)
+    # watchlist table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            type        TEXT NOT NULL CHECK(type IN ('ticker','insider')),
+            value       TEXT NOT NULL,
+            label       TEXT,
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(type, value)
+        )
+    """)
     conn.commit()
 
 

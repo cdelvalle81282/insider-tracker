@@ -48,7 +48,7 @@ def _parse_date(d: str | None) -> date:
 
 
 def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
-    """Build an EnrichContext with conviction config from the active config."""
+    """Build an EnrichContext with conviction config and watchlist sets."""
     return EnrichContext(
         conn=db,
         conviction_flags=active_config.get("conviction_flags"),
@@ -57,6 +57,8 @@ def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
         conviction_thresholds=active_config.get("conviction_thresholds"),
         cluster_window_days=active_config.get("alert_rules", {}).get("cluster_window_days", 14),
         ceo_cfo_keywords=active_config.get("alert_rules", {}).get("insider_title_keywords", []),
+        watched_tickers=queries.watched_tickers(db),
+        watched_insiders=queries.watched_insiders(db),
         compute_conviction=True,
     )
 
@@ -78,6 +80,7 @@ async def index(
     sort_by: str = Query(default="value"),
     sort_order: str = Query(default="desc"),
     sector: str | None = Query(default=None),
+    watched_only: str = Query(default="0"),
 ):
     active_config = cfg.load_config()
     fd = active_config["filter_defaults"]
@@ -87,6 +90,7 @@ async def index(
     effective_hide = (hide_10b5_1 != "0") if hide_10b5_1 is not None else fd["hide_10b5_1"]
     effective_codes = codes if codes else fd["transaction_codes"]
     ceo_cfo_only = ceo_cfo == "1"
+    only_watched = watched_only == "1"
 
     db = _db(request)
     ctx = _make_ctx(db, active_config)
@@ -103,6 +107,7 @@ async def index(
         sort_by=sort_by,
         sort_order=sort_order,
         sector=sector or None,
+        watched_only=only_watched,
         ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
@@ -128,6 +133,7 @@ async def index(
             "sort_by": sort_by,
             "sort_order": sort_order,
             "sector": sector or "",
+            "watched_only": only_watched,
         },
         "config": active_config,
         "all_sectors": all_sectors,
@@ -151,11 +157,13 @@ async def htmx_filings(
     sort_by: str = Query(default="value"),
     sort_order: str = Query(default="desc"),
     sector: str | None = Query(default=None),
+    watched_only: str = Query(default="0"),
 ):
     active_config = cfg.load_config()
     target_date = _parse_date(d)
     effective_hide = hide_10b5_1 != "0"
     ceo_cfo_only = ceo_cfo == "1"
+    only_watched = watched_only == "1"
     db = _db(request)
     ctx = _make_ctx(db, active_config)
 
@@ -171,6 +179,7 @@ async def htmx_filings(
         sort_by=sort_by,
         sort_order=sort_order,
         sector=sector or None,
+        watched_only=only_watched,
         ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
@@ -185,6 +194,7 @@ async def htmx_filings(
             "sort_by": sort_by,
             "sort_order": sort_order,
             "sector": sector or "",
+            "watched_only": only_watched,
         },
     })
 
@@ -235,6 +245,30 @@ async def issuer_view(request: Request, ticker: str, days: int = Query(default=9
 # ---------------------------------------------------------------------------
 # Run log
 # ---------------------------------------------------------------------------
+
+@app.get("/watchlist", response_class=HTMLResponse)
+async def watchlist_page(request: Request):
+    wl = queries.list_watchlist(_db(request))
+    return templates.TemplateResponse(request, "watchlist.html", {"watchlist": wl})
+
+
+@app.post("/watchlist/add")
+async def watchlist_add(
+    request: Request,
+    watch_type: str = Form(...),
+    value: str = Form(...),
+    label: str = Form(default=""),
+):
+    if value.strip():
+        queries.add_watch(_db(request), watch_type, value, label or value)
+    return RedirectResponse(url="/watchlist", status_code=303)
+
+
+@app.post("/watchlist/remove")
+async def watchlist_remove(request: Request, watch_id: int = Form(...)):
+    queries.remove_watch(_db(request), watch_id)
+    return RedirectResponse(url="/watchlist", status_code=303)
+
 
 @app.get("/run-log", response_class=HTMLResponse)
 async def run_log(request: Request):
