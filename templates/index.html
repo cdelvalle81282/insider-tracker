@@ -7,7 +7,7 @@
 <!-- Filter bar -->
 <form id="filter-form"
   hx-get="/htmx/filings"
-  hx-trigger="change, input delay:400ms"
+  hx-trigger="change, input delay:400ms, submit"
   hx-target="#filings-container"
   hx-include="#filter-form"
   class="flex flex-wrap items-center gap-2 pb-4 mb-5"
