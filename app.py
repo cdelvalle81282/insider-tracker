@@ -341,11 +341,13 @@ async def export_csv(
         writer = csv.writer(buf)
         writer.writerow(_CSV_COLUMNS)
         yield buf.getvalue()
-        buf.seek(0); buf.truncate()
+        buf.seek(0)
+        buf.truncate()
         for r in rows:
             writer.writerow(["" if (v := r.get(col)) is None else v for col in _CSV_COLUMNS])
             yield buf.getvalue()
-            buf.seek(0); buf.truncate()
+            buf.seek(0)
+            buf.truncate()
 
     filename = f"insiders_{range_start.isoformat()}_{range_end.isoformat()}.csv"
     return StreamingResponse(

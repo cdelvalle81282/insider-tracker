@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import sqlite3
 import time
-import traceback
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -507,7 +506,6 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             click.echo(f" {found} filings, {inserted} rows inserted, {errors} errors")
         except Exception as e:
             finished_at = datetime.now(timezone.utc).isoformat()
-            detail = traceback.format_exc()
             conn.execute(
                 """INSERT INTO run_log (started_at, finished_at, date_processed,
                    filings_found, rows_inserted, errors, error_detail)
