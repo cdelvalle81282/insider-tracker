@@ -279,14 +279,14 @@ def ingest_date(conn: sqlite3.Connection, target_date: date) -> tuple[int, int, 
     return filings_found, rows_inserted, errors, "; ".join(error_lines[-10:])
 
 
-def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> None:
+def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> int:
     """
     If a newly inserted row is a Form 4/A amendment, find and mark the original
-    row(s) it supersedes. Matches on 5 columns to avoid mis-superseding.
-    Ambiguous matches (0 or 2+) are skipped silently rather than guessing.
+    row(s) it supersedes. Returns 1 if a row was superseded, 0 otherwise.
+    Ambiguous matches (0 or 2+) are skipped to avoid mis-attribution.
     """
     if row.get("form_type") != "4/A":
-        return
+        return 0
 
     candidates = conn.execute(
         """
@@ -309,10 +309,12 @@ def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> None:
     ).fetchall()
 
     if len(candidates) == 1:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE filings SET superseded_by = ? WHERE transaction_id = ?",
             [row["accession_no"], candidates[0][0]],
         )
+        return cur.rowcount
+    return 0
 
 
 def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
@@ -380,17 +382,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             "transaction_code, shares, accession_no, form_type "
             "FROM filings WHERE form_type = '4/A'"
         ).fetchall()
-        resolved = 0
-        for row in amendments:
-            row_dict = dict(row)
-            before = conn.execute(
-                "SELECT COUNT(*) FROM filings WHERE superseded_by IS NOT NULL"
-            ).fetchone()[0]
-            _resolve_amendment(conn, row_dict)
-            after = conn.execute(
-                "SELECT COUNT(*) FROM filings WHERE superseded_by IS NOT NULL"
-            ).fetchone()[0]
-            resolved += after - before
+        resolved = sum(_resolve_amendment(conn, dict(row)) for row in amendments)
         conn.commit()
         click.echo(f" {len(amendments)} amendments processed, {resolved} rows superseded")
         return

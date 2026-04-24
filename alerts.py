@@ -14,6 +14,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from queries import _fmt_value as _fmt_money
+
 
 # ---------------------------------------------------------------------------
 # Deduplication
@@ -22,14 +24,16 @@ from datetime import datetime, timedelta, timezone
 def _try_claim_alert(conn: sqlite3.Connection, alert_key: str, alert_type: str) -> bool:
     """
     Attempt to claim an alert slot. Returns True only if this process
-    is the first to claim it (i.e., INSERT succeeded). Safe for concurrent runs.
+    is the first to claim it (INSERT succeeded). Uses rowcount before commit
+    to avoid the changes() race condition.
     """
-    conn.execute(
+    cur = conn.execute(
         "INSERT OR IGNORE INTO alerts_sent (alert_key, alert_type) VALUES (?, ?)",
         [alert_key, alert_type],
     )
+    claimed = cur.rowcount == 1
     conn.commit()
-    return conn.execute("SELECT changes()").fetchone()[0] == 1
+    return claimed
 
 
 # ---------------------------------------------------------------------------
@@ -57,13 +61,7 @@ def _post_to_slack(webhook_url: str, payload: dict, timeout: float = 5.0) -> boo
 # ---------------------------------------------------------------------------
 
 def _fmt(v: float | None) -> str:
-    if v is None:
-        return "?"
-    if abs(v) >= 1_000_000:
-        return f"${v/1_000_000:.1f}M"
-    if abs(v) >= 1_000:
-        return f"${v/1_000:.0f}K"
-    return f"${v:,.0f}"
+    return _fmt_money(v) or "?"
 
 
 def _format_buy_message(alert_type: str, row: dict, base_url: str) -> dict:
@@ -231,9 +229,11 @@ def _match_cluster(
 # Alert key builders (amendment-stable)
 # ---------------------------------------------------------------------------
 
-def _buy_alert_key(alert_type: str, row: dict) -> str:
+def _buy_alert_key(row: dict) -> str:
+    # Shared key across all buy alert types so a trade that matches both
+    # big_buy and insider_buy thresholds only fires one Slack message.
     return (
-        f"{alert_type}:"
+        f"buy:"
         f"{row.get('issuer_cik','')}:"
         f"{row.get('insider_cik','')}:"
         f"{row.get('transaction_date','')}:"
@@ -283,7 +283,7 @@ def check_and_send(
     # 1. Big buy
     big_threshold = rules.get("big_buy_threshold", 1_000_000)
     for row in _match_big_buy(conn, since_ts, big_threshold):
-        key = _buy_alert_key("big_buy", row)
+        key = _buy_alert_key(row)
         if _try_claim_alert(conn, key, "big_buy"):
             payload = _format_buy_message("big_buy", row, base_url)
             if _post_to_slack(webhook_url, payload):
@@ -292,7 +292,7 @@ def check_and_send(
     # 2. C-suite buy (lower threshold)
     insider_threshold = rules.get("insider_buy_threshold", 250_000)
     for row in _match_insider_buy(conn, since_ts, insider_threshold, keywords):
-        key = _buy_alert_key("insider_buy", row)
+        key = _buy_alert_key(row)
         if _try_claim_alert(conn, key, "insider_buy"):
             payload = _format_buy_message("insider_buy", row, base_url)
             if _post_to_slack(webhook_url, payload):

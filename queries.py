@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
@@ -92,24 +93,43 @@ def _batch_cluster_counts(
     window_days: int,
 ) -> dict[tuple, int]:
     """
-    Pre-batch cluster counts for all unique (issuer_cik, transaction_date) pairs
-    in the row set. Returns {(issuer_cik, transaction_date): distinct_insider_count}.
-    Avoids N+1 queries by computing all needed pairs up front.
+    Count distinct buying insiders per (issuer_cik, transaction_date) pair in one query.
+    Uses the broadest date window across all pairs so a single SQL round-trip covers all.
+    Python groups results back to the per-pair granularity.
     """
     pairs = {(r.get("issuer_cik"), r.get("transaction_date")) for r in rows
              if r.get("issuer_cik") and r.get("transaction_date")}
     if not pairs:
         return {}
+
+    all_ciks = list({p[0] for p in pairs})
+    all_dates = [p[1] for p in pairs]
+    global_end = max(all_dates)
+    global_start = (date.fromisoformat(min(all_dates)) - timedelta(days=window_days)).isoformat()
+
+    placeholders = ",".join("?" * len(all_ciks))
+    db_rows = conn.execute(
+        f"""SELECT issuer_cik, transaction_date, insider_cik
+            FROM filings
+            WHERE transaction_code = 'P'
+              AND issuer_cik IN ({placeholders})
+              AND transaction_date BETWEEN ? AND ?
+              AND superseded_by IS NULL""",
+        all_ciks + [global_start, global_end],
+    ).fetchall()
+
+    by_cik_date: dict[tuple, set] = defaultdict(set)
+    for r in db_rows:
+        by_cik_date[(r[0], r[1])].add(r[2])
+
     result: dict[tuple, int] = {}
     for (cik, dt) in pairs:
         d0 = (date.fromisoformat(dt) - timedelta(days=window_days)).isoformat()
-        n = conn.execute(
-            """SELECT COUNT(DISTINCT insider_cik) FROM filings
-               WHERE issuer_cik=? AND transaction_code='P'
-                 AND transaction_date BETWEEN ? AND ?""",
-            [cik, d0, dt],
-        ).fetchone()[0]
-        result[(cik, dt)] = n
+        insiders: set = set()
+        for (c, d), iset in by_cik_date.items():
+            if c == cik and d0 <= d <= dt:
+                insiders |= iset
+        result[(cik, dt)] = len(insiders)
     return result
 
 
@@ -157,32 +177,20 @@ def _conviction_score(
                     reasons.append(f"% of holdings >= {threshold}% (+{points})")
                     break
 
-    # Non-tiered flags
     title = (row.get("insider_title") or "").lower()
-    if any(kw.lower() in title for kw in keywords):
-        pts = flags.get("ceo_cfo_bonus", 0)
-        score += pts
-        reasons.append(f"C-suite insider (+{pts})")
-
-    if row.get("is_director"):
-        pts = flags.get("director_bonus", 0)
-        score += pts
-        reasons.append(f"Director (+{pts})")
-
-    if row.get("is_ten_percent_owner"):
-        pts = flags.get("ten_percent_owner_bonus", 0)
-        score += pts
-        reasons.append(f"10%+ owner (+{pts})")
-
-    if cluster_count >= 3:
-        pts = flags.get("cluster_bonus", 0)
-        score += pts
-        reasons.append(f"Cluster: {cluster_count} insiders buying (+{pts})")
-
-    if not row.get("is_10b5_1"):
-        pts = flags.get("non_10b5_1_buy", 0)
-        score += pts
-        reasons.append(f"Not a 10b5-1 plan (+{pts})")
+    flag_checks = [
+        (any(kw.lower() in title for kw in keywords), "ceo_cfo_bonus",           "C-suite insider"),
+        (bool(row.get("is_director")),                 "director_bonus",          "Director"),
+        (bool(row.get("is_ten_percent_owner")),        "ten_percent_owner_bonus", "10%+ owner"),
+        (cluster_count >= 3,                           "cluster_bonus",           f"Cluster: {cluster_count} insiders buying"),
+        (not row.get("is_10b5_1"),                     "non_10b5_1_buy",          "Not a 10b5-1 plan"),
+    ]
+    for condition, flag_key, label in flag_checks:
+        if condition:
+            pts = flags.get(flag_key, 0)
+            if pts:
+                score += pts
+                reasons.append(f"{label} (+{pts})")
 
     final = min(score, max_score)
     return final, reasons
@@ -190,17 +198,14 @@ def _conviction_score(
 
 def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[dict]:
     result = []
+    raw_dicts = [dict(r) for r in rows]
 
-    # Pre-batch cluster counts if conviction is needed
     cluster_counts: dict[tuple, int] = {}
     if ctx and ctx.compute_conviction and ctx.conn and ctx.conviction_flags:
-        raw_dicts = [dict(r) for r in rows]
         cluster_counts = _batch_cluster_counts(
             ctx.conn, raw_dicts, ctx.cluster_window_days
         )
-        rows_to_process = raw_dicts
-    else:
-        rows_to_process = [dict(r) for r in rows]
+    rows_to_process = raw_dicts
 
     thresholds = (ctx.conviction_thresholds or {}) if ctx else {}
     high_t = thresholds.get("high", 8)
