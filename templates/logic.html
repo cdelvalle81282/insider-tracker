@@ -247,30 +247,88 @@
       </div>
     </section>
 
+    <!-- Research basis -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-white font-semibold mb-1">Research Basis</h2>
+      <p class="text-gray-500 text-xs mb-3">What academic and practitioner research says about which signals actually predict future returns.</p>
+
+      <div class="space-y-3 text-xs">
+
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-gray-300 font-medium list-none hover:text-white">
+            <span class="text-gray-600 group-open:rotate-90 transition-transform">▶</span>
+            Signal hierarchy — what predicts most
+          </summary>
+          <div class="mt-2 ml-4 space-y-1.5 text-gray-500 leading-relaxed">
+            <p><span class="text-green-400 font-medium">Strongest:</span> Cluster buying — 3+ insiders within 14 days → 2%+/month abnormal returns. The single most backed signal in research.</p>
+            <p><span class="text-green-400 font-medium">Strong:</span> CEO/CFO open market purchases. CFOs especially — they know the numbers. Officers more predictive in small-caps.</p>
+            <p><span class="text-yellow-400 font-medium">Moderate:</span> Any open market purchase where % of holdings change exceeds ~20%. Conviction signal outweighs raw dollar size.</p>
+            <p><span class="text-gray-600 font-medium">Weak/exclude:</span> Grants (A), option exercises (M), 10b5-1 plan sales, buys under $200K at large-caps.</p>
+          </div>
+        </details>
+
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-gray-300 font-medium list-none hover:text-white">
+            <span class="text-gray-600 group-open:rotate-90 transition-transform">▶</span>
+            Buys vs. sells
+          </summary>
+          <div class="mt-2 ml-4 space-y-1.5 text-gray-500 leading-relaxed">
+            <p>Purchase stocks outperform sale stocks by <span class="text-white">7.8–10% per year</span>. Sells are noisy — insiders sell for diversification, taxes, divorce. They buy for one reason.</p>
+            <p>Non-10b5-1 discretionary sells are 3× more informative than plan sells. But even discretionary sells are far weaker than buys. Default view should emphasize buys.</p>
+          </div>
+        </details>
+
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-gray-300 font-medium list-none hover:text-white">
+            <span class="text-gray-600 group-open:rotate-90 transition-transform">▶</span>
+            Time horizon
+          </summary>
+          <div class="mt-2 ml-4 space-y-1.5 text-gray-500 leading-relaxed">
+            <p>~50% of abnormal returns accrue in <span class="text-white">month 1</span>. Most of the rest through month 6. Signal largely exhausted by 12 months.</p>
+            <p>Cluster buys: outperformance is strongest in the first 30 days, then decays. Score and alert on these first.</p>
+          </div>
+        </details>
+
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-gray-300 font-medium list-none hover:text-white">
+            <span class="text-gray-600 group-open:rotate-90 transition-transform">▶</span>
+            Size & sector effects
+          </summary>
+          <div class="mt-2 ml-4 space-y-1.5 text-gray-500 leading-relaxed">
+            <p>Signal is <span class="text-white">2–3× stronger in small/micro-cap</span> stocks — less analyst coverage, more informational edge for insiders. Large-cap insider buys are less predictive.</p>
+            <p>Tech sector insiders sell heavily due to equity comp — sales there are especially noisy. Finance sector is more balanced and more informative.</p>
+            <p>Insider buys right after negative earnings surprises are highly predictive — they're signaling the market overreacted.</p>
+          </div>
+        </details>
+
+        <details class="group">
+          <summary class="flex items-center gap-2 cursor-pointer text-gray-300 font-medium list-none hover:text-white">
+            <span class="text-gray-600 group-open:rotate-90 transition-transform">▶</span>
+            Has the signal decayed over time?
+          </summary>
+          <div class="mt-2 ml-4 space-y-1.5 text-gray-500 leading-relaxed">
+            <p>Yes, somewhat. Returns are lower than 1990s studies. EDGAR's public XML access since 2003 has allowed quant funds to arbitrage easy signals away.</p>
+            <p>However: <span class="text-white">the anomaly persists</span> in 2024 studies, especially for clusters, small-caps, and trades with high % holdings change. Hard to exploit at scale; still valuable for editorial research and targeted alerts.</p>
+          </div>
+        </details>
+
+      </div>
+    </section>
+
     <!-- Phase 2 roadmap -->
-    <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 opacity-60">
-      <h2 class="text-gray-400 font-semibold mb-3">Phase 2 Signals (Planned)</h2>
-      <ul class="text-gray-600 text-xs space-y-2">
-        <li class="flex gap-2">
-          <span class="text-gray-700 mt-0.5">○</span>
-          <span><strong class="text-gray-500">Historical baseline</strong> — is this buy unusual vs. this insider's own history?</span>
-        </li>
-        <li class="flex gap-2">
-          <span class="text-gray-700 mt-0.5">○</span>
-          <span><strong class="text-gray-500">Amendment resolution</strong> — merge 4/A amendments with original filings</span>
-        </li>
-        <li class="flex gap-2">
-          <span class="text-gray-700 mt-0.5">○</span>
-          <span><strong class="text-gray-500">Issuer sentiment score</strong> — aggregate buy/sell ratio over rolling 90 days</span>
-        </li>
-        <li class="flex gap-2">
-          <span class="text-gray-700 mt-0.5">○</span>
-          <span><strong class="text-gray-500">Scoring model</strong> — weighted signal combining cluster, size, role, 10b5-1 status</span>
-        </li>
-        <li class="flex gap-2">
-          <span class="text-gray-700 mt-0.5">○</span>
-          <span><strong class="text-gray-500">Slack alerts</strong> — push notifications for rule matches (Ticket 4)</span>
-        </li>
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 opacity-70">
+      <h2 class="text-gray-300 font-semibold mb-3">Phase 2 Roadmap</h2>
+      <ul class="text-gray-500 text-xs space-y-2.5">
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Conviction score</strong> — 1–10 per trade combining role weight, % holdings change, cluster membership, 10b5-1 status. Research-backed weights.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Slack alerts</strong> — push on rule matches: $1M+ buy, CEO/CFO $250K+, 3+ insider cluster. Dedup table already in DB.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Insider history baseline</strong> — is this buy unusual vs. this insider's own past? Flag when size or frequency is an outlier.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Earnings proximity flag</strong> — mark trades within 10 days of earnings. Research shows these carry strongest info content.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Sector enrichment</strong> — SIC code from EDGAR → sector label. Enables sector filter + "tech sell = noise" logic.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Watchlist</strong> — pin specific tickers or insiders to a personal watchlist tab.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Date range view</strong> — week/month aggregation alongside the daily view.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Amendment resolution</strong> — merge 4/A amendments with originals instead of storing as separate rows.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">CSV export</strong> — download filtered table as spreadsheet.</span></li>
+        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Issuer trend chart</strong> — rolling 90-day buy/sell ratio sparkline on issuer page.</span></li>
       </ul>
     </section>
 
