@@ -1,5 +1,47 @@
 {# HTMX partial — re-rendered on filter change. No <html> wrapper. #}
 
+<!-- Daily summary (shown when range > 7 days) -->
+{% if summary_mode and daily_summary %}
+<div class="mb-5">
+  <h2 class="text-gray-400 font-semibold text-sm uppercase tracking-widest mb-2">
+    Daily Summary — {{ range_start }} to {{ range_end }}
+  </h2>
+  <div class="overflow-x-auto rounded-lg border border-gray-800">
+    <table class="w-full text-xs">
+      <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+        <tr>
+          <th class="px-3 py-2 text-left">Date</th>
+          <th class="px-3 py-2 text-right">Buys</th>
+          <th class="px-3 py-2 text-right">Buy $</th>
+          <th class="px-3 py-2 text-right">Sells</th>
+          <th class="px-3 py-2 text-right">Sell $</th>
+          <th class="px-3 py-2 text-right">Net</th>
+          <th class="px-3 py-2 text-right">Issuers</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for row in daily_summary %}
+        <tr class="hover:bg-gray-800/40 transition-colors">
+          <td class="px-3 py-2 font-mono text-gray-300">
+            <a href="/?d={{ row.day }}" class="hover:text-white">{{ row.day }}</a>
+          </td>
+          <td class="px-3 py-2 text-right text-green-400 font-medium">{{ row.buy_count or '—' }}</td>
+          <td class="px-3 py-2 text-right text-green-400">{{ row.buy_total_fmt or '—' }}</td>
+          <td class="px-3 py-2 text-right text-red-400 font-medium">{{ row.sell_count or '—' }}</td>
+          <td class="px-3 py-2 text-right text-red-400">{{ row.sell_total_fmt or '—' }}</td>
+          <td class="px-3 py-2 text-right font-semibold {% if row.net_positive %}text-green-400{% else %}text-red-400{% endif %}">
+            {{ row.net_fmt or '—' }}
+          </td>
+          <td class="px-3 py-2 text-right text-gray-500">{{ row.issuers or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="text-gray-600 text-xs mt-2">Click any date to view its individual transactions.</p>
+</div>
+{% endif %}
+
 <!-- Stats bar -->
 <div class="flex flex-wrap gap-3 mb-5" id="stats-bar">
   <span class="stat-pill bg-green-950 text-green-300 border border-green-800">

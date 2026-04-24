@@ -71,6 +71,8 @@ def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
 async def index(
     request: Request,
     d: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
     min_value: float = Query(default=None),
     hide_10b5_1: str = Query(default=None),
     codes: list[str] = Query(default=None),
@@ -85,7 +87,16 @@ async def index(
     active_config = cfg.load_config()
     fd = active_config["filter_defaults"]
 
-    target_date = _parse_date(d)
+    # Date mode: range (start/end) takes priority over single date (d)
+    if start_date and end_date:
+        range_start = _parse_date(start_date)
+        range_end = _parse_date(end_date)
+    else:
+        range_start = range_end = _parse_date(d)
+    is_range = range_start != range_end
+    summary_mode = is_range and (range_end - range_start).days > 7
+    target_date = range_end  # anchor for prev/next navigation
+
     effective_min = min_value if min_value is not None else fd["min_value"]
     effective_hide = (hide_10b5_1 != "0") if hide_10b5_1 is not None else fd["hide_10b5_1"]
     effective_codes = codes if codes else fd["transaction_codes"]
@@ -95,6 +106,7 @@ async def index(
     db = _db(request)
     ctx = _make_ctx(db, active_config)
 
+    date_range_arg = (range_start, range_end) if is_range else None
     buys, sells = queries.get_filings_for_date(
         db, target_date,
         min_value=effective_min,
@@ -108,10 +120,15 @@ async def index(
         sort_order=sort_order,
         sector=sector or None,
         watched_only=only_watched,
+        date_range=date_range_arg,
         ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
     clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
+    daily_summary = (
+        queries.get_daily_summary(db, range_start, range_end, effective_hide, effective_min)
+        if summary_mode else []
+    )
     all_sectors = queries.get_all_sectors(db)
 
     return templates.TemplateResponse(request, "index.html", {
@@ -119,7 +136,12 @@ async def index(
         "sells": sells,
         "stats": stats,
         "clusters": clusters,
+        "daily_summary": daily_summary,
+        "summary_mode": summary_mode,
         "target_date": target_date.isoformat(),
+        "range_start": range_start.isoformat(),
+        "range_end": range_end.isoformat(),
+        "is_range": is_range,
         "prev_date": (target_date - timedelta(days=1)).isoformat(),
         "next_date": (target_date + timedelta(days=1)).isoformat(),
         "is_today": target_date == date.today(),
@@ -148,6 +170,8 @@ async def index(
 async def htmx_filings(
     request: Request,
     d: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
     min_value: float = Query(default=0),
     hide_10b5_1: str = Query(default="1"),
     codes: list[str] = Query(default=["P", "S"]),
@@ -160,13 +184,23 @@ async def htmx_filings(
     watched_only: str = Query(default="0"),
 ):
     active_config = cfg.load_config()
-    target_date = _parse_date(d)
     effective_hide = hide_10b5_1 != "0"
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
+
+    if start_date and end_date:
+        range_start = _parse_date(start_date)
+        range_end = _parse_date(end_date)
+    else:
+        range_start = range_end = _parse_date(d)
+    is_range = range_start != range_end
+    summary_mode = is_range and (range_end - range_start).days > 7
+    target_date = range_end
+
     db = _db(request)
     ctx = _make_ctx(db, active_config)
 
+    date_range_arg = (range_start, range_end) if is_range else None
     buys, sells = queries.get_filings_for_date(
         db, target_date,
         min_value=min_value,
@@ -180,15 +214,24 @@ async def htmx_filings(
         sort_order=sort_order,
         sector=sector or None,
         watched_only=only_watched,
+        date_range=date_range_arg,
         ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
     clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
+    daily_summary = (
+        queries.get_daily_summary(db, range_start, range_end, effective_hide, min_value)
+        if summary_mode else []
+    )
     return templates.TemplateResponse(request, "_tables_partial.html", {
         "buys": buys,
         "sells": sells,
         "stats": stats,
         "clusters": clusters,
+        "daily_summary": daily_summary,
+        "summary_mode": summary_mode,
+        "range_start": range_start.isoformat(),
+        "range_end": range_end.isoformat(),
         "target_date": target_date.isoformat(),
         "filters": {
             "sort_by": sort_by,

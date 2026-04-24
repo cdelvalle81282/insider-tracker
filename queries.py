@@ -316,6 +316,45 @@ def get_all_sectors(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
+def get_daily_summary(
+    conn: sqlite3.Connection,
+    start_date: date,
+    end_date: date,
+    hide_10b5_1: bool = True,
+    min_value: float = 0,
+) -> list[dict]:
+    """Per-day aggregates for the date range summary view (shown when range > 7 days)."""
+    ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
+    rows = conn.execute(f"""
+        SELECT
+            DATE(filed_at) AS day,
+            SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) AS buy_count,
+            COALESCE(SUM(CASE WHEN transaction_code='P' THEN total_value END), 0) AS buy_total,
+            SUM(CASE WHEN transaction_code='S' THEN 1 ELSE 0 END) AS sell_count,
+            COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
+            COUNT(DISTINCT CASE WHEN transaction_code='P' THEN issuer_cik END) AS issuers
+        FROM filings
+        WHERE DATE(filed_at) BETWEEN ? AND ?
+          AND transaction_code IN ('P','S')
+          AND (total_value IS NULL OR total_value >= ?)
+          AND superseded_by IS NULL
+          {ten_b}
+        GROUP BY DATE(filed_at)
+        ORDER BY day DESC
+    """, [start_date.isoformat(), end_date.isoformat(), min_value]).fetchall()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["buy_total_fmt"] = _fmt_value(d["buy_total"]) if d["buy_total"] else ""
+        d["sell_total_fmt"] = _fmt_value(d["sell_total"]) if d["sell_total"] else ""
+        net = (d["buy_total"] or 0) - (d["sell_total"] or 0)
+        d["net_fmt"] = ("+" if net >= 0 else "") + (_fmt_value(abs(net)) or "")
+        d["net_positive"] = net >= 0
+        result.append(d)
+    return result
+
+
 def get_filings_for_date(
     conn: sqlite3.Connection,
     target_date: date,
@@ -330,11 +369,19 @@ def get_filings_for_date(
     sort_order: str = "desc",
     sector: str | None = None,
     watched_only: bool = False,
+    date_range: tuple[date, date] | None = None,
     ctx: EnrichContext | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Return (buys, sells) for the given date, applying all filters."""
+    """Return (buys, sells) for a date or date range, applying all filters."""
     codes = transaction_codes or ["P", "S"]
-    params: list = [target_date.isoformat()]
+
+    # Date condition: single date or range
+    if date_range:
+        date_condition = "DATE(filed_at) BETWEEN ? AND ?"
+        params: list = [date_range[0].isoformat(), date_range[1].isoformat()]
+    else:
+        date_condition = "DATE(filed_at) = ?"
+        params = [target_date.isoformat()]
 
     role_clauses = []
     if roles:
@@ -352,17 +399,17 @@ def get_filings_for_date(
     if sort_by == "conviction":
         sql_sort = "ORDER BY total_value DESC NULLS LAST"
 
-    base_where = """
-        WHERE DATE(filed_at) = ?
-          AND transaction_code IN ({codes})
+    base_where = f"""
+        WHERE {date_condition}
+          AND transaction_code IN ({{codes}})
           AND (total_value IS NULL OR total_value >= ?)
           AND superseded_by IS NULL
-          {ten_b}
-          {role}
-          {ceo}
-          {search}
-          {sec}
-          {watched}
+          {{ten_b}}
+          {{role}}
+          {{ceo}}
+          {{search}}
+          {{sec}}
+          {{watched}}
     """.format(
         codes=",".join("?" * len(codes)),
         ten_b="AND is_10b5_1 = 0" if hide_10b5_1 else "",

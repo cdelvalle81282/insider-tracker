@@ -7,22 +7,7 @@
 <!-- Date nav + filter bar -->
 <div class="flex flex-wrap items-center gap-3 mb-5">
 
-  <!-- Date selector -->
-  <div class="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg px-2 py-1">
-    <a href="/?d={{ prev_date }}" class="text-gray-500 hover:text-white px-1">‹</a>
-    <input
-      type="date"
-      value="{{ target_date }}"
-      max="{{ target_date if is_today else '' }}"
-      onchange="window.location='/?d='+this.value"
-      class="bg-transparent text-white text-sm focus:outline-none"
-    />
-    {% if not is_today %}
-    <a href="/?d={{ next_date }}" class="text-gray-500 hover:text-white px-1">›</a>
-    {% endif %}
-  </div>
-
-  <!-- Filters (HTMX-driven) -->
+  <!-- Filters (HTMX-driven) — includes date range controls -->
   <form
     id="filter-form"
     hx-get="/htmx/filings"
@@ -31,10 +16,35 @@
     hx-include="#filter-form"
     class="flex flex-wrap items-center gap-2"
   >
-    <input type="hidden" name="d" value="{{ target_date }}" />
+    <!-- Date range controls -->
+    <div class="flex items-center gap-1 bg-gray-900 border border-gray-800 rounded-lg px-2 py-1">
+      {% if not is_range %}
+      <a href="/?d={{ prev_date }}" class="text-gray-500 hover:text-white px-1 text-sm">‹</a>
+      {% endif %}
+      <input type="date" name="start_date" id="start_date" value="{{ range_start }}"
+             class="bg-transparent text-white text-sm focus:outline-none" />
+      {% if is_range %}
+      <span class="text-gray-600 text-xs px-1">→</span>
+      <input type="date" name="end_date" id="end_date" value="{{ range_end }}"
+             class="bg-transparent text-white text-sm focus:outline-none" />
+      {% else %}
+      <input type="hidden" name="end_date" id="end_date" value="{{ range_end }}" />
+      {% if not is_today %}
+      <a href="/?d={{ next_date }}" class="text-gray-500 hover:text-white px-1 text-sm">›</a>
+      {% endif %}
+      {% endif %}
+    </div>
+
+    <!-- Range preset chips -->
+    <div class="flex gap-1">
+      <button type="button" onclick="setRange(0)" class="preset-chip {% if not is_range %}active{% endif %}">Today</button>
+      <button type="button" onclick="setRange(6)" class="preset-chip {% if is_range and (range_end|string != range_start|string) %}{% endif %}">7d</button>
+      <button type="button" onclick="setRange(29)" class="preset-chip">30d</button>
+    </div>
+
     <input type="hidden" name="sort_by" id="sort_by" value="{{ filters.sort_by }}" />
     <input type="hidden" name="sort_order" id="sort_order" value="{{ filters.sort_order }}" />
-    <input type="hidden" name="sector" value="{{ filters.sector }}" />
+    <input type="hidden" name="sector" id="sector_hidden" value="{{ filters.sector }}" />
 
     <!-- Min value -->
     <div class="flex items-center gap-1.5 bg-gray-900 border border-gray-800 rounded px-2 py-1">
@@ -117,6 +127,15 @@
     {% endif %}
   </form>
 
+  <style>
+    .preset-chip {
+      @apply px-2 py-1 rounded text-xs bg-gray-900 border border-gray-800 text-gray-400 hover:text-white hover:border-gray-600 transition-colors cursor-pointer;
+    }
+    .preset-chip.active {
+      @apply bg-gray-700 border-gray-600 text-white;
+    }
+  </style>
+
   <script>
     function sortBy(col) {
       const sb = document.getElementById('sort_by');
@@ -127,6 +146,17 @@
         sb.value = col;
         so.value = 'desc';
       }
+      htmx.trigger(document.getElementById('filter-form'), 'change');
+    }
+
+    function setRange(daysBack) {
+      const today = new Date();
+      const pad = n => String(n).padStart(2,'0');
+      const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+      const start = new Date(today);
+      start.setDate(today.getDate() - daysBack);
+      document.getElementById('start_date').value = fmt(start);
+      document.getElementById('end_date').value = fmt(today);
       htmx.trigger(document.getElementById('filter-form'), 'change');
     }
   </script>
