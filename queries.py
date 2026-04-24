@@ -69,6 +69,8 @@ def _pct_holdings(row: dict) -> str | None:
     Buy:  shares_bought / shares_owned_after
     Sell: shares_sold   / (shares_owned_after + shares_sold)
     """
+    if row.get("table_type") == "D":
+        return None  # derivative units ≠ actual shares; ratio is meaningless
     shares = row.get("shares")
     after = row.get("shares_owned_after")
     code = row.get("transaction_code")
