@@ -5,8 +5,11 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
+import csv
+import io
+
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -243,6 +246,91 @@ async def htmx_filings(
 
 
 # ---------------------------------------------------------------------------
+# CSV export
+# ---------------------------------------------------------------------------
+
+_CSV_COLUMNS = [
+    "filed_at", "issuer_ticker", "issuer_name", "sector",
+    "insider_name", "insider_title", "transaction_code",
+    "shares", "price_per_share", "total_value", "pct_holdings",
+    "conviction", "is_10b5_1", "transaction_date", "transaction_id",
+]
+
+_CSV_MAX_ROWS = 10000
+
+
+@app.get("/export.csv")
+async def export_csv(
+    request: Request,
+    d: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    min_value: float = Query(default=0),
+    hide_10b5_1: str = Query(default="1"),
+    codes: list[str] = Query(default=["P", "S"]),
+    roles: list[str] = Query(default=None),
+    search: str | None = Query(default=None),
+    ceo_cfo: str = Query(default="0"),
+    sort_by: str = Query(default="value"),
+    sort_order: str = Query(default="desc"),
+    sector: str | None = Query(default=None),
+    watched_only: str = Query(default="0"),
+):
+    active_config = cfg.load_config()
+    effective_hide = hide_10b5_1 != "0"
+    ceo_cfo_only = ceo_cfo == "1"
+    only_watched = watched_only == "1"
+
+    if start_date and end_date:
+        range_start = _parse_date(start_date)
+        range_end = _parse_date(end_date)
+    else:
+        range_start = range_end = _parse_date(d)
+    is_range = range_start != range_end
+    target_date = range_end
+
+    db = _db(request)
+    ctx = _make_ctx(db, active_config)
+
+    date_range_arg = (range_start, range_end) if is_range else None
+    buys, sells = queries.get_filings_for_date(
+        db, target_date,
+        min_value=min_value,
+        transaction_codes=codes,
+        hide_10b5_1=effective_hide,
+        roles=roles,
+        search=search,
+        ceo_cfo_only=ceo_cfo_only,
+        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+        sort_by=sort_by,
+        sort_order=sort_order,
+        sector=sector or None,
+        watched_only=only_watched,
+        date_range=date_range_arg,
+        ctx=ctx,
+    )
+    rows = (buys + sells)[:_CSV_MAX_ROWS]
+
+    def generate():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_CSV_COLUMNS)
+        yield buf.getvalue()
+        buf.seek(0); buf.truncate()
+        for r in rows:
+            writer.writerow([r.get(col, "") if r.get(col) is not None else "" for col in _CSV_COLUMNS])
+            yield buf.getvalue()
+            buf.seek(0); buf.truncate()
+
+    filename = f"insiders_{range_start.isoformat()}_{range_end.isoformat()}.csv"
+    return StreamingResponse(
+        generate(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Filing detail
 # ---------------------------------------------------------------------------
 
@@ -277,11 +365,15 @@ async def filing_detail(request: Request, transaction_id: str):
 
 @app.get("/issuer/{ticker}", response_class=HTMLResponse)
 async def issuer_view(request: Request, ticker: str, days: int = Query(default=90)):
-    filings = queries.get_issuer_filings(_db(request), ticker, days=days)
+    db = _db(request)
+    filings = queries.get_issuer_filings(db, ticker, days=days)
+    trend_series = queries.get_issuer_trend(db, ticker)
+    trend_svg = queries.render_sparkline(trend_series)
     return templates.TemplateResponse(request, "issuer.html", {
         "ticker": ticker.upper(),
         "filings": filings,
         "days": days,
+        "trend_svg": trend_svg,
     })
 
 

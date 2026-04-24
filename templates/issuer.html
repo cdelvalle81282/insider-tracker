@@ -33,6 +33,19 @@
   </div>
 </div>
 
+{% if trend_svg %}
+<div class="mb-5 bg-gray-900 border border-gray-800 rounded-xl p-4">
+  <div class="flex items-center justify-between mb-2">
+    <h3 class="text-gray-400 text-xs uppercase tracking-widest">6-Month Buy/Sell Trend</h3>
+    <div class="flex items-center gap-3 text-xs text-gray-600">
+      <span class="flex items-center gap-1"><span class="inline-block w-3 h-0.5 bg-green-500"></span>Buys</span>
+      <span class="flex items-center gap-1"><span class="inline-block w-3 h-0.5 bg-red-500"></span>Sells</span>
+    </div>
+  </div>
+  {{ trend_svg | safe }}
+</div>
+{% endif %}
+
 {% if not filings %}
 <div class="text-center py-16 text-gray-600">
   No Form 4 filings found for ${{ ticker }} in the last {{ days }} days
