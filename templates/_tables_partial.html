@@ -79,13 +79,17 @@
       <span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
       Cluster Activity — {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} with 2+ insiders
     </h2>
+    <div class="flex gap-1 ml-auto" onclick="event.stopPropagation()">
+      <button onclick="filterClusters('all')"   data-cf="all"   class="cluster-filter-btn px-2 py-0.5 rounded text-xs font-medium bg-gray-700 text-white border border-gray-600">All</button>
+      <button onclick="filterClusters('buy')"   data-cf="buy"   class="cluster-filter-btn px-2 py-0.5 rounded text-xs font-medium bg-gray-900 text-green-400 border border-gray-700 hover:border-green-700">▲ Buys</button>
+      <button onclick="filterClusters('sell')"  data-cf="sell"  class="cluster-filter-btn px-2 py-0.5 rounded text-xs font-medium bg-gray-900 text-red-400   border border-gray-700 hover:border-red-700">▼ Sells</button>
+      <button onclick="filterClusters('mixed')" data-cf="mixed" class="cluster-filter-btn px-2 py-0.5 rounded text-xs font-medium bg-gray-900 text-yellow-400 border border-gray-700 hover:border-yellow-700">↕ Mixed</button>
+    </div>
   </summary>
-  <div class="space-y-2">
+  <div class="space-y-2" id="cluster-list">
     {% for c in clusters %}
-    <details class="group rounded-lg border
-                    {% if c.direction == 'buy' %}border-green-900/60 bg-green-950/20
-                    {% elif c.direction == 'sell' %}border-red-900/60 bg-red-950/20
-                    {% else %}border-yellow-900/60 bg-yellow-950/10{% endif %}">
+    <details data-direction="{{ c.direction }}"
+             class="group rounded-lg border {% if c.direction == 'buy' %}border-green-900/60 bg-green-950/20{% elif c.direction == 'sell' %}border-red-900/60 bg-red-950/20{% else %}border-yellow-900/60 bg-yellow-950/10{% endif %}">
 
       <!-- Summary row — always visible, click to expand -->
       <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer list-none select-none
@@ -342,5 +346,21 @@
       </table>
     </div>
   </details>
+
+<script>
+function filterClusters(dir) {
+  document.querySelectorAll('#cluster-list [data-direction]').forEach(el => {
+    el.style.display = (dir === 'all' || el.dataset.direction === dir) ? '' : 'none';
+  });
+  document.querySelectorAll('.cluster-filter-btn').forEach(btn => {
+    const active = btn.dataset.cf === dir;
+    btn.classList.toggle('bg-gray-700', active);
+    btn.classList.toggle('border-gray-600', active);
+    btn.classList.toggle('text-white', active);
+    btn.classList.toggle('bg-gray-900', !active);
+    btn.classList.toggle('border-gray-700', !active);
+  });
+}
+</script>
 
 </div>
