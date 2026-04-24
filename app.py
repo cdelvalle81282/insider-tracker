@@ -452,9 +452,7 @@ async def chart_view(
     earnings = polygon_client.get_earnings_estimate(ticker, api_key)
     filings = queries.get_issuer_filings(_db(request), ticker, days=days)
 
-    # Build marker list for Lightweight Charts.
-    # Joint-filer dedup is handled at DB level (joint_filer_of column);
-    # primary row already carries the combined "Name A / Name B" insider_name.
+    # Build marker list for Lightweight Charts
     code_filter = {"buys": ["P"], "sells": ["S"], "both": ["P", "S"]}.get(mode, ["P", "S"])
     markers = []
     for f in filings:

@@ -414,10 +414,12 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
 
     Returns the number of rows newly marked.
     """
+    # char(31)/char(30) = ASCII unit/record separators — safe in EDGAR names
     groups = conn.execute("""
-        SELECT issuer_ticker, transaction_date, transaction_code,
-               shares, total_value, table_type,
-               GROUP_CONCAT(transaction_id, '||') AS ids
+        SELECT GROUP_CONCAT(
+                   transaction_id || char(31) || insider_name || char(31) || filed_at,
+                   char(30)
+               ) AS row_data
         FROM filings
         WHERE superseded_by IS NULL
           AND joint_filer_of IS NULL
@@ -431,32 +433,26 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
 
     marked = 0
     for group in groups:
-        ids = group["ids"].split("||")
-        rows = conn.execute(
-            f"SELECT transaction_id, insider_name, insider_cik, filed_at "
-            f"FROM filings WHERE transaction_id IN ({','.join('?' * len(ids))})",
-            ids,
-        ).fetchall()
-        rows_sorted = sorted(rows, key=lambda r: r["filed_at"])
-        primary = rows_sorted[0]
-        secondaries = rows_sorted[1:]
+        items = sorted(
+            [item.split(chr(31)) for item in group["row_data"].split(chr(30))],
+            key=lambda x: x[2],  # sort by filed_at
+        )
+        primary_id, primary_name = items[0][0], items[0][1]
+        secondary_ids = [item[0] for item in items[1:]]
+        combined = " / ".join(dict.fromkeys(item[1] for item in items))
 
-        seen: list[str] = []
-        for r in rows_sorted:
-            if r["insider_name"] not in seen:
-                seen.append(r["insider_name"])
-        combined = " / ".join(seen)
-
-        if combined != primary["insider_name"]:
+        if combined != primary_name:
             conn.execute(
                 "UPDATE filings SET insider_name = ? WHERE transaction_id = ?",
-                [combined, primary["transaction_id"]],
+                [combined, primary_id],
             )
 
-        for sec in secondaries:
+        if secondary_ids:
+            placeholders = ",".join("?" * len(secondary_ids))
             cur = conn.execute(
-                "UPDATE filings SET joint_filer_of = ? WHERE transaction_id = ? AND joint_filer_of IS NULL",
-                [primary["transaction_id"], sec["transaction_id"]],
+                f"UPDATE filings SET joint_filer_of = ? "
+                f"WHERE transaction_id IN ({placeholders}) AND joint_filer_of IS NULL",
+                [primary_id, *secondary_ids],
             )
             marked += cur.rowcount
 
