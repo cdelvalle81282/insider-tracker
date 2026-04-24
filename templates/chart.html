@@ -1,166 +1,145 @@
 {% extends "base.html" %}
-{% block title %}${{ ticker }} Chart — Insider Tracker{% endblock %}
+{% block title %}${{ ticker }} — Insider Tracker{% endblock %}
 
 {% block content %}
 
 <!-- Header -->
-<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
-  <div class="flex items-center gap-3">
-    <h1 class="text-2xl font-bold text-white">${{ ticker }}</h1>
-    <a href="/issuer/{{ ticker }}" class="text-gray-500 hover:text-white text-sm">All transactions →</a>
+<div class="flex flex-wrap items-center justify-between gap-4 mb-5">
+  <div class="flex items-center gap-4">
+    <h1 style="font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;color:var(--text-1);letter-spacing:.04em;">${{ ticker }}</h1>
+    <a href="/issuer/{{ ticker }}" style="font-size:.65rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);transition:color .12s;" class="hover:text-sky-400">All transactions →</a>
   </div>
 
-  <div class="flex items-center gap-2">
-    <!-- Buy/Sell/Both toggle -->
-    <div class="flex rounded-lg overflow-hidden border border-gray-800 text-xs">
+  <div class="flex items-center gap-2 flex-wrap">
+    <!-- Buy/Sell/Both -->
+    <div class="seg-wrap">
       <a href="/chart/{{ ticker }}?range={{ range }}&mode=both"
-         class="px-3 py-1.5 transition-colors {% if mode == 'both' %}bg-gray-700 text-white{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
-        Both
-      </a>
+         class="seg {% if mode == 'both' %}active-both{% endif %}">Both</a>
       <a href="/chart/{{ ticker }}?range={{ range }}&mode=buys"
-         class="px-3 py-1.5 border-l border-gray-800 transition-colors {% if mode == 'buys' %}bg-green-900 text-green-300{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
-        ▲ Buys
-      </a>
+         class="seg {% if mode == 'buys' %}active-buys{% endif %}">▲ Buys</a>
       <a href="/chart/{{ ticker }}?range={{ range }}&mode=sells"
-         class="px-3 py-1.5 border-l border-gray-800 transition-colors {% if mode == 'sells' %}bg-red-900 text-red-300{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
-        ▼ Sells
-      </a>
+         class="seg {% if mode == 'sells' %}active-sells{% endif %}">▼ Sells</a>
     </div>
 
-    <!-- Timeframe selector -->
-    <div class="flex rounded-lg overflow-hidden border border-gray-800 text-xs">
+    <!-- Timeframe -->
+    <div class="seg-wrap">
       {% for r in ranges %}
       <a href="/chart/{{ ticker }}?range={{ r }}&mode={{ mode }}"
-         class="px-3 py-1.5 transition-colors {% if range == r %}bg-gray-700 text-white{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}
-                {% if not loop.first %}border-l border-gray-800{% endif %}">
-        {{ r }}
-      </a>
+         class="seg {% if range == r %}active-both{% endif %}">{{ r }}</a>
       {% endfor %}
     </div>
   </div>
 </div>
 
-{% if not has_api_key %}
 <!-- No API key warning -->
-<div class="bg-yellow-950 border border-yellow-800 rounded-xl p-4 mb-5">
-  <p class="text-yellow-400 text-sm font-semibold mb-1">Polygon.io API key not configured</p>
-  <p class="text-yellow-600 text-xs">
-    Add <code class="text-yellow-500">POLYGON_API_KEY=your_key</code> to
-    <code class="text-yellow-500">/home/deploy/insider-tracker/.env</code> on the server,
-    then restart the service. Price data will not load until then.
+{% if not has_api_key %}
+<div class="warn-banner mb-5">
+  <p style="color:var(--amber);font-size:.78rem;font-weight:600;margin-bottom:4px;">Polygon.io API key not configured</p>
+  <p style="color:rgba(245,158,11,.5);font-size:.72rem;">
+    Add <code style="color:var(--amber);">POLYGON_API_KEY=your_key</code> to
+    <code style="color:var(--amber);">/home/deploy/insider-tracker/.env</code> on the server, then restart.
   </p>
 </div>
 {% endif %}
 
 <!-- Chart container -->
-<div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-5">
+<div class="surface mb-4" style="padding:16px;">
   {% if has_api_key %}
-  <div id="chart" class="w-full" style="height: 420px;"></div>
+  <div id="chart" class="w-full" style="height:420px;"></div>
   {% else %}
-  <div class="flex items-center justify-center h-64 text-gray-700 text-sm">
+  <div style="display:flex;align-items:center;justify-content:center;height:240px;color:var(--text-3);font-size:.8rem;">
     Price chart unavailable — API key required
   </div>
   {% endif %}
 </div>
 
 <!-- Earnings card -->
-<div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 mb-5 flex flex-wrap items-center gap-x-6 gap-y-2">
-  <div class="flex items-center gap-2">
-    <span class="text-gray-500 text-xs uppercase tracking-widest">Earnings</span>
+<div class="surface mb-5" style="padding:12px 18px;display:flex;flex-wrap:wrap;align-items:center;gap:16px;">
+  <div class="flex items-center gap-3">
+    <span style="font-size:.58rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);">Earnings Est.</span>
     {% if earnings %}
       {% if earnings.days_until >= 0 and earnings.days_until <= 30 %}
-      <span class="text-yellow-400 font-semibold text-sm">
-        ⚠ Est. {{ earnings.estimated_next }}
-        <span class="text-yellow-600 font-normal text-xs">({{ earnings.days_until }}d away)</span>
+      <span style="color:var(--amber);font-weight:600;font-size:.85rem;">
+        ⚠ {{ earnings.estimated_next }}
+        <span style="color:rgba(245,158,11,.5);font-weight:400;font-size:.72rem;">({{ earnings.days_until }}d away)</span>
       </span>
       {% elif earnings.days_until > 30 and earnings.days_until <= 90 %}
-      <span class="text-gray-300 text-sm">
-        Est. {{ earnings.estimated_next }}
-        <span class="text-gray-500 font-normal text-xs">({{ earnings.days_until }}d)</span>
+      <span class="num" style="color:var(--text-1);font-size:.82rem;">
+        {{ earnings.estimated_next }}
+        <span style="color:var(--text-2);font-size:.7rem;">({{ earnings.days_until }}d)</span>
       </span>
       {% else %}
-      <span class="text-gray-500 text-sm">
-        Est. {{ earnings.estimated_next }}
-      </span>
+      <span class="num" style="color:var(--text-2);font-size:.82rem;">{{ earnings.estimated_next }}</span>
       {% endif %}
-      <span class="text-gray-700 text-xs">· Last: {{ earnings.fiscal_period }} {{ earnings.fiscal_year }} ({{ earnings.last_period }})</span>
+      <span class="num" style="font-size:.65rem;color:var(--text-3);">· Last: {{ earnings.fiscal_period }} {{ earnings.fiscal_year }} ({{ earnings.last_period }})</span>
     {% else %}
-    <span class="text-gray-600 text-sm">No Polygon data</span>
+    <span style="color:var(--text-3);font-size:.8rem;">No Polygon data</span>
     {% endif %}
   </div>
-  <div class="flex items-center gap-3 ml-auto text-xs">
+  <div class="flex items-center gap-4 ml-auto">
     <a href="https://finance.yahoo.com/calendar/earnings?symbol={{ ticker }}" target="_blank" rel="noopener"
-       class="text-indigo-400 hover:text-indigo-300">Yahoo Finance ↗</a>
+       style="font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);" class="hover:text-white transition-colors">Yahoo Finance ↗</a>
     <a href="https://www.earningswhispers.com/stocks/{{ ticker | lower }}" target="_blank" rel="noopener"
-       class="text-indigo-400 hover:text-indigo-300">EW ↗</a>
+       style="font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);" class="hover:text-white transition-colors">EW ↗</a>
   </div>
 </div>
 
 <!-- Transaction table -->
 <div>
-  <h2 class="text-gray-400 font-semibold text-sm uppercase tracking-widest mb-3">
-    Insider Transactions
-    {% if mode == 'buys' %}— Buys only
-    {% elif mode == 'sells' %}— Sells only
-    {% endif %}
-    ({{ filings | selectattr('transaction_code', 'in', code_filter) | list | length }})
-  </h2>
+  <div class="flex items-center gap-2 mb-3">
+    <span class="sh" style="color:{% if mode == 'sells' %}var(--sell){% else %}var(--buy){% endif %};">
+      <span class="sh-dot" style="background:{% if mode == 'sells' %}var(--sell){% else %}var(--buy){% endif %};"></span>
+      Insider Transactions
+    </span>
+    <span class="num" style="font-size:.62rem;color:var(--text-3);">
+      ({{ filings | selectattr('transaction_code', 'in', code_filter) | list | length }})
+    </span>
+  </div>
 
-  <div class="overflow-x-auto rounded-lg border border-gray-800">
-    <table class="w-full text-sm">
-      <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
         <tr>
-          <th class="px-3 py-2 text-left">Date</th>
-          <th class="px-3 py-2 text-center">Type</th>
-          <th class="px-3 py-2 text-left">Insider</th>
-          <th class="px-3 py-2 text-left">Title</th>
-          <th class="px-3 py-2 text-right">Shares</th>
-          <th class="px-3 py-2 text-right">Price</th>
-          <th class="px-3 py-2 text-right">$ Value</th>
-          <th class="px-3 py-2 text-right">% Held</th>
-          <th class="px-3 py-2 text-center">Score</th>
+          <th class="th text-left">Date</th>
+          <th class="th text-center">Type</th>
+          <th class="th text-left">Insider</th>
+          <th class="th text-left">Title</th>
+          <th class="th text-right">Shares</th>
+          <th class="th text-right">Price</th>
+          <th class="th text-right">$ Value</th>
+          <th class="th text-right">% Held</th>
+          <th class="th text-center">Score</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-gray-800">
+      <tbody>
         {% for f in filings %}
         {% if f.transaction_code in code_filter %}
-        <tr class="hover:bg-gray-800/40 transition-colors {% if f.is_10b5_1 %}opacity-50{% endif %}
-                   {% if f.transaction_code == 'P' %}border-l-2 border-green-700{% else %}border-l-2 border-red-700{% endif %}">
-          <td class="px-3 py-2 text-gray-400 text-xs font-mono whitespace-nowrap">{{ f.transaction_date }}</td>
-          <td class="px-3 py-2 text-center">
+        <tr class="{% if f.transaction_code == 'P' %}row-buy{% else %}row-sell{% endif %} {% if f.is_10b5_1 %}row-dimmed{% endif %}">
+          <td class="td num" style="color:var(--text-2);white-space:nowrap;font-size:.72rem;">{{ f.transaction_date }}</td>
+          <td class="td text-center">
             {% if f.transaction_code == 'P' %}
-            <span class="text-green-400 font-semibold text-xs">▲ Buy</span>
+            <span style="color:var(--buy);font-size:.65rem;font-weight:700;letter-spacing:.06em;">▲ BUY</span>
             {% else %}
-            <span class="text-red-400 font-semibold text-xs">▼ Sell</span>
+            <span style="color:var(--sell);font-size:.65rem;font-weight:700;letter-spacing:.06em;">▼ SELL</span>
             {% endif %}
           </td>
-          <td class="px-3 py-2 text-gray-200 text-xs">{{ f.insider_name }}</td>
-          <td class="px-3 py-2 text-gray-500 text-xs max-w-[130px] truncate">{{ f.insider_title or '—' }}</td>
-          <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(f.shares) if f.shares else '—' }}</td>
-          <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ f.price_fmt or '—' }}</td>
-          <td class="px-3 py-2 text-right font-semibold text-xs
-                     {% if f.transaction_code == 'P' %}text-green-400{% else %}text-red-400{% endif %}">
-            {{ f.total_value_fmt or '—' }}
-          </td>
-          <td class="px-3 py-2 text-right text-xs {% if f.pct_holdings and f.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
-            {{ f.pct_holdings or '—' }}
-          </td>
-          <td class="px-3 py-2 text-center">
+          <td class="td" style="color:var(--text-1);font-size:.78rem;">{{ f.insider_name }}</td>
+          <td class="td" style="color:var(--text-2);font-size:.72rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.insider_title or '—' }}</td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(f.shares) if f.shares else '—' }}</td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ f.price_fmt or '—' }}</td>
+          <td class="td num text-right font-bold" style="color:{% if f.transaction_code == 'P' %}var(--buy){% else %}var(--sell){% endif %};">{{ f.total_value_fmt or '—' }}</td>
+          <td class="td num text-right {% if f.pct_holdings and f.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ f.pct_holdings or '—' }}</td>
+          <td class="td text-center">
             {% if f.conviction %}
-            <span class="text-xs font-bold px-1.5 py-0.5 rounded
-              {% if f.conviction_tier == 'high' %}bg-green-900 text-green-300 border border-green-700
-              {% elif f.conviction_tier == 'medium' %}bg-yellow-900 text-yellow-300 border border-yellow-700
-              {% else %}bg-gray-800 text-gray-400 border border-gray-700{% endif %}">
-              {{ f.conviction }}
-            </span>
+            <span class="score score-{{ f.conviction_tier }}">{{ f.conviction }}</span>
             {% else %}
-            <span class="text-gray-700">—</span>
+            <span style="color:var(--text-3);">—</span>
             {% endif %}
           </td>
         </tr>
         {% endif %}
         {% else %}
-        <tr><td colspan="9" class="px-3 py-8 text-center text-gray-600">No transactions in this range</td></tr>
+        <tr><td colspan="9" style="padding:32px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No transactions in this range</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -168,7 +147,6 @@
 </div>
 
 {% if has_api_key %}
-<!-- Lightweight Charts v4 — pinned to avoid API drift -->
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function () {
@@ -177,31 +155,27 @@
   const el      = document.getElementById('chart');
 
   if (!bars.length) {
-    el.innerHTML = '<div class="flex items-center justify-center h-full text-gray-600 text-sm">No price data available for ${{ ticker }}</div>';
+    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3);font-size:.8rem;">No price data available for ${{ ticker }}</div>';
     return;
   }
 
   const chart = LightweightCharts.createChart(el, {
-    autoSize: true,          // fills the container; no manual width needed
-    height:   420,
-    layout:   { background: { color: '#111827' }, textColor: '#9ca3af' },
-    grid:     { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
+    autoSize:  true,
+    height:    420,
+    layout:    { background: { color: '#0b1220' }, textColor: '#566882' },
+    grid:      { vertLines: { color: '#0f1a2c' }, horzLines: { color: '#0f1a2c' } },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#374151' },
-    timeScale: { borderColor: '#374151', timeVisible: false },
+    rightPriceScale: { borderColor: '#182540' },
+    timeScale: { borderColor: '#182540', timeVisible: false },
   });
 
   const candles = chart.addCandlestickSeries({
-    upColor:         '#22c55e',
-    downColor:       '#ef4444',
-    borderUpColor:   '#22c55e',
-    borderDownColor: '#ef4444',
-    wickUpColor:     '#22c55e',
-    wickDownColor:   '#ef4444',
+    upColor:         '#0fcea0', downColor:        '#f64b6e',
+    borderUpColor:   '#0fcea0', borderDownColor:  '#f64b6e',
+    wickUpColor:     '#0fcea0', wickDownColor:     '#f64b6e',
   });
   candles.setData(bars);
 
-  // Markers must be sorted ascending by time
   if (markers.length) {
     candles.setMarkers(
       markers.slice().sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0)
