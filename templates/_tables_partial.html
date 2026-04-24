@@ -91,9 +91,14 @@
         <span class="text-gray-600 group-open:rotate-90 transition-transform text-xs">▶</span>
 
         <!-- Ticker -->
-        <span class="font-bold text-white w-16 shrink-0">
-          {{ c.issuer_ticker or '—' }}
-        </span>
+        {% if c.issuer_ticker %}
+        <a href="/chart/{{ c.issuer_ticker }}" class="font-bold text-white hover:text-indigo-400 w-16 shrink-0"
+           onclick="event.stopPropagation()">
+          {{ c.issuer_ticker }}
+        </a>
+        {% else %}
+        <span class="font-bold text-white w-16 shrink-0">—</span>
+        {% endif %}
 
         <!-- Company -->
         <span class="text-gray-400 text-xs truncate flex-1 min-w-0">{{ c.issuer_name }}</span>
