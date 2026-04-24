@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}${{ ticker }} Chart — Insider Tracker{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <div class="flex items-center gap-3">
+    <h1 class="text-2xl font-bold text-white">${{ ticker }}</h1>
+    <a href="/issuer/{{ ticker }}" class="text-gray-500 hover:text-white text-sm">View transactions →</a>
+  </div>
+
+  <div class="flex items-center gap-2">
+    <!-- Buy/Sell/Both toggle -->
+    <div class="flex rounded-lg overflow-hidden border border-gray-800 text-xs">
+      <a href="/chart/{{ ticker }}?range={{ range }}&mode=both"
+         class="px-3 py-1.5 transition-colors {% if mode == 'both' %}bg-gray-700 text-white{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
+        Both
+      </a>
+      <a href="/chart/{{ ticker }}?range={{ range }}&mode=buys"
+         class="px-3 py-1.5 border-l border-gray-800 transition-colors {% if mode == 'buys' %}bg-green-900 text-green-300{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
+        ▲ Buys
+      </a>
+      <a href="/chart/{{ ticker }}?range={{ range }}&mode=sells"
+         class="px-3 py-1.5 border-l border-gray-800 transition-colors {% if mode == 'sells' %}bg-red-900 text-red-300{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
+        ▼ Sells
+      </a>
+    </div>
+
+    <!-- Timeframe selector -->
+    <div class="flex rounded-lg overflow-hidden border border-gray-800 text-xs">
+      {% for r in ranges %}
+      <a href="/chart/{{ ticker }}?range={{ r }}&mode={{ mode }}"
+         class="px-3 py-1.5 transition-colors {% if range == r %}bg-gray-700 text-white{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}
+                {% if not loop.first %}border-l border-gray-800{% endif %}">
+        {{ r }}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% if not has_api_key %}
+<!-- No API key warning -->
+<div class="bg-yellow-950 border border-yellow-800 rounded-xl p-4 mb-5">
+  <p class="text-yellow-400 text-sm font-semibold mb-1">Polygon.io API key not configured</p>
+  <p class="text-yellow-600 text-xs">
+    Add <code class="text-yellow-500">POLYGON_API_KEY=your_key</code> to
+    <code class="text-yellow-500">/home/deploy/insider-tracker/.env</code> on the server,
+    then restart the service. Price data will not load until then.
+  </p>
+</div>
+{% endif %}
+
+<!-- Chart container -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-5">
+  {% if has_api_key %}
+  <div id="chart" class="w-full" style="height: 420px;"></div>
+  {% else %}
+  <div class="flex items-center justify-center h-64 text-gray-700 text-sm">
+    Price chart unavailable — API key required
+  </div>
+  {% endif %}
+</div>
+
+<!-- Transaction table -->
+<div>
+  <h2 class="text-gray-400 font-semibold text-sm uppercase tracking-widest mb-3">
+    Insider Transactions
+    {% if mode == 'buys' %}— Buys only
+    {% elif mode == 'sells' %}— Sells only
+    {% endif %}
+    ({{ filings | selectattr('transaction_code', 'in', code_filter) | list | length }})
+  </h2>
+
+  <div class="overflow-x-auto rounded-lg border border-gray-800">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+        <tr>
+          <th class="px-3 py-2 text-left">Date</th>
+          <th class="px-3 py-2 text-center">Type</th>
+          <th class="px-3 py-2 text-left">Insider</th>
+          <th class="px-3 py-2 text-left">Title</th>
+          <th class="px-3 py-2 text-right">Shares</th>
+          <th class="px-3 py-2 text-right">Price</th>
+          <th class="px-3 py-2 text-right">$ Value</th>
+          <th class="px-3 py-2 text-right">% Held</th>
+          <th class="px-3 py-2 text-center">Score</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for f in filings %}
+        {% if f.transaction_code in code_filter %}
+        <tr class="hover:bg-gray-800/40 transition-colors {% if f.is_10b5_1 %}opacity-50{% endif %}
+                   {% if f.transaction_code == 'P' %}border-l-2 border-green-700{% else %}border-l-2 border-red-700{% endif %}">
+          <td class="px-3 py-2 text-gray-400 text-xs font-mono whitespace-nowrap">{{ f.transaction_date }}</td>
+          <td class="px-3 py-2 text-center">
+            {% if f.transaction_code == 'P' %}
+            <span class="text-green-400 font-semibold text-xs">▲ Buy</span>
+            {% else %}
+            <span class="text-red-400 font-semibold text-xs">▼ Sell</span>
+            {% endif %}
+          </td>
+          <td class="px-3 py-2 text-gray-200 text-xs">{{ f.insider_name }}</td>
+          <td class="px-3 py-2 text-gray-500 text-xs max-w-[130px] truncate">{{ f.insider_title or '—' }}</td>
+          <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(f.shares) if f.shares else '—' }}</td>
+          <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ f.price_fmt or '—' }}</td>
+          <td class="px-3 py-2 text-right font-semibold text-xs
+                     {% if f.transaction_code == 'P' %}text-green-400{% else %}text-red-400{% endif %}">
+            {{ f.total_value_fmt or '—' }}
+          </td>
+          <td class="px-3 py-2 text-right text-xs {% if f.pct_holdings and f.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
+            {{ f.pct_holdings or '—' }}
+          </td>
+          <td class="px-3 py-2 text-center">
+            {% if f.conviction %}
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded
+              {% if f.conviction_tier == 'high' %}bg-green-900 text-green-300 border border-green-700
+              {% elif f.conviction_tier == 'medium' %}bg-yellow-900 text-yellow-300 border border-yellow-700
+              {% else %}bg-gray-800 text-gray-400 border border-gray-700{% endif %}">
+              {{ f.conviction }}
+            </span>
+            {% else %}
+            <span class="text-gray-700">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endif %}
+        {% else %}
+        <tr><td colspan="9" class="px-3 py-8 text-center text-gray-600">No transactions in this range</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if has_api_key %}
+<!-- Lightweight Charts -->
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+(function () {
+  const bars    = {{ bars_json | safe }};
+  const markers = {{ markers_json | safe }};
+
+  if (!bars.length) {
+    document.getElementById('chart').innerHTML =
+      '<div class="flex items-center justify-center h-full text-gray-600 text-sm">No price data available for ${{ ticker }}</div>';
+    return;
+  }
+
+  const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+    layout:     { background: { color: '#111827' }, textColor: '#9ca3af' },
+    grid:       { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
+    crosshair:  { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#374151' },
+    timeScale:  { borderColor: '#374151', timeVisible: true },
+    width:  document.getElementById('chart').clientWidth,
+    height: 420,
+  });
+
+  // Candlestick series
+  const candleSeries = chart.addCandlestickSeries({
+    upColor:        '#22c55e',
+    downColor:      '#ef4444',
+    borderUpColor:  '#22c55e',
+    borderDownColor:'#ef4444',
+    wickUpColor:    '#22c55e',
+    wickDownColor:  '#ef4444',
+  });
+  candleSeries.setData(bars);
+
+  // Insider markers — sort by time (required by Lightweight Charts)
+  const sorted = markers.slice().sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+  if (sorted.length) {
+    candleSeries.setMarkers(sorted);
+  }
+
+  // Fit chart to data
+  chart.timeScale().fitContent();
+
+  // Resize on window resize
+  window.addEventListener('resize', () => {
+    chart.applyOptions({ width: document.getElementById('chart').clientWidth });
+  });
+})();
+</script>
+{% endif %}
+
+{% endblock %}

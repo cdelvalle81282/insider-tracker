@@ -22,6 +22,10 @@
              class="text-2xl font-bold text-white hover:text-indigo-400">
             ${{ filing.issuer_ticker }}
           </a>
+          <a href="/chart/{{ filing.issuer_ticker }}"
+             class="text-xs bg-gray-800 border border-gray-700 text-gray-400 hover:text-white px-2 py-1 rounded transition-colors">
+            📈 Chart
+          </a>
           {% endif %}
           <p class="text-gray-400 text-sm mt-0.5">{{ filing.issuer_name }}</p>
         </div>

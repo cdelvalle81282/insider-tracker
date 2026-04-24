@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 import sqlite3
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from ingest import get_db
 import queries
 from queries import EnrichContext
 import alerts as alert_module
+import polygon_client
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -400,6 +402,60 @@ async def issuer_view(request: Request, ticker: str, days: int = Query(default=9
         "filings": filings,
         "days": days,
         "trend_svg": trend_svg,
+    })
+
+
+_RANGE_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+
+
+@app.get("/chart/{ticker}", response_class=HTMLResponse)
+async def chart_view(
+    request: Request,
+    ticker: str,
+    range: str = Query(default="6m"),
+    mode: str = Query(default="both"),   # buys | sells | both
+):
+    active_config = cfg.load_config()
+    api_key = active_config.get("polygon_api_key", "")
+    days = _RANGE_DAYS.get(range, 180)
+    from_date = date.today() - timedelta(days=days)
+    to_date = date.today()
+    ticker = ticker.upper()
+
+    bars = polygon_client.get_daily_bars(ticker, from_date, to_date, api_key)
+    filings = queries.get_issuer_filings(_db(request), ticker, days=days)
+
+    # Build marker list for Lightweight Charts
+    code_filter = {"buys": ["P"], "sells": ["S"], "both": ["P", "S"]}.get(mode, ["P", "S"])
+    markers = []
+    for f in filings:
+        if f.get("transaction_code") not in code_filter:
+            continue
+        tx_date = f.get("transaction_date") or ""
+        if not tx_date:
+            continue
+        is_buy = f.get("transaction_code") == "P"
+        label_parts = [f.get("insider_name", "")]
+        if f.get("total_value_fmt"):
+            label_parts.append(f["total_value_fmt"])
+        markers.append({
+            "time":     tx_date,
+            "position": "belowBar" if is_buy else "aboveBar",
+            "color":    "#22c55e" if is_buy else "#ef4444",
+            "shape":    "arrowUp" if is_buy else "arrowDown",
+            "text":     " ".join(label_parts),
+        })
+
+    return templates.TemplateResponse(request, "chart.html", {
+        "ticker": ticker,
+        "range": range,
+        "mode": mode,
+        "bars_json": json.dumps(bars),
+        "markers_json": json.dumps(markers),
+        "filings": filings,
+        "code_filter": code_filter,
+        "has_api_key": bool(api_key),
+        "ranges": list(_RANGE_DAYS.keys()),
     })
 
 

@@ -38,8 +38,27 @@
     <!-- Range preset chips -->
     <div class="flex gap-1">
       <button type="button" onclick="setRange(0)" class="preset-chip {% if not is_range %}active{% endif %}">Today</button>
-      <button type="button" onclick="setRange(6)" class="preset-chip {% if is_range and (range_end|string != range_start|string) %}{% endif %}">7d</button>
+      <button type="button" onclick="setRange(6)" class="preset-chip">7d</button>
       <button type="button" onclick="setRange(29)" class="preset-chip">30d</button>
+    </div>
+
+    <!-- Buy / Sell / Both toggle -->
+    <div class="flex rounded-lg overflow-hidden border border-gray-800 text-xs">
+      <button type="button" onclick="setMode('both')"
+              id="mode-both"
+              class="px-3 py-1.5 transition-colors {% if not filters.mode or filters.mode == 'both' %}bg-gray-700 text-white{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
+        Both
+      </button>
+      <button type="button" onclick="setMode('buys')"
+              id="mode-buys"
+              class="px-3 py-1.5 border-l border-gray-800 transition-colors {% if filters.mode == 'buys' %}bg-green-900 text-green-300{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
+        ▲ Buys
+      </button>
+      <button type="button" onclick="setMode('sells')"
+              id="mode-sells"
+              class="px-3 py-1.5 border-l border-gray-800 transition-colors {% if filters.mode == 'sells' %}bg-red-900 text-red-300{% else %}bg-gray-900 text-gray-400 hover:text-white{% endif %}">
+        ▼ Sells
+      </button>
     </div>
 
     <input type="hidden" name="sort_by" id="sort_by" value="{{ filters.sort_by }}" />
@@ -158,6 +177,33 @@
     function exportCSV() {
       const params = new URLSearchParams(new FormData(document.getElementById('filter-form')));
       window.location = '/export.csv?' + params.toString();
+    }
+
+    function setMode(mode) {
+      // Remove existing codes hidden inputs
+      document.querySelectorAll('input[name="codes"]').forEach(e => e.remove());
+      const form = document.getElementById('filter-form');
+      const addCode = (v) => {
+        const inp = document.createElement('input');
+        inp.type = 'hidden'; inp.name = 'codes'; inp.value = v;
+        form.appendChild(inp);
+      };
+      if (mode === 'buys'  || mode === 'both') addCode('P');
+      if (mode === 'sells' || mode === 'both') addCode('S');
+      // Update button styles
+      ['both','buys','sells'].forEach(m => {
+        const btn = document.getElementById('mode-' + m);
+        btn.className = btn.className
+          .replace(/bg-\S+|text-(?:white|green-300|red-300|gray-400)/g, '').trim();
+        if (m === mode) {
+          btn.className += m === 'buys'  ? ' bg-green-900 text-green-300'
+                         : m === 'sells' ? ' bg-red-900 text-red-300'
+                         :                 ' bg-gray-700 text-white';
+        } else {
+          btn.className += ' bg-gray-900 text-gray-400 hover:text-white';
+        }
+      });
+      htmx.trigger(form, 'change');
     }
 
     function setRange(daysBack) {

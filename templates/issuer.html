@@ -6,6 +6,10 @@
 <div class="mb-5 flex items-center justify-between flex-wrap gap-3">
   <div class="flex items-center gap-3">
     <h1 class="text-2xl font-bold text-white">${{ ticker }}</h1>
+    <a href="/chart/{{ ticker }}"
+       class="text-xs bg-gray-900 border border-gray-800 text-gray-400 hover:text-white px-3 py-1 rounded transition-colors">
+      📈 Chart
+    </a>
     <form method="POST" action="/watchlist/add">
       <input type="hidden" name="watch_type" value="ticker" />
       <input type="hidden" name="value" value="{{ ticker }}" />

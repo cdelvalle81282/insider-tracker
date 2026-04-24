@@ -73,6 +73,8 @@ TRANSACTION_CODES = {
 
 ALERT_BASE_URL = "https://opi-insider.duckdns.org"
 
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
+
 SEC_USER_AGENT = "Option Pit Research charlie@optionpit.com"
 SEC_RATE_LIMIT = 8  # requests per second — SEC cap is 10; stay safely under
 
@@ -89,6 +91,7 @@ def load_config() -> dict:
     cfg = {
         "alert_rules": dict(ALERT_RULES),
         "alert_base_url": ALERT_BASE_URL,
+        "polygon_api_key": POLYGON_API_KEY,
         "filter_defaults": dict(FILTER_DEFAULTS),
         "transaction_codes": dict(TRANSACTION_CODES),
         "conviction_tiers": {k: list(v) for k, v in CONVICTION_TIERS.items()},
