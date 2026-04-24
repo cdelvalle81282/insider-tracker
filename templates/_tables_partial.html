@@ -72,11 +72,14 @@
 
 <!-- Cluster activity -->
 {% if clusters %}
-<div class="mb-6">
-  <h2 class="text-yellow-400 font-semibold text-sm uppercase tracking-widest mb-3 flex items-center gap-2">
-    <span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
-    Cluster Activity — {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} with 2+ insiders
-  </h2>
+<details class="group mb-6" open>
+  <summary class="flex items-center gap-2 cursor-pointer list-none select-none mb-3">
+    <span class="text-gray-600 group-open:rotate-90 transition-transform text-xs">▶</span>
+    <h2 class="text-yellow-400 font-semibold text-sm uppercase tracking-widest flex items-center gap-2">
+      <span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>
+      Cluster Activity — {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} with 2+ insiders
+    </h2>
+  </summary>
   <div class="space-y-2">
     {% for c in clusters %}
     <details class="group rounded-lg border
@@ -176,7 +179,7 @@
     </details>
     {% endfor %}
   </div>
-</div>
+</details>
 {% endif %}
 
 {# Sort helper macro — renders a clickable column header #}
@@ -196,11 +199,14 @@
 <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
   <!-- Buys -->
-  <div>
-    <h2 class="text-green-400 font-semibold text-sm uppercase tracking-widest mb-2 flex items-center gap-2">
-      <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
-      Buys ({{ buys | length }})
-    </h2>
+  <details class="group" open>
+    <summary class="flex items-center gap-2 cursor-pointer list-none select-none mb-2">
+      <span class="text-gray-600 group-open:rotate-90 transition-transform text-xs">▶</span>
+      <h2 class="text-green-400 font-semibold text-sm uppercase tracking-widest flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>
+        Buys ({{ buys | length }})
+      </h2>
+    </summary>
     <div class="overflow-x-auto rounded-lg border border-gray-800">
       <table class="w-full text-sm">
         <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
@@ -267,14 +273,17 @@
         </tbody>
       </table>
     </div>
-  </div>
+  </details>
 
   <!-- Sells -->
-  <div>
-    <h2 class="text-red-400 font-semibold text-sm uppercase tracking-widest mb-2 flex items-center gap-2">
-      <span class="inline-block w-2 h-2 rounded-full bg-red-500"></span>
-      Sells ({{ sells | length }})
-    </h2>
+  <details class="group" open>
+    <summary class="flex items-center gap-2 cursor-pointer list-none select-none mb-2">
+      <span class="text-gray-600 group-open:rotate-90 transition-transform text-xs">▶</span>
+      <h2 class="text-red-400 font-semibold text-sm uppercase tracking-widest flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-red-500"></span>
+        Sells ({{ sells | length }})
+      </h2>
+    </summary>
     <div class="overflow-x-auto rounded-lg border border-gray-800">
       <table class="w-full text-sm">
         <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
@@ -332,6 +341,6 @@
         </tbody>
       </table>
     </div>
-  </div>
+  </details>
 
 </div>
