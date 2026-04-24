@@ -1,19 +1,17 @@
 from __future__ import annotations
 
+import csv
+import io
+import os
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
-import csv
-import io
-
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-
-import os
 
 import config as cfg
 from config import save_overrides
@@ -48,6 +46,48 @@ def _parse_date(d: str | None) -> date:
         return date.fromisoformat(d)
     except ValueError:
         return date.today()
+
+
+def _resolve_date_range(
+    d: str | None,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[date, date, bool]:
+    """Parse start/end date params; fall back to single date d. Returns (start, end, is_range)."""
+    if start_date and end_date:
+        s, e = _parse_date(start_date), _parse_date(end_date)
+    else:
+        s = e = _parse_date(d)
+    return s, e, s != e
+
+
+def render_sparkline(series: list[dict]) -> str:
+    """Render buy/sell trend as an inline SVG string. Returns '' when all values are zero."""
+    if not series or all(p['buy_total'] == 0 and p['sell_total'] == 0 for p in series):
+        return ""
+
+    W, H, PAD = 240, 40, 4
+    x_step = (W - 2 * PAD) / max(len(series) - 1, 1)
+    buys = [p['buy_total'] for p in series]
+    sells = [p['sell_total'] for p in series]
+    all_vals = buys + sells
+    mn, mx = min(all_vals), max(all_vals)
+    span = mx - mn
+
+    def to_y(v: float) -> float:
+        return H / 2 if span == 0 else H - PAD - ((v - mn) / span) * (H - 2 * PAD)
+
+    def points(vals: list) -> str:
+        return " ".join(f"{PAD + i * x_step:.1f},{to_y(v):.1f}" for i, v in enumerate(vals))
+
+    zero_y = to_y(0)
+    return (
+        f'<svg width="{W}" height="{H}" class="w-full">'
+        f'<line x1="{PAD}" y1="{zero_y:.1f}" x2="{W-PAD}" y2="{zero_y:.1f}" stroke="#374151" stroke-width="0.5"/>'
+        f'<polyline points="{points(sells)}" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linejoin="round"/>'
+        f'<polyline points="{points(buys)}" fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round"/>'
+        f'</svg>'
+    )
 
 
 def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
@@ -90,15 +130,9 @@ async def index(
     active_config = cfg.load_config()
     fd = active_config["filter_defaults"]
 
-    # Date mode: range (start/end) takes priority over single date (d)
-    if start_date and end_date:
-        range_start = _parse_date(start_date)
-        range_end = _parse_date(end_date)
-    else:
-        range_start = range_end = _parse_date(d)
-    is_range = range_start != range_end
+    range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
     summary_mode = is_range and (range_end - range_start).days > 7
-    target_date = range_end  # anchor for prev/next navigation
+    target_date = range_end
 
     effective_min = min_value if min_value is not None else fd["min_value"]
     effective_hide = (hide_10b5_1 != "0") if hide_10b5_1 is not None else fd["hide_10b5_1"]
@@ -191,12 +225,7 @@ async def htmx_filings(
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
-    if start_date and end_date:
-        range_start = _parse_date(start_date)
-        range_end = _parse_date(end_date)
-    else:
-        range_start = range_end = _parse_date(d)
-    is_range = range_start != range_end
+    range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
     summary_mode = is_range and (range_end - range_start).days > 7
     target_date = range_end
 
@@ -281,12 +310,7 @@ async def export_csv(
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
-    if start_date and end_date:
-        range_start = _parse_date(start_date)
-        range_end = _parse_date(end_date)
-    else:
-        range_start = range_end = _parse_date(d)
-    is_range = range_start != range_end
+    range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
     target_date = range_end
 
     db = _db(request)
@@ -307,9 +331,10 @@ async def export_csv(
         sector=sector or None,
         watched_only=only_watched,
         date_range=date_range_arg,
+        limit=_CSV_MAX_ROWS,
         ctx=ctx,
     )
-    rows = (buys + sells)[:_CSV_MAX_ROWS]
+    rows = buys + sells  # already capped by SQL LIMIT
 
     def generate():
         buf = io.StringIO()
@@ -318,7 +343,7 @@ async def export_csv(
         yield buf.getvalue()
         buf.seek(0); buf.truncate()
         for r in rows:
-            writer.writerow([r.get(col, "") if r.get(col) is not None else "" for col in _CSV_COLUMNS])
+            writer.writerow(["" if (v := r.get(col)) is None else v for col in _CSV_COLUMNS])
             yield buf.getvalue()
             buf.seek(0); buf.truncate()
 
@@ -367,8 +392,7 @@ async def filing_detail(request: Request, transaction_id: str):
 async def issuer_view(request: Request, ticker: str, days: int = Query(default=90)):
     db = _db(request)
     filings = queries.get_issuer_filings(db, ticker, days=days)
-    trend_series = queries.get_issuer_trend(db, ticker)
-    trend_svg = queries.render_sparkline(trend_series)
+    trend_svg = render_sparkline(queries.get_issuer_trend(db, ticker))
     return templates.TemplateResponse(request, "issuer.html", {
         "ticker": ticker.upper(),
         "filings": filings,

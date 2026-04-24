@@ -370,6 +370,7 @@ def get_filings_for_date(
     sector: str | None = None,
     watched_only: bool = False,
     date_range: tuple[date, date] | None = None,
+    limit: int | None = None,
     ctx: EnrichContext | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return (buys, sells) for a date or date range, applying all filters."""
@@ -444,8 +445,11 @@ def get_filings_for_date(
         FROM filings
         {base_where}
         {sql_sort}
+        {"LIMIT ?" if limit else ""}
     """
 
+    if limit:
+        params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     enriched = _enrich(rows, ctx=ctx)
 
@@ -597,70 +601,38 @@ def get_issuer_filings(
     return _enrich(rows)
 
 
-def get_issuer_trend(conn: sqlite3.Connection, ticker: str, months: int = 6) -> list[dict]:
+def _week_start(d: date) -> str:
+    """ISO date string of the Monday of the week containing d. Portable across all SQLite versions."""
+    return (d - timedelta(days=d.weekday())).isoformat()
+
+
+def get_issuer_trend(conn: sqlite3.Connection, ticker: str) -> list[dict]:
+    """Returns 26 weekly data points (≈ 6 months) for the buy/sell sparkline."""
     today = date.today()
     cutoff = (today - timedelta(weeks=26)).isoformat()
 
+    # Use Monday-date keys to avoid %Y-%W year-boundary collisions across all SQLite versions.
+    # (strftime('%G-%V') would be cleaner but requires SQLite 3.38+; Ubuntu 22.04 ships 3.37)
     rows = conn.execute("""
-        SELECT strftime('%Y-%W', filed_at) AS wk,
+        SELECT DATE(filed_at, printf('-%d days', (strftime('%w', filed_at) + 6) % 7)) AS week_start,
                COALESCE(SUM(CASE WHEN transaction_code='P' THEN total_value END), 0) AS buy_total,
                COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total
         FROM filings
         WHERE issuer_ticker = ? AND DATE(filed_at) >= ?
           AND superseded_by IS NULL
-        GROUP BY wk
-        ORDER BY wk
+        GROUP BY week_start
+        ORDER BY week_start
     """, [ticker.upper(), cutoff]).fetchall()
 
     lookup = {r[0]: (r[1] or 0, r[2] or 0) for r in rows}
 
     series = []
     for i in range(25, -1, -1):
-        wk = (today - timedelta(weeks=i)).strftime('%Y-%W')
-        buy, sell = lookup.get(wk, (0, 0))
-        series.append({'week': wk, 'buy_total': buy, 'sell_total': sell})
+        key = _week_start(today - timedelta(weeks=i))
+        buy, sell = lookup.get(key, (0, 0))
+        series.append({'week': key, 'buy_total': buy, 'sell_total': sell})
 
     return series
-
-
-def render_sparkline(series: list[dict]) -> str:
-    if not series or all(p['buy_total'] == 0 and p['sell_total'] == 0 for p in series):
-        return ""
-
-    W, H, PAD = 240, 40, 4
-    n = len(series)
-    x_step = (W - 2 * PAD) / max(n - 1, 1)
-
-    buys = [p['buy_total'] for p in series]
-    sells = [p['sell_total'] for p in series]
-
-    all_vals = buys + sells
-    mn, mx = min(all_vals), max(all_vals)
-    span = mx - mn
-
-    def to_y(v):
-        if span == 0:
-            return H / 2
-        return H - PAD - ((v - mn) / span) * (H - 2 * PAD)
-
-    def points(vals):
-        return " ".join(
-            f"{PAD + i * x_step:.1f},{to_y(v):.1f}"
-            for i, v in enumerate(vals)
-        )
-
-    buy_pts = points(buys)
-    sell_pts = points(sells)
-    zero_y = to_y(0)
-
-    return (
-        f'<svg width="{W}" height="{H}" class="w-full">'
-        f'<line x1="{PAD}" y1="{zero_y:.1f}" x2="{W-PAD}" y2="{zero_y:.1f}" '
-        f'stroke="#374151" stroke-width="0.5"/>'
-        f'<polyline points="{sell_pts}" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linejoin="round"/>'
-        f'<polyline points="{buy_pts}" fill="none" stroke="#22c55e" stroke-width="1.5" stroke-linejoin="round"/>'
-        f'</svg>'
-    )
 
 
 def get_run_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
