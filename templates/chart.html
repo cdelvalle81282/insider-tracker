@@ -135,53 +135,47 @@
 </div>
 
 {% if has_api_key %}
-<!-- Lightweight Charts -->
-<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<!-- Lightweight Charts v4 — pinned to avoid API drift -->
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function () {
   const bars    = {{ bars_json | safe }};
   const markers = {{ markers_json | safe }};
+  const el      = document.getElementById('chart');
 
   if (!bars.length) {
-    document.getElementById('chart').innerHTML =
-      '<div class="flex items-center justify-center h-full text-gray-600 text-sm">No price data available for ${{ ticker }}</div>';
+    el.innerHTML = '<div class="flex items-center justify-center h-full text-gray-600 text-sm">No price data available for ${{ ticker }}</div>';
     return;
   }
 
-  const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-    layout:     { background: { color: '#111827' }, textColor: '#9ca3af' },
-    grid:       { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
-    crosshair:  { mode: LightweightCharts.CrosshairMode.Normal },
+  const chart = LightweightCharts.createChart(el, {
+    autoSize: true,          // fills the container; no manual width needed
+    height:   420,
+    layout:   { background: { color: '#111827' }, textColor: '#9ca3af' },
+    grid:     { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: { borderColor: '#374151' },
-    timeScale:  { borderColor: '#374151', timeVisible: true },
-    width:  document.getElementById('chart').clientWidth,
-    height: 420,
+    timeScale: { borderColor: '#374151', timeVisible: false },
   });
 
-  // Candlestick series
-  const candleSeries = chart.addCandlestickSeries({
-    upColor:        '#22c55e',
-    downColor:      '#ef4444',
-    borderUpColor:  '#22c55e',
-    borderDownColor:'#ef4444',
-    wickUpColor:    '#22c55e',
-    wickDownColor:  '#ef4444',
+  const candles = chart.addCandlestickSeries({
+    upColor:         '#22c55e',
+    downColor:       '#ef4444',
+    borderUpColor:   '#22c55e',
+    borderDownColor: '#ef4444',
+    wickUpColor:     '#22c55e',
+    wickDownColor:   '#ef4444',
   });
-  candleSeries.setData(bars);
+  candles.setData(bars);
 
-  // Insider markers — sort by time (required by Lightweight Charts)
-  const sorted = markers.slice().sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
-  if (sorted.length) {
-    candleSeries.setMarkers(sorted);
+  // Markers must be sorted ascending by time
+  if (markers.length) {
+    candles.setMarkers(
+      markers.slice().sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0)
+    );
   }
 
-  // Fit chart to data
   chart.timeScale().fitContent();
-
-  // Resize on window resize
-  window.addEventListener('resize', () => {
-    chart.applyOptions({ width: document.getElementById('chart').clientWidth });
-  });
 })();
 </script>
 {% endif %}
