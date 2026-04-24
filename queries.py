@@ -77,6 +77,8 @@ def _pct_holdings(row: dict) -> str | None:
     if not shares or not after or after <= 0:
         return None
     if code == "P":
+        if after <= shares:
+            return None  # shares_owned_after == shares_bought: initial/standalone position, ratio not meaningful
         pct = shares / after * 100
     elif code == "S":
         pct = shares / (after + shares) * 100
