@@ -135,15 +135,16 @@ def _build_row(
 
 def parse_form4(xml_bytes: bytes, accession_no: str, filed_at: str, raw_xml_url: str) -> list[dict[str, Any]]:
     """Parse Form 4 XML and return list of transaction row dicts."""
+    _parser = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False)
     try:
-        root = etree.fromstring(xml_bytes)
+        root = etree.fromstring(xml_bytes, parser=_parser)
     except etree.XMLSyntaxError:
         # Some filings wrap XML in a <ownershipDocument> inside a larger doc
         # Try stripping to first occurrence
         start = xml_bytes.find(b"<ownershipDocument")
         if start == -1:
             raise
-        root = etree.fromstring(xml_bytes[start:])
+        root = etree.fromstring(xml_bytes[start:], parser=_parser)
 
     form_type = (_text(root, "documentType") or "4").strip()
     footnote_text = _collect_footnotes(root)

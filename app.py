@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import os
+import re
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
@@ -13,6 +13,9 @@ from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 import config as cfg
 from config import save_overrides
@@ -25,6 +28,9 @@ import polygon_client
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+limiter = Limiter(key_func=get_remote_address)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,6 +40,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Insider Tracker", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -303,6 +311,7 @@ _CSV_MAX_ROWS = 10000
 
 
 @app.get("/export.csv")
+@limiter.limit("10/minute")
 async def export_csv(
     request: Request,
     d: str | None = Query(default=None),
@@ -406,6 +415,8 @@ async def filing_detail(request: Request, transaction_id: str):
 
 @app.get("/issuer/{ticker}", response_class=HTMLResponse)
 async def issuer_view(request: Request, ticker: str, days: int = Query(default=90)):
+    if not _TICKER_RE.match(ticker.upper()):
+        raise HTTPException(status_code=400, detail="Invalid ticker")
     db = _db(request)
     filings = queries.get_issuer_filings(db, ticker, days=days)
     trend_svg = render_sparkline(queries.get_issuer_trend(db, ticker))
@@ -421,18 +432,21 @@ _RANGE_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
 
 
 @app.get("/chart/{ticker}", response_class=HTMLResponse)
+@limiter.limit("30/minute")
 async def chart_view(
     request: Request,
     ticker: str,
     range: str = Query(default="6m"),
     mode: str = Query(default="both"),   # buys | sells | both
 ):
+    ticker = ticker.upper()
+    if not _TICKER_RE.match(ticker):
+        raise HTTPException(status_code=400, detail="Invalid ticker")
     active_config = cfg.load_config()
     api_key = active_config.get("polygon_api_key", "")
     days = _RANGE_DAYS.get(range, 180)
     from_date = date.today() - timedelta(days=days)
     to_date = date.today()
-    ticker = ticker.upper()
 
     bars = polygon_client.get_daily_bars(ticker, from_date, to_date, api_key)
     earnings = polygon_client.get_earnings_estimate(ticker, api_key)
@@ -463,8 +477,8 @@ async def chart_view(
         "ticker": ticker,
         "range": range,
         "mode": mode,
-        "bars_json": json.dumps(bars),
-        "markers_json": json.dumps(markers),
+        "bars": bars,
+        "markers": markers,
         "filings": filings,
         "earnings": earnings,
         "code_filter": code_filter,
@@ -490,8 +504,13 @@ async def watchlist_add(
     value: str = Form(...),
     label: str = Form(default=""),
 ):
-    if value.strip():
-        queries.add_watch(_db(request), watch_type, value, label or value)
+    if watch_type not in ("ticker", "insider"):
+        raise HTTPException(status_code=400, detail="Invalid watch_type")
+    value = value.strip()
+    label = label.strip()
+    if not value or len(value) > 64 or len(label) > 128:
+        raise HTTPException(status_code=400, detail="Invalid value or label")
+    queries.add_watch(_db(request), watch_type, value, label or value)
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
@@ -604,6 +623,7 @@ async def logic_save(
 
 
 @app.post("/logic/test-alert")
+@limiter.limit("5/minute")
 async def test_alert(request: Request):
     from fastapi.responses import JSONResponse
     webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")

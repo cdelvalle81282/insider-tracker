@@ -150,8 +150,8 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function () {
-  const bars    = {{ bars_json | safe }};
-  const markers = {{ markers_json | safe }};
+  const bars    = {{ bars | tojson }};
+  const markers = {{ markers | tojson }};
   const el      = document.getElementById('chart');
 
   if (!bars.length) {
