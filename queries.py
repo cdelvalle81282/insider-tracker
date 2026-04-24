@@ -485,6 +485,14 @@ def get_run_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_recent_alerts(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
+    rows = conn.execute(
+        "SELECT alert_key, alert_type, sent_at FROM alerts_sent ORDER BY sent_at DESC LIMIT ?",
+        [limit],
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_10b5_1_stats(conn: sqlite3.Connection) -> dict:
     total = conn.execute("SELECT COUNT(*) FROM filings").fetchone()[0]
     flagged_xml = conn.execute(

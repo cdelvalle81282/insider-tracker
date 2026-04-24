@@ -22,6 +22,7 @@ import httpx
 from config import DB_PATH, SEC_USER_AGENT, SEC_RATE_LIMIT, load_config
 from parser import parse_form4
 from tickers import lookup_ticker
+import alerts as alert_module
 
 EDGAR_BASE = "https://www.sec.gov"
 RATE_SLEEP = 1.0 / SEC_RATE_LIMIT  # seconds between requests
@@ -364,6 +365,13 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
 @click.option("--resolve-amendments", is_flag=True, default=False, help="Backfill amendment resolution for all existing 4/A rows")
 def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments):
     conn = get_db()
+    config = load_config()
+
+    # Backfills suppress alerts — only real-time runs fire Slack
+    suppress_alerts = bool(backfill or backfill_days)
+
+    # Record run start for alert since_ts window
+    run_started_at = datetime.now(timezone.utc).isoformat()
 
     if resolve_amendments:
         click.echo("Resolving amendments in existing data ...", nl=False)
@@ -456,6 +464,17 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             )
             conn.commit()
             click.echo(f" ERROR: {e}")
+
+    # Fire Slack alerts for newly ingested rows (real-time runs only)
+    if not suppress_alerts:
+        try:
+            n = alert_module.check_and_send(
+                conn, config, since_ts=run_started_at, suppress=False
+            )
+            if n:
+                click.echo(f"Sent {n} Slack alert(s)")
+        except Exception as e:
+            click.echo(f"Alert error (non-fatal): {e}")
 
 
 if __name__ == "__main__":

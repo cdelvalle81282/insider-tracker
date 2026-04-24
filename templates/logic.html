@@ -27,9 +27,22 @@
 
       <!-- Alert Rules -->
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h2 class="text-white font-semibold mb-1">Alert Rules</h2>
+        <h2 class="text-white font-semibold mb-1">Slack Alert Rules</h2>
+        <div class="flex items-center gap-2 mb-3">
+          {% if slack_configured %}
+          <span class="text-xs bg-green-900/50 text-green-400 border border-green-800 px-2 py-0.5 rounded-full">Webhook configured</span>
+          {% else %}
+          <span class="text-xs bg-red-900/50 text-red-400 border border-red-800 px-2 py-0.5 rounded-full">No webhook — set SLACK_WEBHOOK_URL on server</span>
+          {% endif %}
+          <button type="button" onclick="sendTestAlert()"
+                  class="text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 px-3 py-1 rounded transition-colors">
+            Send test alert
+          </button>
+          <span id="test-alert-result" class="text-xs text-gray-500"></span>
+        </div>
         <p class="text-gray-500 text-xs mb-4">
-          These thresholds control what gets pushed to Slack (Ticket 4). Deferred to session 2 but configured here now.
+          Three alert types fire after each real-time ingest run. Backfills never fire alerts.
+          Each match fires exactly once — dedup prevents re-firing across runs.
         </p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
@@ -428,7 +441,7 @@
       <h2 class="text-gray-300 font-semibold mb-3">Phase 2 Roadmap</h2>
       <ul class="text-gray-500 text-xs space-y-2.5">
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Conviction score</strong> — 1–10 per trade combining role weight, % holdings change, cluster membership, 10b5-1 status. Research-backed weights.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Slack alerts</strong> — push on rule matches: $1M+ buy, CEO/CFO $250K+, 3+ insider cluster. Dedup table already in DB.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Slack alerts</strong> — live. Big buy, C-suite buy, cluster detection. Dedup via alerts_sent table.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Insider history baseline</strong> — is this buy unusual vs. this insider's own past? Flag when size or frequency is an outlier.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Earnings proximity flag</strong> — mark trades within 10 days of earnings. Research shows these carry strongest info content.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Sector enrichment</strong> — SIC code from EDGAR → sector label. Enables sector filter + "tech sell = noise" logic.</span></li>
@@ -438,6 +451,41 @@
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">CSV export</strong> — download filtered table as spreadsheet.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Issuer trend chart</strong> — rolling 90-day buy/sell ratio sparkline on issuer page.</span></li>
       </ul>
+    </section>
+
+    <!-- Recent alerts -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-white font-semibold mb-3">Recent Alerts Sent</h2>
+      {% if recent_alerts %}
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-gray-600 border-b border-gray-800">
+            <th class="pb-1 text-left font-normal">Type</th>
+            <th class="pb-1 text-left font-normal">Key</th>
+            <th class="pb-1 text-right font-normal">Sent</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800/60">
+          {% for a in recent_alerts %}
+          <tr>
+            <td class="py-1.5 pr-3">
+              {% if a.alert_type == 'cluster' %}
+              <span class="text-yellow-400">⚡ cluster</span>
+              {% elif a.alert_type == 'big_buy' %}
+              <span class="text-green-400">🟢 big_buy</span>
+              {% else %}
+              <span class="text-indigo-400">👔 {{ a.alert_type }}</span>
+              {% endif %}
+            </td>
+            <td class="py-1.5 pr-3 text-gray-500 font-mono truncate max-w-[180px]">{{ a.alert_key }}</td>
+            <td class="py-1.5 text-right text-gray-600 whitespace-nowrap">{{ a.sent_at[:16].replace('T',' ') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="text-gray-600 text-xs">No alerts sent yet. Alerts fire after daily ingest runs when thresholds are met.</p>
+      {% endif %}
     </section>
 
   </div>
@@ -451,5 +499,29 @@
   }
   .config-hint { @apply text-gray-600 text-xs mt-1 leading-snug; }
 </style>
+
+<script>
+async function sendTestAlert() {
+  const btn = event.target;
+  const result = document.getElementById('test-alert-result');
+  btn.disabled = true;
+  result.textContent = 'Sending...';
+  try {
+    const resp = await fetch('/logic/test-alert', {method: 'POST'});
+    const data = await resp.json();
+    if (data.ok) {
+      result.textContent = '✓ Sent!';
+      result.className = 'text-xs text-green-400';
+    } else {
+      result.textContent = '✗ ' + data.error;
+      result.className = 'text-xs text-red-400';
+    }
+  } catch(e) {
+    result.textContent = '✗ Network error';
+    result.className = 'text-xs text-red-400';
+  }
+  btn.disabled = false;
+}
+</script>
 
 {% endblock %}

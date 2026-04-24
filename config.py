@@ -71,6 +71,8 @@ TRANSACTION_CODES = {
     "Z": {"label": "Deposit into voting trust","show_by_default": False,"buy": None},
 }
 
+ALERT_BASE_URL = "https://opi-insider.duckdns.org"
+
 SEC_USER_AGENT = "Option Pit Research charlie@optionpit.com"
 SEC_RATE_LIMIT = 8  # requests per second — SEC cap is 10; stay safely under
 
@@ -86,6 +88,7 @@ def load_config() -> dict:
     """Return merged config: defaults overridden by config_overrides.json values."""
     cfg = {
         "alert_rules": dict(ALERT_RULES),
+        "alert_base_url": ALERT_BASE_URL,
         "filter_defaults": dict(FILTER_DEFAULTS),
         "transaction_codes": dict(TRANSACTION_CODES),
         "conviction_tiers": {k: list(v) for k, v in CONVICTION_TIERS.items()},

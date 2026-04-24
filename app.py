@@ -10,11 +10,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import os
+
 import config as cfg
 from config import save_overrides
 from ingest import get_db
 import queries
 from queries import EnrichContext
+import alerts as alert_module
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -229,12 +232,17 @@ async def run_log(request: Request):
 @app.get("/logic", response_class=HTMLResponse)
 async def logic_page(request: Request):
     active_config = cfg.load_config()
-    stats = queries.get_10b5_1_stats(_db(request))
+    db = _db(request)
+    stats = queries.get_10b5_1_stats(db)
+    recent_alerts = queries.get_recent_alerts(db)
+    slack_configured = bool(os.getenv("SLACK_WEBHOOK_URL", ""))
     return templates.TemplateResponse(request, "logic.html", {
         "config": active_config,
         "stats": stats,
         "transaction_codes": cfg.TRANSACTION_CODES,
         "conviction_tiers": cfg.CONVICTION_TIERS,
+        "recent_alerts": recent_alerts,
+        "slack_configured": slack_configured,
     })
 
 
@@ -309,3 +317,23 @@ async def logic_save(
 
     save_overrides(alert_rules, filter_defaults, conviction_flags=conviction_flags or None)
     return RedirectResponse(url="/logic?saved=1", status_code=303)
+
+
+@app.post("/logic/test-alert")
+async def test_alert(request: Request):
+    from fastapi.responses import JSONResponse
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
+    if not webhook_url:
+        return JSONResponse(
+            {"ok": False, "error": "SLACK_WEBHOOK_URL is not set in the server environment"},
+            status_code=400,
+        )
+    active_config = cfg.load_config()
+    base_url = active_config.get("alert_base_url", "https://opi-insider.duckdns.org")
+    ok = alert_module.send_test_alert(webhook_url, base_url)
+    if ok:
+        return JSONResponse({"ok": True, "message": "Test alert sent successfully"})
+    return JSONResponse(
+        {"ok": False, "error": "Slack returned an error — check the webhook URL"},
+        status_code=502,
+    )
