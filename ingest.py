@@ -23,6 +23,7 @@ from config import DB_PATH, SEC_USER_AGENT, SEC_RATE_LIMIT, load_config
 from parser import parse_form4
 from tickers import lookup_ticker
 import alerts as alert_module
+import sector as sector_module
 
 EDGAR_BASE = "https://www.sec.gov"
 RATE_SLEEP = 1.0 / SEC_RATE_LIMIT  # seconds between requests
@@ -105,7 +106,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_superseded ON filings(superseded_by)"
         )
-        conn.commit()
+    if "sector" not in cols:
+        conn.execute("ALTER TABLE filings ADD COLUMN sector TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sector ON filings(sector)")
+    # sectors lookup table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sectors (
+            issuer_cik  TEXT PRIMARY KEY,
+            sic_code    TEXT,
+            sic_desc    TEXT,
+            sector      TEXT,
+            fetched_at  TEXT
+        )
+    """)
+    conn.commit()
 
 
 def get_db(path: str | None = None) -> sqlite3.Connection:
@@ -272,6 +286,20 @@ def ingest_date(conn: sqlite3.Connection, target_date: date) -> tuple[int, int, 
 
             inserted = _upsert_rows(conn, rows)
             rows_inserted += inserted
+
+            # Enrich sector for this issuer (session-cached, one EDGAR call per CIK per run)
+            if rows:
+                cik = rows[0]["issuer_cik"]
+                try:
+                    sec = sector_module.get_or_fetch_sector(conn, cik)
+                    if sec:
+                        conn.execute(
+                            "UPDATE filings SET sector=? WHERE issuer_cik=? AND sector IS NULL",
+                            [sec, cik],
+                        )
+                        conn.commit()
+                except Exception:
+                    pass  # sector enrichment failure must never break ingest
         except Exception as e:
             errors += 1
             error_lines.append(f"{accession_no}: {e}")
@@ -365,7 +393,8 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
 @click.option("--backfill-days", default=None, type=int, help="Ingest last N days")
 @click.option("--since-last-run", is_flag=True, default=False, help="Ingest only since the most recent filing in DB")
 @click.option("--resolve-amendments", is_flag=True, default=False, help="Backfill amendment resolution for all existing 4/A rows")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments):
+@click.option("--backfill-sectors", is_flag=True, default=False, help="Fetch missing sector labels for all issuers in DB")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors):
     conn = get_db()
     config = load_config()
 
@@ -374,6 +403,26 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
 
     # Record run start for alert since_ts window
     run_started_at = datetime.now(timezone.utc).isoformat()
+
+    if backfill_sectors:
+        ciks = [r[0] for r in conn.execute(
+            "SELECT DISTINCT issuer_cik FROM filings WHERE sector IS NULL"
+        ).fetchall()]
+        click.echo(f"Fetching sectors for {len(ciks)} issuers ...")
+        done = 0
+        for cik in ciks:
+            try:
+                sector_module.get_or_fetch_sector(conn, cik)
+                conn.execute(
+                    "UPDATE filings SET sector=(SELECT sector FROM sectors WHERE issuer_cik=?) WHERE issuer_cik=? AND sector IS NULL",
+                    [cik, cik],
+                )
+                conn.commit()
+                done += 1
+            except Exception:
+                pass
+        click.echo(f"Done — enriched {done}/{len(ciks)} issuers")
+        return
 
     if resolve_amendments:
         click.echo("Resolving amendments in existing data ...", nl=False)

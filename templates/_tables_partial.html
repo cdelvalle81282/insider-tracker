@@ -189,7 +189,10 @@
               <span class="text-gray-500 text-xs">—</span>
               {% endif %}
             </td>
-            <td class="px-3 py-2 text-gray-400 text-xs max-w-[130px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-xs max-w-[130px]">
+              <div class="text-gray-400 truncate">{{ row.issuer_name }}</div>
+              {% if row.sector %}<div class="text-gray-600 text-xs">{{ row.sector }}</div>{% endif %}
+            </td>
             <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
             <td class="px-3 py-2 text-gray-500 text-xs max-w-[100px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
@@ -246,7 +249,10 @@
               <span class="text-gray-500 text-xs">—</span>
               {% endif %}
             </td>
-            <td class="px-3 py-2 text-gray-400 text-xs max-w-[130px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-xs max-w-[130px]">
+              <div class="text-gray-400 truncate">{{ row.issuer_name }}</div>
+              {% if row.sector %}<div class="text-gray-600 text-xs">{{ row.sector }}</div>{% endif %}
+            </td>
             <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
             <td class="px-3 py-2 text-gray-500 text-xs max-w-[100px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>

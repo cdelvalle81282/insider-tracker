@@ -444,13 +444,42 @@
         <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Slack alerts</strong> — live. Big buy, C-suite buy, cluster detection. Dedup via alerts_sent table.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Insider history baseline</strong> — is this buy unusual vs. this insider's own past? Flag when size or frequency is an outlier.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Earnings proximity flag</strong> — mark trades within 10 days of earnings. Research shows these carry strongest info content.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Sector enrichment</strong> — SIC code from EDGAR → sector label. Enables sector filter + "tech sell = noise" logic.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Sector enrichment</strong> — live. SIC codes fetched from EDGAR, mapped to 11 sectors. Sector filter in dashboard.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Watchlist</strong> — pin specific tickers or insiders to a personal watchlist tab.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Date range view</strong> — week/month aggregation alongside the daily view.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Amendment resolution</strong> — merge 4/A amendments with originals instead of storing as separate rows.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">CSV export</strong> — download filtered table as spreadsheet.</span></li>
         <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Issuer trend chart</strong> — rolling 90-day buy/sell ratio sparkline on issuer page.</span></li>
       </ul>
+    </section>
+
+    <!-- Sector mapping -->
+    <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-white font-semibold mb-1">Sector Enrichment</h2>
+      <p class="text-gray-500 text-xs mb-3">
+        SIC codes are fetched from <code class="text-indigo-400">data.sec.gov/submissions/CIK{cik}.json</code> and cached for 90 days.
+        Each issuer is mapped to one of 11 sectors based on SIC range. Backfill: <code class="text-gray-500">python ingest.py --backfill-sectors</code>
+      </p>
+      <table class="w-full text-xs">
+        <thead><tr class="text-gray-600 border-b border-gray-800">
+          <th class="pb-1 text-left font-normal">Sector</th>
+          <th class="pb-1 text-left font-normal">Key SIC ranges</th>
+        </tr></thead>
+        <tbody class="divide-y divide-gray-800/40 text-gray-400">
+          <tr><td class="py-1.5 pr-4 text-white">Technology</td><td class="py-1.5">3570–3579, 3660–3679, 7370–7379</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Healthcare</td><td class="py-1.5">2830–2836, 3841–3851, 8000–8099</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Financials</td><td class="py-1.5">6000–6411, 6700–6726</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Real Estate</td><td class="py-1.5">6500–6552, 6798</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Energy</td><td class="py-1.5">1300–1389, 2900–2911</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Consumer Disc</td><td class="py-1.5">5500–5999, 7000–7041, 7200–7299</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Consumer Staples</td><td class="py-1.5">2000–2199, 5100–5199, 5400–5499</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Industrials</td><td class="py-1.5">1500–1799, 3400–3799, 4210–4599</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Materials</td><td class="py-1.5">1000–1299, 2600–2829, 3000–3399</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Utilities</td><td class="py-1.5">4900–4991</td></tr>
+          <tr><td class="py-1.5 pr-4 text-white">Communications</td><td class="py-1.5">4800–4899</td></tr>
+          <tr><td class="py-1.5 pr-4 text-gray-500">Other</td><td class="py-1.5 text-gray-600">Anything not in the above ranges</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <!-- Recent alerts -->

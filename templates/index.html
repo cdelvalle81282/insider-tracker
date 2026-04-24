@@ -93,6 +93,18 @@
              class="accent-indigo-500" />
       C-Suite only
     </label>
+
+    <!-- Sector filter -->
+    {% if all_sectors %}
+    <select name="sector"
+            class="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs text-gray-400 focus:outline-none focus:border-gray-600
+                   {% if filters.sector %}border-indigo-600 text-indigo-300{% endif %}">
+      <option value="">All sectors</option>
+      {% for s in all_sectors %}
+      <option value="{{ s }}" {% if filters.sector == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
   </form>
 
   <script>

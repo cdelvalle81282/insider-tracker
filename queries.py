@@ -261,6 +261,13 @@ _SORT_COLUMNS = {
 }
 
 
+def get_all_sectors(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT sector FROM filings WHERE sector IS NOT NULL ORDER BY sector"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def get_filings_for_date(
     conn: sqlite3.Connection,
     target_date: date,
@@ -273,6 +280,7 @@ def get_filings_for_date(
     ceo_cfo_keywords: list[str] | None = None,
     sort_by: str = "value",
     sort_order: str = "desc",
+    sector: str | None = None,
     ctx: EnrichContext | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return (buys, sells) for the given date, applying all filters."""
@@ -304,12 +312,14 @@ def get_filings_for_date(
           {role}
           {ceo}
           {search}
+          {sec}
     """.format(
         codes=",".join("?" * len(codes)),
         ten_b="AND is_10b5_1 = 0" if hide_10b5_1 else "",
         role=("AND (" + " OR ".join(role_clauses) + ")") if role_clauses else "",
         ceo=("AND (" + " OR ".join("insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")") if ceo_cfo_only and ceo_cfo_keywords else "",
         search="AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else "",
+        sec="AND sector = ?" if sector else "",
     )
 
     params += codes
@@ -319,6 +329,8 @@ def get_filings_for_date(
     if search:
         s = f"%{search}%"
         params += [s, s, s]
+    if sector:
+        params.append(sector)
 
     sql = f"""
         SELECT transaction_id, accession_no, filed_at,
