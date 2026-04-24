@@ -7,6 +7,7 @@ Usage:
   python ingest.py --backfill 2024-01-01 2026-04-22
   python ingest.py --backfill-days 730
   python ingest.py --since-last-run
+  python ingest.py --mark-joint-filers     # one-time backfill: dedup joint-filer pairs
 """
 from __future__ import annotations
 
@@ -108,6 +109,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "sector" not in cols:
         conn.execute("ALTER TABLE filings ADD COLUMN sector TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sector ON filings(sector)")
+    if "joint_filer_of" not in cols:
+        conn.execute("ALTER TABLE filings ADD COLUMN joint_filer_of TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_joint_filer ON filings(joint_filer_of)")
     # sectors lookup table
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sectors (
@@ -394,6 +398,73 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Joint-filer deduplication
+# ---------------------------------------------------------------------------
+
+def mark_joint_filers(conn: sqlite3.Connection) -> int:
+    """
+    Detect joint-filer duplicate transactions and mark secondary rows.
+
+    When a person and their controlled entity (fund/LLC/trust) file separate
+    Form 4s for the same economic transaction, each gets its own accession
+    number but identical (issuer_ticker, transaction_date, transaction_code,
+    shares, total_value, table_type).  We keep the earliest-filed row as
+    primary, mark the rest with joint_filer_of = primary_transaction_id, and
+    update the primary's insider_name to "Name A / Name B".
+
+    Returns the number of rows newly marked.
+    """
+    groups = conn.execute("""
+        SELECT issuer_ticker, transaction_date, transaction_code,
+               shares, total_value, table_type,
+               GROUP_CONCAT(transaction_id, '||') AS ids
+        FROM filings
+        WHERE superseded_by IS NULL
+          AND joint_filer_of IS NULL
+          AND transaction_code IN ('P', 'S')
+          AND total_value IS NOT NULL
+          AND shares > 0
+        GROUP BY issuer_ticker, transaction_date, transaction_code,
+                 shares, total_value, table_type
+        HAVING COUNT(DISTINCT insider_cik) > 1
+    """).fetchall()
+
+    marked = 0
+    for group in groups:
+        ids = group["ids"].split("||")
+        rows = conn.execute(
+            f"SELECT transaction_id, insider_name, insider_cik, filed_at "
+            f"FROM filings WHERE transaction_id IN ({','.join('?' * len(ids))})",
+            ids,
+        ).fetchall()
+        rows_sorted = sorted(rows, key=lambda r: r["filed_at"])
+        primary = rows_sorted[0]
+        secondaries = rows_sorted[1:]
+
+        seen: list[str] = []
+        for r in rows_sorted:
+            if r["insider_name"] not in seen:
+                seen.append(r["insider_name"])
+        combined = " / ".join(seen)
+
+        if combined != primary["insider_name"]:
+            conn.execute(
+                "UPDATE filings SET insider_name = ? WHERE transaction_id = ?",
+                [combined, primary["transaction_id"]],
+            )
+
+        for sec in secondaries:
+            cur = conn.execute(
+                "UPDATE filings SET joint_filer_of = ? WHERE transaction_id = ? AND joint_filer_of IS NULL",
+                [primary["transaction_id"], sec["transaction_id"]],
+            )
+            marked += cur.rowcount
+
+    conn.commit()
+    return marked
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -404,7 +475,8 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
 @click.option("--since-last-run", is_flag=True, default=False, help="Ingest only since the most recent filing in DB")
 @click.option("--resolve-amendments", is_flag=True, default=False, help="Backfill amendment resolution for all existing 4/A rows")
 @click.option("--backfill-sectors", is_flag=True, default=False, help="Fetch missing sector labels for all issuers in DB")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors):
+@click.option("--mark-joint-filers", "do_joint_filers", is_flag=True, default=False, help="Detect and deduplicate joint-filer Form 4 duplicates")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers):
     conn = get_db()
     config = load_config()
 
@@ -413,6 +485,12 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
 
     # Record run start for alert since_ts window
     run_started_at = datetime.now(timezone.utc).isoformat()
+
+    if do_joint_filers:
+        click.echo("Marking joint-filer duplicates ...", nl=False)
+        n = mark_joint_filers(conn)
+        click.echo(f" {n} rows marked")
+        return
 
     if backfill_sectors:
         ciks = [r[0] for r in conn.execute(
@@ -514,6 +592,9 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             )
             conn.commit()
             click.echo(f" ERROR: {e}")
+
+    # Mark joint-filer duplicates introduced by this ingest
+    mark_joint_filers(conn)
 
     # Fire Slack alerts for newly ingested rows (real-time runs only)
     if not suppress_alerts:

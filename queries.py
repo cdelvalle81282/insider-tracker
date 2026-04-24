@@ -118,7 +118,8 @@ def _batch_cluster_counts(
             WHERE transaction_code = 'P'
               AND issuer_cik IN ({placeholders})
               AND transaction_date BETWEEN ? AND ?
-              AND superseded_by IS NULL""",
+              AND superseded_by IS NULL
+              AND joint_filer_of IS NULL""",
         all_ciks + [global_start, global_end],
     ).fetchall()
 
@@ -345,6 +346,7 @@ def get_daily_summary(
           AND transaction_code IN ({code_placeholders})
           AND (total_value IS NULL OR total_value >= ?)
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
           {ten_b}
         GROUP BY DATE(filed_at)
         ORDER BY day DESC
@@ -412,6 +414,7 @@ def get_filings_for_date(
           AND transaction_code IN ({{codes}})
           AND (total_value IS NULL OR total_value >= ?)
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
           {{ten_b}}
           {{role}}
           {{ceo}}
@@ -543,6 +546,7 @@ def get_cluster_activity(
         WHERE {date_condition}
           AND transaction_code IN ('P', 'S')
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
           {ten_b}
           AND issuer_ticker IS NOT NULL
         GROUP BY issuer_ticker, issuer_name
@@ -607,6 +611,7 @@ def get_issuer_filings(
         SELECT * FROM filings
         WHERE issuer_ticker = ? AND DATE(filed_at) >= ?
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
         ORDER BY filed_at DESC
 """,
         [ticker.upper(), since],
@@ -633,6 +638,7 @@ def get_issuer_trend(conn: sqlite3.Connection, ticker: str) -> list[dict]:
         FROM filings
         WHERE issuer_ticker = ? AND DATE(filed_at) >= ?
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
         GROUP BY week_start
         ORDER BY week_start
     """, [ticker.upper(), cutoff]).fetchall()
@@ -678,6 +684,7 @@ def get_insider_history(
         FROM filings
         WHERE insider_cik = ?
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
         ORDER BY transaction_date DESC
         LIMIT ?
         """,
@@ -717,6 +724,7 @@ def get_issuer_recent_insiders(
           AND DATE(filed_at) >= ?
           AND (? IS NULL OR transaction_id != ?)
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
         GROUP BY insider_cik, insider_name, insider_title
         ORDER BY total_bought DESC
         """,
