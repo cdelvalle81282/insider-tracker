@@ -230,6 +230,32 @@
         </div>
       </section>
 
+      <!-- Amendment Resolution -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-white font-semibold mb-1">Amendment Resolution (Form 4/A)</h2>
+        <p class="text-gray-500 text-xs mb-3">
+          When a Form 4/A amendment is ingested, the system attempts to find and mark the original filing it corrects.
+          Superseded rows are hidden from the dashboard and issuer views by default.
+        </p>
+        <div class="space-y-2 text-xs text-gray-400">
+          <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+            <p class="text-white font-medium mb-1">Matching criteria (all 5 must match)</p>
+            <ul class="space-y-1 text-gray-500">
+              <li><code class="text-indigo-400">issuer_cik</code> — same company</li>
+              <li><code class="text-indigo-400">insider_cik</code> — same person</li>
+              <li><code class="text-indigo-400">transaction_date</code> — same date</li>
+              <li><code class="text-indigo-400">transaction_code</code> — same type (P, S, etc.)</li>
+              <li><code class="text-indigo-400">shares</code> — same share count</li>
+            </ul>
+          </div>
+          <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+            <p class="text-white font-medium mb-1">Ambiguous matches</p>
+            <p class="text-gray-500">If 0 or 2+ original rows match, the amendment is stored but no row is marked superseded. This prevents accidental mis-attribution. Ambiguous cases are rare in practice.</p>
+          </div>
+          <p class="text-gray-600">To backfill amendment resolution on historical data: <code class="text-gray-500">python ingest.py --resolve-amendments</code></p>
+        </div>
+      </section>
+
       <!-- Sortable columns -->
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <h2 class="text-white font-semibold mb-1">Sortable Columns</h2>

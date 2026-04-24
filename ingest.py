@@ -96,6 +96,17 @@ CREATE TABLE IF NOT EXISTS alerts_sent (
 """
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent schema migrations. Uses PRAGMA to check before ALTER TABLE."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(filings)")}
+    if "superseded_by" not in cols:
+        conn.execute("ALTER TABLE filings ADD COLUMN superseded_by TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_superseded ON filings(superseded_by)"
+        )
+        conn.commit()
+
+
 def get_db(path: str | None = None) -> sqlite3.Connection:
     db_path = path or DB_PATH
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +116,7 @@ def get_db(path: str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     conn.commit()
+    _migrate(conn)
     return conn
 
 
@@ -266,6 +278,42 @@ def ingest_date(conn: sqlite3.Connection, target_date: date) -> tuple[int, int, 
     return filings_found, rows_inserted, errors, "; ".join(error_lines[-10:])
 
 
+def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> None:
+    """
+    If a newly inserted row is a Form 4/A amendment, find and mark the original
+    row(s) it supersedes. Matches on 5 columns to avoid mis-superseding.
+    Ambiguous matches (0 or 2+) are skipped silently rather than guessing.
+    """
+    if row.get("form_type") != "4/A":
+        return
+
+    candidates = conn.execute(
+        """
+        SELECT transaction_id FROM filings
+        WHERE issuer_cik = ?
+          AND insider_cik = ?
+          AND transaction_date = ?
+          AND transaction_code = ?
+          AND shares = ?
+          AND form_type = '4'
+          AND superseded_by IS NULL
+        """,
+        [
+            row["issuer_cik"],
+            row["insider_cik"],
+            row["transaction_date"],
+            row["transaction_code"],
+            row["shares"],
+        ],
+    ).fetchall()
+
+    if len(candidates) == 1:
+        conn.execute(
+            "UPDATE filings SET superseded_by = ? WHERE transaction_id = ?",
+            [row["accession_no"], candidates[0][0]],
+        )
+
+
 def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
     """Insert rows, skipping duplicates. Returns count of new rows inserted."""
     inserted = 0
@@ -297,6 +345,7 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
             )
             if conn.execute("SELECT changes()").fetchone()[0]:
                 inserted += 1
+                _resolve_amendment(conn, row)
         except sqlite3.Error:
             pass
     conn.commit()
@@ -312,8 +361,31 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
 @click.option("--backfill", nargs=2, default=None, metavar="START END", help="Date range YYYY-MM-DD YYYY-MM-DD")
 @click.option("--backfill-days", default=None, type=int, help="Ingest last N days")
 @click.option("--since-last-run", is_flag=True, default=False, help="Ingest only since the most recent filing in DB")
-def main(target_date, backfill, backfill_days, since_last_run):
+@click.option("--resolve-amendments", is_flag=True, default=False, help="Backfill amendment resolution for all existing 4/A rows")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments):
     conn = get_db()
+
+    if resolve_amendments:
+        click.echo("Resolving amendments in existing data ...", nl=False)
+        amendments = conn.execute(
+            "SELECT transaction_id, issuer_cik, insider_cik, transaction_date, "
+            "transaction_code, shares, accession_no, form_type "
+            "FROM filings WHERE form_type = '4/A'"
+        ).fetchall()
+        resolved = 0
+        for row in amendments:
+            row_dict = dict(row)
+            before = conn.execute(
+                "SELECT COUNT(*) FROM filings WHERE superseded_by IS NOT NULL"
+            ).fetchone()[0]
+            _resolve_amendment(conn, row_dict)
+            after = conn.execute(
+                "SELECT COUNT(*) FROM filings WHERE superseded_by IS NOT NULL"
+            ).fetchone()[0]
+            resolved += after - before
+        conn.commit()
+        click.echo(f" {len(amendments)} amendments processed, {resolved} rows superseded")
+        return
 
     dates: list[date] = []
 

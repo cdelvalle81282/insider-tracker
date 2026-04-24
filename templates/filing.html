@@ -167,6 +167,21 @@
 
   <!-- Sidebar -->
   <div class="space-y-4">
+
+    <!-- Superseded warning -->
+    {% if filing.superseded_by %}
+    <div class="bg-yellow-950 border border-yellow-800 rounded-xl p-4">
+      <p class="text-yellow-400 text-xs font-semibold mb-1">Superseded by Amendment</p>
+      <p class="text-yellow-600 text-xs">This filing was corrected by a Form 4/A amendment.</p>
+      {% if filing.amended_by_transaction_id %}
+      <a href="/filing/{{ filing.amended_by_transaction_id }}"
+         class="text-yellow-400 hover:text-yellow-300 text-xs mt-1 block">
+        View amendment →
+      </a>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
       <h3 class="text-gray-400 text-xs uppercase tracking-widest mb-3">Filing Info</h3>
       <div class="space-y-2 text-sm">

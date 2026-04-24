@@ -294,6 +294,7 @@ def get_filings_for_date(
         WHERE DATE(filed_at) = ?
           AND transaction_code IN ({codes})
           AND (total_value IS NULL OR total_value >= ?)
+          AND superseded_by IS NULL
           {ten_b}
           {role}
           {ceo}
@@ -405,6 +406,7 @@ def get_cluster_activity(
         FROM filings
         WHERE DATE(filed_at) = ?
           AND transaction_code IN ('P', 'S')
+          AND superseded_by IS NULL
           {ten_b}
           AND issuer_ticker IS NOT NULL
         GROUP BY issuer_ticker, issuer_name
@@ -447,7 +449,15 @@ def get_filing_detail(
     if row is None:
         return None
     enriched = _enrich([row], ctx=ctx)
-    return enriched[0]
+    d = enriched[0]
+    # If this row was superseded, attach the amendment accession for display
+    if d.get("superseded_by"):
+        amendment = conn.execute(
+            "SELECT transaction_id FROM filings WHERE accession_no = ? LIMIT 1",
+            [d["superseded_by"]],
+        ).fetchone()
+        d["amended_by_transaction_id"] = amendment[0] if amendment else None
+    return d
 
 
 def get_issuer_filings(
@@ -460,8 +470,9 @@ def get_issuer_filings(
         """
         SELECT * FROM filings
         WHERE issuer_ticker = ? AND DATE(filed_at) >= ?
+          AND superseded_by IS NULL
         ORDER BY filed_at DESC
-        """,
+""",
         [ticker.upper(), since],
     ).fetchall()
     return _enrich(rows)
