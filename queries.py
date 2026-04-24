@@ -485,6 +485,82 @@ def get_run_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_insider_history(
+    conn: sqlite3.Connection,
+    insider_cik: str,
+    limit: int = 10,
+) -> list[dict]:
+    """
+    Last N transactions by this insider across all companies.
+    Uses a window function to flag the largest buy ever so it can be highlighted.
+    Requires SQLite 3.25+ (Ubuntu 22.04 ships 3.37).
+    """
+    rows = conn.execute(
+        """
+        SELECT *,
+          CASE
+            WHEN transaction_code = 'P' AND total_value IS NOT NULL
+              AND total_value = MAX(
+                    CASE WHEN transaction_code = 'P' THEN total_value END
+                  ) OVER (PARTITION BY insider_cik)
+            THEN 1 ELSE 0
+          END AS is_largest_buy
+        FROM filings
+        WHERE insider_cik = ?
+          AND superseded_by IS NULL
+        ORDER BY transaction_date DESC
+        LIMIT ?
+        """,
+        [insider_cik, limit],
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["total_value_fmt"] = _fmt_value(d.get("total_value"))
+        d["price_fmt"] = _fmt_value(d.get("price_per_share"))
+        result.append(d)
+    return result
+
+
+def get_issuer_recent_insiders(
+    conn: sqlite3.Connection,
+    issuer_cik: str,
+    days: int = 90,
+    exclude_transaction_id: str | None = None,
+) -> list[dict]:
+    """
+    All distinct insiders active at this issuer in the last N days,
+    grouped by insider with buy/sell aggregates. Used for the
+    'Other insiders at X' sidebar on the filing detail page.
+    """
+    since = (date.today() - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT
+            insider_cik, insider_name, insider_title,
+            SUM(CASE WHEN transaction_code='P' THEN COALESCE(total_value,0) ELSE 0 END) AS total_bought,
+            SUM(CASE WHEN transaction_code='S' THEN COALESCE(total_value,0) ELSE 0 END) AS total_sold,
+            MAX(transaction_date) AS last_date,
+            MAX(transaction_id) AS latest_transaction_id
+        FROM filings
+        WHERE issuer_cik = ?
+          AND DATE(filed_at) >= ?
+          AND (? IS NULL OR transaction_id != ?)
+          AND superseded_by IS NULL
+        GROUP BY insider_cik, insider_name, insider_title
+        ORDER BY total_bought DESC
+        """,
+        [issuer_cik, since, exclude_transaction_id, exclude_transaction_id],
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["total_bought_fmt"] = _fmt_value(d.get("total_bought") or None)
+        d["total_sold_fmt"] = _fmt_value(d.get("total_sold") or None)
+        result.append(d)
+    return result
+
+
 def get_recent_alerts(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
     rows = conn.execute(
         "SELECT alert_key, alert_type, sent_at FROM alerts_sent ORDER BY sent_at DESC LIMIT ?",

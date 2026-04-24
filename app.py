@@ -193,9 +193,20 @@ async def filing_detail(request: Request, transaction_id: str):
     filing = queries.get_filing_detail(db, transaction_id, ctx=ctx)
     if filing is None:
         raise HTTPException(status_code=404, detail="Filing not found")
+
+    insider_history = queries.get_insider_history(db, filing["insider_cik"])
+    issuer_insiders = queries.get_issuer_recent_insiders(
+        db,
+        filing["issuer_cik"],
+        days=90,
+        exclude_transaction_id=transaction_id,
+    )
+
     return templates.TemplateResponse(request, "filing.html", {
         "filing": filing,
         "config": active_config,
+        "insider_history": insider_history,
+        "issuer_insiders": issuer_insiders,
     })
 
 
