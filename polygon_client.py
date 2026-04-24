@@ -1,9 +1,9 @@
 """
-Polygon.io API client — daily OHLCV bars for the chart page.
+Polygon.io API client — daily OHLCV bars and earnings estimates for the chart page.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -54,3 +54,46 @@ def get_daily_bars(
             "volume": bar.get("v", 0),
         })
     return bars
+
+
+def get_earnings_estimate(ticker: str, api_key: str) -> dict | None:
+    """
+    Fetch the most recent quarterly period from Polygon financials and estimate
+    the next earnings date (last period + 91 days).
+    Returns None on any error or missing API key so the chart degrades gracefully.
+    """
+    if not api_key:
+        return None
+    try:
+        resp = httpx.get(
+            "https://api.polygon.io/vX/reference/financials",
+            params={
+                "ticker": ticker.upper(),
+                "timeframe": "quarterly",
+                "limit": 1,
+                "sort": "period_of_report_date",
+                "order": "desc",
+                "apiKey": api_key,
+            },
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results") or []
+        if not results:
+            return None
+        r = results[0]
+        last = r.get("period_of_report_date")
+        if not last:
+            return None
+        last_date = date.fromisoformat(last)
+        estimated_next = last_date + timedelta(days=91)
+        days_until = (estimated_next - date.today()).days
+        return {
+            "last_period": last,
+            "fiscal_period": r.get("fiscal_period", ""),
+            "fiscal_year": r.get("fiscal_year", ""),
+            "estimated_next": estimated_next.isoformat(),
+            "days_until": days_until,
+        }
+    except Exception:
+        return None

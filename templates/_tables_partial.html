@@ -161,8 +161,8 @@
         </table>
         {% if c.issuer_ticker %}
         <div class="mt-2 text-right">
-          <a href="/issuer/{{ c.issuer_ticker }}" class="text-xs text-indigo-400 hover:text-indigo-300">
-            All filings for ${{ c.issuer_ticker }} →
+          <a href="/chart/{{ c.issuer_ticker }}" class="text-xs text-indigo-400 hover:text-indigo-300">
+            View ${{ c.issuer_ticker }} chart →
           </a>
         </div>
         {% endif %}
@@ -229,7 +229,7 @@
             </td>
             <td class="px-3 py-2">
               {% if row.issuer_ticker %}
-              <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-green-400">
+              <a href="/chart/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-green-400">
                 {{ row.issuer_ticker }}
               </a>
               {% if row.is_watched %}<span class="ml-1 text-yellow-400 text-xs" title="Watched">★</span>{% endif %}
@@ -293,7 +293,7 @@
             <td class="px-3 py-2 text-right text-gray-700 text-xs">—</td>
             <td class="px-3 py-2">
               {% if row.issuer_ticker %}
-              <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-red-400">
+              <a href="/chart/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-red-400">
                 {{ row.issuer_ticker }}
               </a>
               {% else %}

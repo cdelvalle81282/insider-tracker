@@ -18,13 +18,13 @@
       <div class="flex items-start justify-between gap-4">
         <div>
           {% if filing.issuer_ticker %}
-          <a href="/issuer/{{ filing.issuer_ticker }}"
+          <a href="/chart/{{ filing.issuer_ticker }}"
              class="text-2xl font-bold text-white hover:text-indigo-400">
             ${{ filing.issuer_ticker }}
           </a>
-          <a href="/chart/{{ filing.issuer_ticker }}"
+          <a href="/issuer/{{ filing.issuer_ticker }}"
              class="text-xs bg-gray-800 border border-gray-700 text-gray-400 hover:text-white px-2 py-1 rounded transition-colors">
-            📈 Chart
+            All transactions
           </a>
           {% endif %}
           <p class="text-gray-400 text-sm mt-0.5">{{ filing.issuer_name }}</p>
@@ -243,7 +243,7 @@
             <td class="py-1.5 pr-2 text-gray-500 whitespace-nowrap">{{ h.transaction_date }}</td>
             <td class="py-1.5 pr-2">
               {% if h.issuer_ticker %}
-              <a href="/issuer/{{ h.issuer_ticker }}"
+              <a href="/chart/{{ h.issuer_ticker }}"
                  class="font-bold {% if h.issuer_ticker == filing.issuer_ticker %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
                 {{ h.issuer_ticker }}
               </a>

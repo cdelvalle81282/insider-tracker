@@ -435,6 +435,7 @@ async def chart_view(
     ticker = ticker.upper()
 
     bars = polygon_client.get_daily_bars(ticker, from_date, to_date, api_key)
+    earnings = polygon_client.get_earnings_estimate(ticker, api_key)
     filings = queries.get_issuer_filings(_db(request), ticker, days=days)
 
     # Build marker list for Lightweight Charts
@@ -465,6 +466,7 @@ async def chart_view(
         "bars_json": json.dumps(bars),
         "markers_json": json.dumps(markers),
         "filings": filings,
+        "earnings": earnings,
         "code_filter": code_filter,
         "has_api_key": bool(api_key),
         "ranges": list(_RANGE_DAYS.keys()),
