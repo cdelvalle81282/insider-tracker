@@ -23,7 +23,7 @@
   <!-- Left: editable config form -->
   <div class="xl:col-span-2 space-y-6">
 
-    <form method="POST" action="/logic/save" class="space-y-6">
+    <form id="logic-form" method="POST" action="/logic/save" class="space-y-6">
 
       <!-- Alert Rules -->
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -127,6 +127,88 @@
             Values above 20% are highlighted in yellow — a strong signal that the insider has real conviction (or is dramatically reducing exposure).
             Blank means <code class="text-gray-500">shares_owned_after</code> was not reported in the filing.
           </p>
+        </div>
+      </section>
+
+      <!-- Conviction Score Weights -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-white font-semibold mb-1">Conviction Score Weights</h2>
+        <p class="text-gray-500 text-xs mb-4">
+          Every open market buy (code P) is scored 1–10 at page load. Sells always score 0 — only buys carry the signal.
+          Adjust point values below. Changes save to <code class="text-indigo-400">config_overrides.json</code>.
+        </p>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="config-label">Base buy (open market P)</label>
+            <input type="number" name="conviction_base_open_market_buy" min="0" max="10"
+                   value="{{ config.conviction_flags.base_open_market_buy }}" class="config-input" form="logic-form" />
+            <p class="config-hint">Floor score for any open market purchase. All other bonuses add to this.</p>
+          </div>
+          <div>
+            <label class="config-label">CEO / CFO bonus</label>
+            <input type="number" name="conviction_ceo_cfo_bonus" min="0" max="10"
+                   value="{{ config.conviction_flags.ceo_cfo_bonus }}" class="config-input" form="logic-form" />
+            <p class="config-hint">Added when insider title matches your C-Suite keywords.</p>
+          </div>
+          <div>
+            <label class="config-label">Director bonus</label>
+            <input type="number" name="conviction_director_bonus" min="0" max="10"
+                   value="{{ config.conviction_flags.director_bonus }}" class="config-input" form="logic-form" />
+          </div>
+          <div>
+            <label class="config-label">10%+ owner bonus</label>
+            <input type="number" name="conviction_ten_percent_owner_bonus" min="0" max="10"
+                   value="{{ config.conviction_flags.ten_percent_owner_bonus }}" class="config-input" form="logic-form" />
+          </div>
+          <div>
+            <label class="config-label">Cluster bonus (3+ insiders buying)</label>
+            <input type="number" name="conviction_cluster_bonus" min="0" max="10"
+                   value="{{ config.conviction_flags.cluster_bonus }}" class="config-input" form="logic-form" />
+            <p class="config-hint">Added when 3+ distinct insiders bought at the same issuer within the cluster window.</p>
+          </div>
+          <div>
+            <label class="config-label">Non-10b5-1 bonus</label>
+            <input type="number" name="conviction_non_10b5_1_buy" min="0" max="10"
+                   value="{{ config.conviction_flags.non_10b5_1_buy }}" class="config-input" form="logic-form" />
+            <p class="config-hint">Added when the filing is NOT a pre-planned 10b5-1 sale.</p>
+          </div>
+        </div>
+
+        <p class="text-gray-500 text-xs mb-2 font-medium">Tiered bonuses — only the highest matching tier applies per category:</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <!-- Value tiers -->
+          <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50 space-y-2">
+            <p class="text-white font-medium">Trade Value tier</p>
+            {% for (threshold, points, label) in conviction_tiers.value %}
+            <div class="flex items-center gap-2">
+              <span class="text-gray-400 flex-1">≥ {{ "${:,.0f}".format(threshold) if threshold >= 1000 else "$" + threshold|string }}</span>
+              <input type="number" name="conviction_{{ label }}_pts" min="0" max="10" value="{{ points }}"
+                     class="w-14 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs focus:outline-none" form="logic-form" />
+              <span class="text-gray-600">pts</span>
+            </div>
+            {% endfor %}
+          </div>
+          <!-- % Holdings tiers -->
+          <div class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50 space-y-2">
+            <p class="text-white font-medium">% Holdings tier</p>
+            {% for (threshold, points, label) in conviction_tiers.pct_holdings %}
+            <div class="flex items-center gap-2">
+              <span class="text-gray-400 flex-1">≥ {{ threshold }}% of position</span>
+              <input type="number" name="conviction_{{ label }}_pts" min="0" max="10" value="{{ points }}"
+                     class="w-14 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs focus:outline-none" form="logic-form" />
+              <span class="text-gray-600">pts</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="mt-3 bg-gray-800/30 rounded-lg p-3 text-xs text-gray-500 space-y-1">
+          <p><span class="text-white">Max score: {{ config.conviction_max }}</span> — scores are capped here regardless of weights.</p>
+          <p><span class="text-green-400">Green badge</span> = score ≥ {{ config.conviction_thresholds.high }} &nbsp;|&nbsp;
+             <span class="text-yellow-400">Amber badge</span> = score ≥ {{ config.conviction_thresholds.medium }} &nbsp;|&nbsp;
+             <span class="text-gray-400">Gray badge</span> = score &lt; {{ config.conviction_thresholds.medium }}</p>
+          <p>Research basis: cluster buying (3+) → 2%+/mo outperformance. CEO/CFO buys → 7.8–10%/yr. % holdings &gt;20% → high conviction. Source: <em>Are Insider Trades Informative?</em> (Lakonishok et al.)</p>
         </div>
       </section>
 

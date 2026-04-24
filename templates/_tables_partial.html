@@ -153,6 +153,7 @@
       <table class="w-full text-sm">
         <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
           <tr>
+            {{ sort_th("Score", "conviction") }}
             {{ sort_th("Ticker", "ticker", "left") }}
             <th class="px-3 py-2 text-left">Company</th>
             {{ sort_th("Insider", "insider", "left") }}
@@ -167,6 +168,18 @@
         <tbody class="divide-y divide-gray-800">
           {% for row in buys %}
           <tr class="row-buy hover:bg-gray-800/40 transition-colors">
+            <td class="px-3 py-2 text-right">
+              {% if row.conviction %}
+              <span class="inline-block text-xs font-bold px-1.5 py-0.5 rounded
+                {% if row.conviction_tier == 'high' %}bg-green-900 text-green-300 border border-green-700
+                {% elif row.conviction_tier == 'medium' %}bg-yellow-900 text-yellow-300 border border-yellow-700
+                {% else %}bg-gray-800 text-gray-400 border border-gray-700{% endif %}">
+                {{ row.conviction }}
+              </span>
+              {% else %}
+              <span class="text-gray-700">—</span>
+              {% endif %}
+            </td>
             <td class="px-3 py-2">
               {% if row.issuer_ticker %}
               <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-green-400">
@@ -176,13 +189,13 @@
               <span class="text-gray-500 text-xs">—</span>
               {% endif %}
             </td>
-            <td class="px-3 py-2 text-gray-400 text-xs max-w-[140px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-gray-400 text-xs max-w-[130px] truncate">{{ row.issuer_name }}</td>
             <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
-            <td class="px-3 py-2 text-gray-500 text-xs max-w-[110px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs max-w-[100px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
             <td class="px-3 py-2 text-right font-semibold text-green-400">{{ row.total_value_fmt or '—' }}</td>
-            <td class="px-3 py-2 text-right text-xs {% if row.pct_holdings and row.pct_holdings|replace('%','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
+            <td class="px-3 py-2 text-right text-xs {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
               {{ row.pct_holdings or '—' }}
             </td>
             <td class="px-3 py-2 text-right text-gray-500 text-xs whitespace-nowrap">
@@ -190,7 +203,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="9" class="px-3 py-6 text-center text-gray-600 text-sm">No buys matching current filters</td></tr>
+          <tr><td colspan="10" class="px-3 py-6 text-center text-gray-600 text-sm">No buys matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -207,6 +220,7 @@
       <table class="w-full text-sm">
         <thead class="bg-gray-900 text-gray-500 text-xs uppercase sticky top-12">
           <tr>
+            <th class="px-3 py-2 text-right">Score</th>
             {{ sort_th("Ticker", "ticker", "left") }}
             <th class="px-3 py-2 text-left">Company</th>
             {{ sort_th("Insider", "insider", "left") }}
@@ -222,6 +236,7 @@
         <tbody class="divide-y divide-gray-800">
           {% for row in sells %}
           <tr class="row-sell hover:bg-gray-800/40 transition-colors {% if row.is_10b5_1 %}row-dimmed{% endif %}">
+            <td class="px-3 py-2 text-right text-gray-700 text-xs">—</td>
             <td class="px-3 py-2">
               {% if row.issuer_ticker %}
               <a href="/issuer/{{ row.issuer_ticker }}" class="font-bold text-white hover:text-red-400">
@@ -231,13 +246,13 @@
               <span class="text-gray-500 text-xs">—</span>
               {% endif %}
             </td>
-            <td class="px-3 py-2 text-gray-400 text-xs max-w-[140px] truncate">{{ row.issuer_name }}</td>
+            <td class="px-3 py-2 text-gray-400 text-xs max-w-[130px] truncate">{{ row.issuer_name }}</td>
             <td class="px-3 py-2 text-gray-200 text-xs">{{ row.insider_name }}</td>
-            <td class="px-3 py-2 text-gray-500 text-xs max-w-[110px] truncate">{{ row.insider_title or '—' }}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs max-w-[100px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="px-3 py-2 text-right text-gray-400 text-xs">{{ row.price_fmt or '—' }}</td>
             <td class="px-3 py-2 text-right font-semibold text-red-400">{{ row.total_value_fmt or '—' }}</td>
-            <td class="px-3 py-2 text-right text-xs {% if row.pct_holdings and row.pct_holdings|replace('%','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
+            <td class="px-3 py-2 text-right text-xs {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}text-yellow-400{% else %}text-gray-500{% endif %}">
               {{ row.pct_holdings or '—' }}
             </td>
             <td class="px-3 py-2 text-center">

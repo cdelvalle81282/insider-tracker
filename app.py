@@ -14,6 +14,7 @@ import config as cfg
 from config import save_overrides
 from ingest import get_db
 import queries
+from queries import EnrichContext
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -43,6 +44,20 @@ def _parse_date(d: str | None) -> date:
         return date.today()
 
 
+def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
+    """Build an EnrichContext with conviction config from the active config."""
+    return EnrichContext(
+        conn=db,
+        conviction_flags=active_config.get("conviction_flags"),
+        conviction_tiers=active_config.get("conviction_tiers"),
+        conviction_max=active_config.get("conviction_max", 10),
+        conviction_thresholds=active_config.get("conviction_thresholds"),
+        cluster_window_days=active_config.get("alert_rules", {}).get("cluster_window_days", 14),
+        ceo_cfo_keywords=active_config.get("alert_rules", {}).get("insider_title_keywords", []),
+        compute_conviction=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main dashboard
 # ---------------------------------------------------------------------------
@@ -70,6 +85,8 @@ async def index(
     ceo_cfo_only = ceo_cfo == "1"
 
     db = _db(request)
+    ctx = _make_ctx(db, active_config)
+
     buys, sells = queries.get_filings_for_date(
         db, target_date,
         min_value=effective_min,
@@ -81,6 +98,7 @@ async def index(
         ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
         sort_by=sort_by,
         sort_order=sort_order,
+        ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
     clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
@@ -130,6 +148,8 @@ async def htmx_filings(
     effective_hide = hide_10b5_1 != "0"
     ceo_cfo_only = ceo_cfo == "1"
     db = _db(request)
+    ctx = _make_ctx(db, active_config)
+
     buys, sells = queries.get_filings_for_date(
         db, target_date,
         min_value=min_value,
@@ -141,6 +161,7 @@ async def htmx_filings(
         ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
         sort_by=sort_by,
         sort_order=sort_order,
+        ctx=ctx,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
     clusters = queries.get_cluster_activity(db, target_date, hide_10b5_1=effective_hide)
@@ -163,11 +184,15 @@ async def htmx_filings(
 
 @app.get("/filing/{transaction_id:path}", response_class=HTMLResponse)
 async def filing_detail(request: Request, transaction_id: str):
-    filing = queries.get_filing_detail(_db(request), transaction_id)
+    active_config = cfg.load_config()
+    db = _db(request)
+    ctx = _make_ctx(db, active_config)
+    filing = queries.get_filing_detail(db, transaction_id, ctx=ctx)
     if filing is None:
         raise HTTPException(status_code=404, detail="Filing not found")
     return templates.TemplateResponse(request, "filing.html", {
         "filing": filing,
+        "config": active_config,
     })
 
 
@@ -209,19 +234,35 @@ async def logic_page(request: Request):
         "config": active_config,
         "stats": stats,
         "transaction_codes": cfg.TRANSACTION_CODES,
+        "conviction_tiers": cfg.CONVICTION_TIERS,
     })
 
 
 @app.post("/logic/save")
 async def logic_save(
     request: Request,
+    # Alert rules
     big_buy_threshold: float = Form(...),
     insider_buy_threshold: float = Form(...),
     insider_title_keywords: str = Form(...),
     cluster_window_days: int = Form(...),
     cluster_min_insiders: int = Form(...),
+    # Filter defaults
     min_value: float = Form(...),
     hide_10b5_1: str = Form(default="off"),
+    # Conviction flags (all optional — default None means "keep existing")
+    conviction_base_open_market_buy: int | None = Form(default=None),
+    conviction_ceo_cfo_bonus: int | None = Form(default=None),
+    conviction_director_bonus: int | None = Form(default=None),
+    conviction_ten_percent_owner_bonus: int | None = Form(default=None),
+    conviction_cluster_bonus: int | None = Form(default=None),
+    conviction_non_10b5_1_buy: int | None = Form(default=None),
+    # Conviction tier point values
+    conviction_value_250k_pts: int | None = Form(default=None),
+    conviction_value_1m_pts: int | None = Form(default=None),
+    conviction_value_5m_pts: int | None = Form(default=None),
+    conviction_pct_20_pts: int | None = Form(default=None),
+    conviction_pct_50_pts: int | None = Form(default=None),
 ):
     alert_rules = {
         "big_buy_threshold": big_buy_threshold,
@@ -234,5 +275,37 @@ async def logic_save(
         "min_value": min_value,
         "hide_10b5_1": hide_10b5_1 == "on",
     }
-    save_overrides(alert_rules, filter_defaults)
+
+    # Build conviction_flags only from non-None submitted values
+    conviction_flags: dict | None = None
+    flag_map = {
+        "base_open_market_buy":    conviction_base_open_market_buy,
+        "ceo_cfo_bonus":           conviction_ceo_cfo_bonus,
+        "director_bonus":          conviction_director_bonus,
+        "ten_percent_owner_bonus": conviction_ten_percent_owner_bonus,
+        "cluster_bonus":           conviction_cluster_bonus,
+        "non_10b5_1_buy":          conviction_non_10b5_1_buy,
+    }
+    tier_pts = {
+        "value_250k":  conviction_value_250k_pts,
+        "value_1m":    conviction_value_1m_pts,
+        "value_5m":    conviction_value_5m_pts,
+        "pct_20":      conviction_pct_20_pts,
+        "pct_50":      conviction_pct_50_pts,
+    }
+    submitted_flags = {k: v for k, v in flag_map.items() if v is not None}
+    submitted_tier_pts = {k: v for k, v in tier_pts.items() if v is not None}
+
+    if submitted_flags or submitted_tier_pts:
+        # Load existing flags to merge into
+        existing = cfg.load_config()
+        conviction_flags = dict(existing.get("conviction_flags") or cfg.CONVICTION_FLAGS)
+        conviction_flags.update(submitted_flags)
+        # Tier point overrides — update the points in CONVICTION_TIERS structure
+        # These are stored separately in config_overrides under "conviction_tier_pts"
+        # and applied at load_config time. For now store in conviction_flags with prefix.
+        for key, val in submitted_tier_pts.items():
+            conviction_flags[f"tier_pts_{key}"] = val
+
+    save_overrides(alert_rules, filter_defaults, conviction_flags=conviction_flags or None)
     return RedirectResponse(url="/logic?saved=1", status_code=303)

@@ -2,7 +2,28 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+
+
+# ---------------------------------------------------------------------------
+# Enrichment context — passed to _enrich; add new fields here each session
+# rather than adding positional parameters. Callers passing ctx=None are
+# unaffected by new fields.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EnrichContext:
+    conn: sqlite3.Connection | None = None
+    conviction_flags: dict | None = None      # CONVICTION_FLAGS values
+    conviction_tiers: dict | None = None      # CONVICTION_TIERS values
+    conviction_max: int = 10
+    conviction_thresholds: dict | None = None
+    cluster_window_days: int = 14
+    ceo_cfo_keywords: list[str] = field(default_factory=list)
+    watched_tickers: set[str] = field(default_factory=set)     # Session 6
+    watched_insiders: set[str] = field(default_factory=set)    # Session 6
+    compute_conviction: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -41,24 +62,11 @@ def _relative_time(ts: str | None) -> str:
         return ts or ""
 
 
-def _enrich(rows: list[sqlite3.Row]) -> list[dict]:
-    result = []
-    for r in rows:
-        d = dict(r)
-        d["total_value_fmt"] = _fmt_value(d.get("total_value"))
-        d["price_fmt"] = _fmt_value(d.get("price_per_share"))
-        d["filed_rel"] = _relative_time(d.get("filed_at"))
-        d["pct_holdings"] = _pct_holdings(d)
-        result.append(d)
-    return result
-
-
 def _pct_holdings(row: dict) -> str | None:
     """
     % of position this transaction represents.
-    Buy:  shares_bought / shares_owned_after          (how much of new stake was this purchase)
-    Sell: shares_sold   / (shares_owned_after + shares_sold)  (how much of prior stake was sold)
-    Returns formatted string like "12.3%" or None if data missing.
+    Buy:  shares_bought / shares_owned_after
+    Sell: shares_sold   / (shares_owned_after + shares_sold)
     """
     shares = row.get("shares")
     after = row.get("shares_owned_after")
@@ -78,11 +86,166 @@ def _pct_holdings(row: dict) -> str | None:
     return f"{pct:.1f}%"
 
 
+def _batch_cluster_counts(
+    conn: sqlite3.Connection,
+    rows: list[dict],
+    window_days: int,
+) -> dict[tuple, int]:
+    """
+    Pre-batch cluster counts for all unique (issuer_cik, transaction_date) pairs
+    in the row set. Returns {(issuer_cik, transaction_date): distinct_insider_count}.
+    Avoids N+1 queries by computing all needed pairs up front.
+    """
+    pairs = {(r.get("issuer_cik"), r.get("transaction_date")) for r in rows
+             if r.get("issuer_cik") and r.get("transaction_date")}
+    if not pairs:
+        return {}
+    result: dict[tuple, int] = {}
+    for (cik, dt) in pairs:
+        d0 = (date.fromisoformat(dt) - timedelta(days=window_days)).isoformat()
+        n = conn.execute(
+            """SELECT COUNT(DISTINCT insider_cik) FROM filings
+               WHERE issuer_cik=? AND transaction_code='P'
+                 AND transaction_date BETWEEN ? AND ?""",
+            [cik, d0, dt],
+        ).fetchone()[0]
+        result[(cik, dt)] = n
+    return result
+
+
+def _conviction_score(
+    row: dict,
+    tiers: dict,
+    flags: dict,
+    cluster_count: int,
+    keywords: list[str],
+    max_score: int = 10,
+) -> tuple[int, list[str]]:
+    """
+    Returns (score, reasons) for a single filing row.
+    Only P (open market purchase) transactions receive a non-zero score.
+    """
+    if row.get("transaction_code") != "P":
+        return 0, []
+
+    score = 0
+    reasons: list[str] = []
+
+    base = flags.get("base_open_market_buy", 0)
+    if base:
+        score += base
+        reasons.append(f"Open market buy (+{base})")
+
+    # Tiered bonuses — highest matching threshold only per family
+    for family, brackets in tiers.items():
+        if family == "value":
+            v = row.get("total_value") or 0
+            for threshold, points, label in brackets:  # descending order assumed
+                if v >= threshold:
+                    score += points
+                    reasons.append(f"Trade value >= {_fmt_value(threshold)} (+{points})")
+                    break
+        elif family == "pct_holdings":
+            raw = row.get("pct_holdings") or ""
+            try:
+                pct = float(raw.replace("%", "").replace("<", "").replace(">", ""))
+            except ValueError:
+                continue
+            for threshold, points, label in brackets:
+                if pct >= threshold:
+                    score += points
+                    reasons.append(f"% of holdings >= {threshold}% (+{points})")
+                    break
+
+    # Non-tiered flags
+    title = (row.get("insider_title") or "").lower()
+    if any(kw.lower() in title for kw in keywords):
+        pts = flags.get("ceo_cfo_bonus", 0)
+        score += pts
+        reasons.append(f"C-suite insider (+{pts})")
+
+    if row.get("is_director"):
+        pts = flags.get("director_bonus", 0)
+        score += pts
+        reasons.append(f"Director (+{pts})")
+
+    if row.get("is_ten_percent_owner"):
+        pts = flags.get("ten_percent_owner_bonus", 0)
+        score += pts
+        reasons.append(f"10%+ owner (+{pts})")
+
+    if cluster_count >= 3:
+        pts = flags.get("cluster_bonus", 0)
+        score += pts
+        reasons.append(f"Cluster: {cluster_count} insiders buying (+{pts})")
+
+    if not row.get("is_10b5_1"):
+        pts = flags.get("non_10b5_1_buy", 0)
+        score += pts
+        reasons.append(f"Not a 10b5-1 plan (+{pts})")
+
+    final = min(score, max_score)
+    return final, reasons
+
+
+def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[dict]:
+    result = []
+
+    # Pre-batch cluster counts if conviction is needed
+    cluster_counts: dict[tuple, int] = {}
+    if ctx and ctx.compute_conviction and ctx.conn and ctx.conviction_flags:
+        raw_dicts = [dict(r) for r in rows]
+        cluster_counts = _batch_cluster_counts(
+            ctx.conn, raw_dicts, ctx.cluster_window_days
+        )
+        rows_to_process = raw_dicts
+    else:
+        rows_to_process = [dict(r) for r in rows]
+
+    thresholds = (ctx.conviction_thresholds or {}) if ctx else {}
+    high_t = thresholds.get("high", 8)
+    med_t = thresholds.get("medium", 5)
+
+    for d in rows_to_process:
+        d["total_value_fmt"] = _fmt_value(d.get("total_value"))
+        d["price_fmt"] = _fmt_value(d.get("price_per_share"))
+        d["filed_rel"] = _relative_time(d.get("filed_at"))
+        d["pct_holdings"] = _pct_holdings(d)
+
+        if ctx and ctx.compute_conviction and ctx.conviction_flags and ctx.conviction_tiers:
+            cluster_n = cluster_counts.get(
+                (d.get("issuer_cik"), d.get("transaction_date")), 0
+            )
+            score, reasons = _conviction_score(
+                d,
+                ctx.conviction_tiers,
+                ctx.conviction_flags,
+                cluster_n,
+                ctx.ceo_cfo_keywords,
+                ctx.conviction_max,
+            )
+            d["conviction"] = score
+            d["conviction_reasons"] = reasons
+            if score >= high_t:
+                d["conviction_tier"] = "high"
+            elif score >= med_t:
+                d["conviction_tier"] = "medium"
+            else:
+                d["conviction_tier"] = "low"
+        else:
+            d["conviction"] = None
+            d["conviction_reasons"] = []
+            d["conviction_tier"] = "low"
+
+        result.append(d)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Dashboard queries
 # ---------------------------------------------------------------------------
 
-# Whitelisted sort columns → actual SQL column names
+# SQL-sortable columns only. "conviction" is NOT here — it's computed in Python.
 _SORT_COLUMNS = {
     "value":   "total_value",
     "shares":  "shares",
@@ -105,6 +268,7 @@ def get_filings_for_date(
     ceo_cfo_keywords: list[str] | None = None,
     sort_by: str = "value",
     sort_order: str = "desc",
+    ctx: EnrichContext | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return (buys, sells) for the given date, applying all filters."""
     codes = transaction_codes or ["P", "S"]
@@ -119,15 +283,12 @@ def get_filings_for_date(
         if "ten_pct" in roles:
             role_clauses.append("is_ten_percent_owner = 1")
 
-    # CEO/CFO filter: fuzzy title match against configurable keywords
-    ceo_clauses = []
-    if ceo_cfo_only and ceo_cfo_keywords:
-        for kw in ceo_cfo_keywords:
-            ceo_clauses.append(f"insider_title LIKE ?")
-            params_for_ceo = [f"%{kw}%"] * len(ceo_cfo_keywords)
-
     order_col = _SORT_COLUMNS.get(sort_by, "total_value")
     order_dir = "ASC" if sort_order == "asc" else "DESC"
+    sql_sort = f"ORDER BY {order_col} {order_dir} NULLS LAST"
+    # Conviction sort happens in Python after enrichment
+    if sort_by == "conviction":
+        sql_sort = "ORDER BY total_value DESC NULLS LAST"
 
     base_where = """
         WHERE DATE(filed_at) = ?
@@ -141,7 +302,7 @@ def get_filings_for_date(
         codes=",".join("?" * len(codes)),
         ten_b="AND is_10b5_1 = 0" if hide_10b5_1 else "",
         role=("AND (" + " OR ".join(role_clauses) + ")") if role_clauses else "",
-        ceo=("AND (" + " OR ".join(f"insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")") if ceo_cfo_only and ceo_cfo_keywords else "",
+        ceo=("AND (" + " OR ".join("insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")") if ceo_cfo_only and ceo_cfo_keywords else "",
         search="AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else "",
     )
 
@@ -155,18 +316,24 @@ def get_filings_for_date(
 
     sql = f"""
         SELECT transaction_id, accession_no, filed_at,
-               issuer_ticker, issuer_name,
-               insider_name, insider_title,
+               issuer_cik, issuer_ticker, issuer_name,
+               insider_cik, insider_name, insider_title,
                transaction_code, shares, price_per_share, total_value,
                shares_owned_after, is_10b5_1, is_director, is_officer,
-               is_ten_percent_owner, ownership_type, table_type
+               is_ten_percent_owner, ownership_type, table_type,
+               transaction_date
         FROM filings
         {base_where}
-        ORDER BY {order_col} {order_dir} NULLS LAST
+        {sql_sort}
     """
 
     rows = conn.execute(sql, params).fetchall()
-    enriched = _enrich(rows)
+    enriched = _enrich(rows, ctx=ctx)
+
+    if sort_by == "conviction":
+        reverse = sort_order != "asc"
+        enriched.sort(key=lambda r: r.get("conviction") or -1, reverse=reverse)
+
     buys = [r for r in enriched if r["transaction_code"] == "P"]
     sells = [r for r in enriched if r["transaction_code"] == "S"]
     return buys, sells
@@ -191,7 +358,6 @@ def get_summary_stats(conn: sqlite3.Connection, target_date: date, hide_10b5_1: 
         WHERE DATE(filed_at)=? AND transaction_code IN ('P','S') {ten_b}
     """, [d]).fetchone()
 
-    # Cluster: 2+ distinct insiders buying at same issuer on this date
     clusters = conn.execute(f"""
         SELECT COUNT(*) FROM (
           SELECT issuer_cik FROM filings
@@ -219,24 +385,17 @@ def get_cluster_activity(
     min_insiders: int = 2,
     hide_10b5_1: bool = True,
 ) -> list[dict]:
-    """
-    Return tickers where 2+ distinct insiders traded on the same day.
-    Each row covers one ticker+direction combo (buys separate from sells).
-    Sorted by total value desc.
-    """
     d = target_date.isoformat()
     ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
 
     rows = conn.execute(f"""
         SELECT
-            issuer_ticker,
-            issuer_name,
+            issuer_ticker, issuer_name,
             CASE WHEN SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) > 0
                   AND SUM(CASE WHEN transaction_code='S' THEN 1 ELSE 0 END) > 0
                  THEN 'mixed'
                  WHEN SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) > 0
-                 THEN 'buy'
-                 ELSE 'sell'
+                 THEN 'buy' ELSE 'sell'
             END AS direction,
             COUNT(DISTINCT insider_cik) AS insider_count,
             COUNT(*) AS tx_count,
@@ -258,7 +417,6 @@ def get_cluster_activity(
         d_row = dict(r)
         d_row["total_value_fmt"] = _fmt_value(d_row["total_value"])
 
-        # Fetch the individual transactions for the expanded view
         tx_rows = conn.execute(f"""
             SELECT transaction_id, insider_name, insider_title,
                    transaction_code, shares, price_per_share, total_value, is_10b5_1
@@ -278,17 +436,18 @@ def get_cluster_activity(
     return result
 
 
-def get_filing_detail(conn: sqlite3.Connection, transaction_id: str) -> dict | None:
+def get_filing_detail(
+    conn: sqlite3.Connection,
+    transaction_id: str,
+    ctx: EnrichContext | None = None,
+) -> dict | None:
     row = conn.execute(
         "SELECT * FROM filings WHERE transaction_id = ?", [transaction_id]
     ).fetchone()
     if row is None:
         return None
-    d = dict(row)
-    d["total_value_fmt"] = _fmt_value(d.get("total_value"))
-    d["price_fmt"] = _fmt_value(d.get("price_per_share"))
-    d["filed_rel"] = _relative_time(d.get("filed_at"))
-    return d
+    enriched = _enrich([row], ctx=ctx)
+    return enriched[0]
 
 
 def get_issuer_filings(
@@ -316,7 +475,6 @@ def get_run_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
 
 
 def get_10b5_1_stats(conn: sqlite3.Connection) -> dict:
-    """Stats shown on the Logic page."""
     total = conn.execute("SELECT COUNT(*) FROM filings").fetchone()[0]
     flagged_xml = conn.execute(
         "SELECT COUNT(*) FROM filings WHERE is_10b5_1=1"

@@ -15,6 +15,33 @@ ALERT_RULES = {
     "cluster_min_insiders": 3,
 }
 
+# Tiered bonuses: within each tier only the highest matching threshold applies.
+# Each entry is (threshold, points, label). Must stay in descending order.
+CONVICTION_TIERS = {
+    "value": [
+        (5_000_000, 3, "value_over_5m"),
+        (1_000_000, 2, "value_over_1m"),
+        (250_000,   1, "value_over_250k"),
+    ],
+    "pct_holdings": [
+        (50, 3, "pct_over_50"),
+        (20, 2, "pct_over_20"),
+    ],
+}
+
+# Non-tiered flags — each fires independently and is additive.
+CONVICTION_FLAGS = {
+    "base_open_market_buy":    3,   # P code floor — non-P transactions always score 0
+    "ceo_cfo_bonus":           2,
+    "director_bonus":          1,
+    "ten_percent_owner_bonus": 1,
+    "cluster_bonus":           2,   # 3+ distinct insiders at same issuer within window
+    "non_10b5_1_buy":          1,
+}
+
+CONVICTION_MAX = 10
+CONVICTION_THRESHOLDS = {"high": 8, "medium": 5}  # tier labels for color coding
+
 FILTER_DEFAULTS = {
     "min_value": 100_000,
     "transaction_codes": ["P", "S"],
@@ -61,6 +88,10 @@ def load_config() -> dict:
         "alert_rules": dict(ALERT_RULES),
         "filter_defaults": dict(FILTER_DEFAULTS),
         "transaction_codes": dict(TRANSACTION_CODES),
+        "conviction_tiers": {k: list(v) for k, v in CONVICTION_TIERS.items()},
+        "conviction_flags": dict(CONVICTION_FLAGS),
+        "conviction_max": CONVICTION_MAX,
+        "conviction_thresholds": dict(CONVICTION_THRESHOLDS),
         "sec_user_agent": SEC_USER_AGENT,
         "sec_rate_limit": SEC_RATE_LIMIT,
         "ticker_cache_days": TICKER_CACHE_DAYS,
@@ -69,17 +100,28 @@ def load_config() -> dict:
     if os.path.exists(OVERRIDES_PATH):
         with open(OVERRIDES_PATH) as f:
             overrides = json.load(f)
-        for section in ("alert_rules", "filter_defaults"):
+        for section in ("alert_rules", "filter_defaults", "conviction_flags"):
             if section in overrides:
                 cfg[section].update(overrides[section])
     return cfg
 
 
-def save_overrides(alert_rules: dict, filter_defaults: dict) -> None:
+def save_overrides(
+    alert_rules: dict,
+    filter_defaults: dict,
+    conviction_flags: dict | None = None,
+) -> None:
     """Persist edits made via the /logic page."""
-    overrides = {
-        "alert_rules": alert_rules,
-        "filter_defaults": filter_defaults,
-    }
+    # Merge with existing overrides so we don't clobber sections not being saved
+    existing: dict = {}
+    if os.path.exists(OVERRIDES_PATH):
+        with open(OVERRIDES_PATH) as f:
+            existing = json.load(f)
+
+    existing["alert_rules"] = alert_rules
+    existing["filter_defaults"] = filter_defaults
+    if conviction_flags is not None:
+        existing["conviction_flags"] = conviction_flags
+
     with open(OVERRIDES_PATH, "w") as f:
-        json.dump(overrides, f, indent=2)
+        json.dump(existing, f, indent=2)
