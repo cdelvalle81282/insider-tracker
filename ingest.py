@@ -112,6 +112,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "joint_filer_of" not in cols:
         conn.execute("ALTER TABLE filings ADD COLUMN joint_filer_of TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_joint_filer ON filings(joint_filer_of)")
+    existing_indexes = {r[1] for r in conn.execute("SELECT type, name FROM sqlite_master WHERE type='index'")}
+    if "idx_filed_date" not in existing_indexes:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_filed_date ON filings(DATE(filed_at))")
     # sectors lookup table
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sectors (

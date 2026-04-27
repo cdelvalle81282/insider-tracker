@@ -123,16 +123,16 @@ def _batch_cluster_counts(
         all_ciks + [global_start, global_end],
     ).fetchall()
 
-    by_cik_date: dict[tuple, set] = defaultdict(set)
+    by_cik: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
     for r in db_rows:
-        by_cik_date[(r[0], r[1])].add(r[2])
+        by_cik[r[0]][r[1]].add(r[2])
 
     result: dict[tuple, int] = {}
     for (cik, dt) in pairs:
         d0 = (date.fromisoformat(dt) - timedelta(days=window_days)).isoformat()
         insiders: set = set()
-        for (c, d), iset in by_cik_date.items():
-            if c == cik and d0 <= d <= dt:
+        for d_key, iset in by_cik.get(cik, {}).items():
+            if d0 <= d_key <= dt:
                 insiders |= iset
         result[(cik, dt)] = len(insiders)
     return result
@@ -476,18 +476,14 @@ def get_summary_stats(conn: sqlite3.Connection, target_date: date, hide_10b5_1: 
     d = target_date.isoformat()
     ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
 
-    buys = conn.execute(f"""
-        SELECT COUNT(*), COALESCE(SUM(total_value),0)
-        FROM filings WHERE DATE(filed_at)=? AND transaction_code='P' {ten_b}
-    """, [d]).fetchone()
-
-    sells = conn.execute(f"""
-        SELECT COUNT(*), COALESCE(SUM(total_value),0)
-        FROM filings WHERE DATE(filed_at)=? AND transaction_code='S' {ten_b}
-    """, [d]).fetchone()
-
-    issuers = conn.execute(f"""
-        SELECT COUNT(DISTINCT issuer_cik) FROM filings
+    row = conn.execute(f"""
+        SELECT
+            SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) AS buy_count,
+            COALESCE(SUM(CASE WHEN transaction_code='P' THEN total_value END), 0) AS buy_total,
+            SUM(CASE WHEN transaction_code='S' THEN 1 ELSE 0 END) AS sell_count,
+            COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
+            COUNT(DISTINCT issuer_cik) AS issuer_count
+        FROM filings
         WHERE DATE(filed_at)=? AND transaction_code IN ('P','S') {ten_b}
     """, [d]).fetchone()
 
@@ -499,16 +495,18 @@ def get_summary_stats(conn: sqlite3.Connection, target_date: date, hide_10b5_1: 
         )
     """, [d]).fetchone()
 
-    net = (buys[1] or 0) - (sells[1] or 0)
+    buy_total = row[1] or 0
+    sell_total = row[3] or 0
+    net = buy_total - sell_total
     return {
-        "buy_count": buys[0] or 0,
-        "sell_count": sells[0] or 0,
+        "buy_count": row[0] or 0,
+        "sell_count": row[2] or 0,
         "net_flow": net,
         "net_flow_fmt": _fmt_value(net),
-        "issuer_count": issuers[0] or 0,
+        "issuer_count": row[4] or 0,
         "cluster_count": clusters[0] or 0,
-        "buy_total_fmt": _fmt_value(buys[1]),
-        "sell_total_fmt": _fmt_value(sells[1]),
+        "buy_total_fmt": _fmt_value(buy_total),
+        "sell_total_fmt": _fmt_value(sell_total),
     }
 
 
@@ -554,26 +552,34 @@ def get_cluster_activity(
         ORDER BY total_value DESC
     """, [*date_params, min_insiders]).fetchall()
 
+    if not rows:
+        return []
+
+    cluster_tickers = [dict(r)["issuer_ticker"] for r in rows]
+    ticker_placeholders = ",".join("?" * len(cluster_tickers))
+    all_tx = conn.execute(f"""
+        SELECT transaction_id, insider_name, insider_title,
+               transaction_code, shares, price_per_share, total_value, is_10b5_1,
+               issuer_ticker
+        FROM filings
+        WHERE {date_condition}
+          AND issuer_ticker IN ({ticker_placeholders})
+          AND transaction_code IN ('P','S') {ten_b}
+        ORDER BY total_value DESC NULLS LAST
+    """, [*date_params, *cluster_tickers]).fetchall()
+
+    tx_by_ticker: dict[str, list[dict]] = defaultdict(list)
+    for tx in all_tx:
+        tx_d = dict(tx)
+        tx_d["total_value_fmt"] = _fmt_value(tx_d["total_value"])
+        tx_d["price_fmt"] = _fmt_value(tx_d["price_per_share"])
+        tx_by_ticker[tx_d["issuer_ticker"]].append(tx_d)
+
     result = []
     for r in rows:
         d_row = dict(r)
         d_row["total_value_fmt"] = _fmt_value(d_row["total_value"])
-
-        tx_rows = conn.execute(f"""
-            SELECT transaction_id, insider_name, insider_title,
-                   transaction_code, shares, price_per_share, total_value, is_10b5_1
-            FROM filings
-            WHERE {date_condition} AND issuer_ticker = ?
-              AND transaction_code IN ('P','S') {ten_b}
-            ORDER BY total_value DESC NULLS LAST
-        """, [*date_params, d_row["issuer_ticker"]]).fetchall()
-
-        d_row["transactions"] = [
-            {**dict(tx),
-             "total_value_fmt": _fmt_value(tx["total_value"]),
-             "price_fmt": _fmt_value(tx["price_per_share"])}
-            for tx in tx_rows
-        ]
+        d_row["transactions"] = tx_by_ticker.get(d_row["issuer_ticker"], [])
         result.append(d_row)
     return result
 
