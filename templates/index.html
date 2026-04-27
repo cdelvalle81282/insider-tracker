@@ -70,6 +70,13 @@
     </label>
     <div class="fg-sep"></div>
     <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="hide_equity_swap" value="1"
+             {% if filters.hide_equity_swap %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Hide swaps</span>
+    </label>
+    <div class="fg-sep"></div>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
       <input type="checkbox" name="ceo_cfo" value="1"
              {% if filters.ceo_cfo %}checked{% endif %}
              class="accent-sky-500 w-3 h-3 rounded" />

@@ -129,6 +129,7 @@ async def index(
     end_date: str | None = Query(default=None),
     min_value: float = Query(default=None),
     hide_10b5_1: str = Query(default=None),
+    hide_equity_swap: str = Query(default=None),
     codes: list[str] = Query(default=None),
     roles: list[str] = Query(default=None),
     search: str | None = Query(default=None),
@@ -147,6 +148,7 @@ async def index(
 
     effective_min = min_value if min_value is not None else fd["min_value"]
     effective_hide = (hide_10b5_1 != "0") if hide_10b5_1 is not None else fd["hide_10b5_1"]
+    effective_hide_swap = (hide_equity_swap != "0") if hide_equity_swap is not None else fd.get("hide_equity_swap", True)
     effective_codes = codes if codes else fd["transaction_codes"]
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
@@ -160,6 +162,7 @@ async def index(
         min_value=effective_min,
         transaction_codes=effective_codes,
         hide_10b5_1=effective_hide,
+        hide_equity_swap=effective_hide_swap,
         roles=roles,
         search=search,
         ceo_cfo_only=ceo_cfo_only,
@@ -171,15 +174,16 @@ async def index(
         date_range=date_range_arg,
         ctx=ctx,
     )
-    stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
+    stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap)
     clusters = queries.get_cluster_activity(
-        db, target_date, hide_10b5_1=effective_hide,
+        db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
         date_range=date_range_arg,
     )
     daily_summary = (
         queries.get_daily_summary(
             db, range_start, range_end, effective_hide, effective_min,
             transaction_codes=effective_codes,
+            hide_equity_swap=effective_hide_swap,
         )
         if summary_mode else []
     )
@@ -202,6 +206,7 @@ async def index(
         "filters": {
             "min_value": effective_min,
             "hide_10b5_1": effective_hide,
+            "hide_equity_swap": effective_hide_swap,
             "codes": effective_codes,
             "roles": roles or [],
             "search": search or "",
@@ -228,6 +233,7 @@ async def htmx_filings(
     end_date: str | None = Query(default=None),
     min_value: float = Query(default=0),
     hide_10b5_1: str = Query(default="1"),
+    hide_equity_swap: str = Query(default="1"),
     codes: list[str] = Query(default=["P", "S"]),
     roles: list[str] = Query(default=None),
     search: str | None = Query(default=None),
@@ -239,6 +245,7 @@ async def htmx_filings(
 ):
     active_config = cfg.load_config()
     effective_hide = hide_10b5_1 != "0"
+    effective_hide_swap = hide_equity_swap != "0"
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
@@ -255,6 +262,7 @@ async def htmx_filings(
         min_value=min_value,
         transaction_codes=codes,
         hide_10b5_1=effective_hide,
+        hide_equity_swap=effective_hide_swap,
         roles=roles,
         search=search,
         ceo_cfo_only=ceo_cfo_only,
@@ -266,15 +274,16 @@ async def htmx_filings(
         date_range=date_range_arg,
         ctx=ctx,
     )
-    stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide)
+    stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap)
     clusters = queries.get_cluster_activity(
-        db, target_date, hide_10b5_1=effective_hide,
+        db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
         date_range=date_range_arg,
     )
     daily_summary = (
         queries.get_daily_summary(
             db, range_start, range_end, effective_hide, min_value,
             transaction_codes=codes,
+            hide_equity_swap=effective_hide_swap,
         )
         if summary_mode else []
     )
@@ -320,6 +329,7 @@ async def export_csv(
     end_date: str | None = Query(default=None),
     min_value: float = Query(default=0),
     hide_10b5_1: str = Query(default="1"),
+    hide_equity_swap: str = Query(default="1"),
     codes: list[str] = Query(default=["P", "S"]),
     roles: list[str] = Query(default=None),
     search: str | None = Query(default=None),
@@ -331,6 +341,7 @@ async def export_csv(
 ):
     active_config = cfg.load_config()
     effective_hide = hide_10b5_1 != "0"
+    effective_hide_swap = hide_equity_swap != "0"
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
@@ -346,6 +357,7 @@ async def export_csv(
         min_value=min_value,
         transaction_codes=codes,
         hide_10b5_1=effective_hide,
+        hide_equity_swap=effective_hide_swap,
         roles=roles,
         search=search,
         ceo_cfo_only=ceo_cfo_only,

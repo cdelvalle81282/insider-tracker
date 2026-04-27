@@ -46,6 +46,7 @@ FILTER_DEFAULTS = {
     "min_value": 100_000,
     "transaction_codes": ["P", "S"],
     "hide_10b5_1": True,
+    "hide_equity_swap": True,
     "roles": [],
 }
 
