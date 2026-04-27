@@ -5,6 +5,7 @@ import io
 import os
 import re
 import sqlite3
+import statistics
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -525,6 +526,125 @@ async def run_log(request: Request):
     log = queries.get_run_log(_db(request))
     return templates.TemplateResponse(request, "run_log.html", {
         "log": log,
+    })
+
+
+@app.get("/backtest", response_class=HTMLResponse)
+async def backtest(request: Request):
+    csv_path = BASE_DIR / "data" / "backtest_results.csv"
+
+    if not csv_path.exists():
+        return templates.TemplateResponse(request, "backtest.html", {
+            "rows": [],
+            "summary": {},
+            "running": True,
+            "csv_path": "data/backtest_results.csv",
+        })
+
+    def _parse_bool(s: str) -> bool | None:
+        if s == "True":
+            return True
+        if s == "False":
+            return False
+        return None
+
+    def _parse_float(s: str) -> float | None:
+        if s == "" or s is None:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    bool_fields = {
+        "is_10b5_1", "is_director", "is_officer",
+        "gc_computable", "gc_30d", "gc_60d", "gc_90d",
+        "rb_computable", "rb_30d", "rb_60d", "rb_90d",
+        "hhl_computable", "hhl_30d", "hhl_60d", "hhl_90d",
+        "cb_computable", "cb_30d", "cb_60d", "cb_90d",
+    }
+    float_fields = {
+        "value", "trade_price",
+        "gc_days", "rb_days", "hhl_days", "cb_days",
+        "stacked_30d", "stacked_60d", "stacked_90d",
+        "return_30d", "return_60d", "return_90d",
+    }
+
+    rows: list[dict] = []
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        for raw in reader:
+            row: dict = {}
+            for k, v in raw.items():
+                k = k.strip()
+                if k in bool_fields:
+                    row[k] = _parse_bool(v.strip() if v else "")
+                elif k in float_fields:
+                    row[k] = _parse_float(v.strip() if v else "")
+                else:
+                    row[k] = v.strip() if v else v
+            rows.append(row)
+
+    SIGNALS = (
+        ("gc",  "Golden Cross"),
+        ("rb",  "Resistance Break"),
+        ("hhl", "HH + HL"),
+        ("cb",  "Channel Break"),
+    )
+    WINDOWS = (30, 60, 90)
+
+    signals_summary: dict = {}
+    for sig, label in SIGNALS:
+        windows_data: dict = {}
+        for w in WINDOWS:
+            comp_key = f"{sig}_computable"
+            fired_key = f"{sig}_{w}d"
+            ret_key   = f"return_{w}d"
+
+            computable_rows = [r for r in rows if r.get(comp_key) is True]
+            fired_rows      = [r for r in computable_rows if r.get(fired_key) is True]
+            returns         = [r[ret_key] for r in fired_rows if r.get(ret_key) is not None]
+
+            n_computable = len(computable_rows)
+            n_fired      = len(fired_rows)
+            hit_rate     = (n_fired / n_computable * 100.0) if n_computable else 0.0
+            avg_ret      = statistics.mean(returns) if returns else None
+            med_ret      = statistics.median(returns) if returns else None
+
+            windows_data[w] = {
+                "computable":     n_computable,
+                "fired":          n_fired,
+                "hit_rate":       hit_rate,
+                "avg_return":     avg_ret,
+                "median_return":  med_ret,
+            }
+        signals_summary[sig] = {"label": label, "windows": windows_data}
+
+    stacked_summary: dict = {}
+    for w in WINDOWS:
+        stacked_key = f"stacked_{w}d"
+        ret_key     = f"return_{w}d"
+        levels: dict = {}
+        for n in (1, 2, 3, 4):
+            qualified = [r for r in rows if (r.get(stacked_key) or 0) >= n]
+            returns   = [r[ret_key] for r in qualified if r.get(ret_key) is not None]
+            levels[n] = {
+                "count":      len(qualified),
+                "avg_return": statistics.mean(returns) if returns else None,
+            }
+        stacked_summary[w] = levels
+
+    summary = {
+        "total":   len(rows),
+        "signals": signals_summary,
+        "stacked": stacked_summary,
+    }
+
+    return templates.TemplateResponse(request, "backtest.html", {
+        "rows":     rows,
+        "summary":  summary,
+        "running":  False,
+        "csv_path": "data/backtest_results.csv",
     })
 
 

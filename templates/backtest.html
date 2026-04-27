@@ -1,0 +1,536 @@
+{% extends "base.html" %}
+{% block title %}Backtest — Insider Tracker{% endblock %}
+{% block nav_backtest %}active{% endblock %}
+
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────────── #}
+<div class="mb-6">
+  <h1 style="font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:.15em; color:var(--text-1);">
+    Backtest: Insider Buy → Trend Signals
+  </h1>
+  <p style="font-size:.78rem; color:var(--text-2); margin-top:4px;">
+    {% if not running %}
+      {{ summary.total | default(0) }} trades scored &mdash; returns measured at 30d / 60d / 90d post-trade
+    {% else %}
+      Analysis in progress
+    {% endif %}
+  </p>
+</div>
+
+{# ── Running banner ──────────────────────────────────────────────── #}
+{% if running %}
+<div class="warn-banner flex items-center gap-3">
+  <span style="width:8px;height:8px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0;" class="animate-ping"></span>
+  <span style="font-size:.8rem; color:var(--amber); font-weight:500;">
+    Backtest still running — check back in a few minutes.
+  </span>
+</div>
+
+{% else %}
+
+{# ── Window selector ─────────────────────────────────────────────── #}
+<div class="flex items-center gap-3 mb-5">
+  <span class="sh" style="color:var(--text-3);">
+    <span class="sh-dot" style="background:var(--sky);"></span>
+    Window
+  </span>
+  <div class="seg-wrap" id="window-tabs">
+    <button class="seg" data-win="30" onclick="setWindow(30)">30d</button>
+    <button class="seg active-both" data-win="60" onclick="setWindow(60)">60d</button>
+    <button class="seg" data-win="90" onclick="setWindow(90)">90d</button>
+  </div>
+</div>
+
+{# ── Signal summary cards ─────────────────────────────────────────── #}
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4" id="signal-cards">
+  {% set signals = [
+    ("gc",  "Golden Cross"),
+    ("rb",  "Resistance Break"),
+    ("hhl", "HH + HL"),
+    ("cb",  "Channel Break"),
+  ] %}
+  {% for sig_key, sig_label in signals %}
+  <div class="kpi" style="position:relative; overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--sky);opacity:.6;border-radius:0;"></div>
+    <div class="kpi-label" style="padding-left:8px;">{{ sig_label }}</div>
+    <div style="padding-left:8px;">
+      {% for win in [30, 60, 90] %}
+      {% set wdata = summary.signals[sig_key].windows[win] if summary.signals and sig_key in summary.signals and win in summary.signals[sig_key].windows else {} %}
+      <div class="win-stat" data-win="{{ win }}" style="{% if win != 60 %}display:none;{% endif %}">
+        {% if wdata.get('computable', 0) > 0 %}
+          <div class="kpi-val" style="font-size:.95rem;">
+            {% set hr = ((wdata.fired / wdata.computable) * 100) if wdata.get('computable') else 0 %}
+            <span id="card-{{ sig_key }}-{{ win }}-hr">{{ '%.1f' | format(hr) }}%</span>
+          </div>
+          <div class="kpi-sub" style="margin-top:3px;">
+            of {{ wdata.computable }} computable
+          </div>
+          <div class="kpi-sub" style="margin-top:5px; display:flex; gap:12px;">
+            <span>
+              avg
+              <span style="color:{% if (wdata.avg_return or 0) >= 0 %}var(--buy){% else %}var(--sell){% endif %}; font-weight:600;">
+                {% if wdata.get('avg_return') is not none %}
+                  {{ '%+.1f' | format(wdata.avg_return) }}%
+                {% else %}—{% endif %}
+              </span>
+            </span>
+            <span>
+              med
+              <span style="color:{% if (wdata.median_return or 0) >= 0 %}var(--buy){% else %}var(--sell){% endif %};">
+                {% if wdata.get('median_return') is not none %}
+                  {{ '%+.1f' | format(wdata.median_return) }}%
+                {% else %}—{% endif %}
+              </span>
+            </span>
+          </div>
+        {% else %}
+          <div class="kpi-val" style="color:var(--text-3); font-size:.9rem;">N/A</div>
+          <div class="kpi-sub">no data</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Stacked signal summary ───────────────────────────────────────── #}
+<div class="surface mb-5 px-4 py-3" id="stacked-summary">
+  <div class="sh mb-3" style="color:var(--text-2);">
+    <span class="sh-dot" style="background:var(--sky);"></span>
+    Stacked Signals
+  </div>
+  <div class="flex flex-wrap gap-4">
+    {% for win in [30, 60, 90] %}
+    {% set sdata = summary.stacked[win] if summary.stacked and win in summary.stacked else {} %}
+    <div class="win-stat" data-win="{{ win }}" style="display:{% if win == 60 %}flex{% else %}none{% endif %}; flex-wrap:wrap; gap:10px;">
+      {% for n in [2, 3, 4] %}
+      {% set entry = sdata[n] if n in sdata else {} %}
+      <div style="background:var(--bg-raised); border:1px solid var(--border); border-radius:8px; padding:8px 14px; min-width:130px;">
+        <div style="font-size:.58rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--text-3); margin-bottom:4px;">
+          {{ n }}+ Signals
+        </div>
+        <div class="num" style="font-size:.9rem; color:var(--text-1);">
+          {{ entry.get('count', 0) }} trades
+        </div>
+        <div class="num" style="font-size:.75rem; margin-top:2px;">
+          {% if entry.get('avg_return') is not none %}
+          avg
+          <span style="color:{% if (entry.avg_return or 0) >= 0 %}var(--buy){% else %}var(--sell){% endif %}; font-weight:600;">
+            {{ '%+.1f' | format(entry.avg_return) }}%
+          </span>
+          {% else %}
+          <span style="color:var(--text-3);">—</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Filter bar ──────────────────────────────────────────────────── #}
+<div class="flex flex-wrap items-center gap-2 mb-4">
+
+  {# Min stacked #}
+  <div class="fg">
+    <span class="fg-label">Min signals</span>
+    <div class="fg-sep"></div>
+    <select id="f-stacked" class="fg-in" onchange="applyFilters()">
+      <option value="0">Any</option>
+      <option value="2">2+</option>
+      <option value="3">3+</option>
+      <option value="4">4</option>
+    </select>
+  </div>
+
+  {# Signal fired checkboxes #}
+  <div class="fg gap-3">
+    <span class="fg-label">Signals</span>
+    <div class="fg-sep"></div>
+    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+      <input type="checkbox" id="f-gc"  onchange="applyFilters()" style="accent-color:var(--sky);"> GC
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+      <input type="checkbox" id="f-rb"  onchange="applyFilters()" style="accent-color:var(--sky);"> RB
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+      <input type="checkbox" id="f-hhl" onchange="applyFilters()" style="accent-color:var(--sky);"> HHL
+    </label>
+    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+      <input type="checkbox" id="f-cb"  onchange="applyFilters()" style="accent-color:var(--sky);"> CB
+    </label>
+  </div>
+
+  {# Hide 10b5-1 #}
+  <div class="fg">
+    <label style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+      <input type="checkbox" id="f-hide10b5" checked onchange="applyFilters()" style="accent-color:var(--sky);">
+      Hide 10b5-1
+    </label>
+  </div>
+
+  {# Min return #}
+  <div class="fg">
+    <span class="fg-label">Min ret</span>
+    <div class="fg-sep"></div>
+    <select id="f-minret" class="fg-in" onchange="applyFilters()">
+      <option value="-9999">Any</option>
+      <option value="0">&gt;0%</option>
+      <option value="5">&gt;5%</option>
+      <option value="10">&gt;10%</option>
+      <option value="20">&gt;20%</option>
+    </select>
+  </div>
+
+  {# Ticker search #}
+  <div class="fg">
+    <span class="fg-label">Ticker</span>
+    <div class="fg-sep"></div>
+    <input type="text" id="f-ticker" class="fg-in" placeholder="e.g. AAPL" style="width:90px;text-transform:uppercase;"
+           oninput="applyFilters()" maxlength="10">
+  </div>
+
+</div>
+
+{# ── Results table ───────────────────────────────────────────────── #}
+<div class="tbl-wrap" id="results-table-wrap">
+  <table class="w-full" style="border-collapse:collapse;">
+    <thead>
+      <tr>
+        <th class="th sort text-left" data-col="ticker" onclick="sortBy('ticker')">
+          Ticker <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th sort text-left" data-col="trade_date" onclick="sortBy('trade_date')">
+          Date <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th sort text-left" data-col="insider_name" onclick="sortBy('insider_name')">
+          Insider <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th text-left">Title</th>
+        <th class="th sort text-right" data-col="value" onclick="sortBy('value')">
+          Value <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th text-center" style="color:var(--sky);" title="Golden Cross">GC</th>
+        <th class="th text-center" style="color:var(--sky);" title="Resistance Break">RB</th>
+        <th class="th text-center" style="color:var(--sky);" title="HH + HL">HHL</th>
+        <th class="th text-center" style="color:var(--sky);" title="Channel Break">CB</th>
+        <th class="th sort text-center" data-col="stacked" onclick="sortBy('stacked')" title="Stacked signal count">
+          Stack <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th sort text-right" data-col="ret30" onclick="sortBy('ret30')">
+          Ret 30d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th sort text-right" data-col="ret60" onclick="sortBy('ret60')">
+          Ret 60d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th sort text-right" data-col="ret90" onclick="sortBy('ret90')">
+          Ret 90d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+      </tr>
+    </thead>
+    <tbody id="results-tbody">
+      {# Populated server-side; JS re-shows/hides rows in place #}
+      {% for row in rows %}
+      <tr class="bt-row row-buy {% if (row.stacked_60d or 0) >= 2 %}conviction-high{% endif %}">
+        {# Initial render at 60d (default window) — JS will update on window change #}
+        <td class="td">
+          <a href="/chart/{{ row.ticker }}" class="ticker-link" style="color:var(--sky);">{{ row.ticker }}</a>
+        </td>
+        <td class="td num" style="font-size:.72rem; color:var(--text-2); white-space:nowrap;">{{ row.trade_date }}</td>
+        <td class="td" style="font-size:.75rem; color:var(--text-1); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.insider_name }}">
+          {{ row.insider_name }}
+        </td>
+        <td class="td" style="font-size:.7rem; color:var(--text-2); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.title }}">
+          {% if row.is_officer and row.is_director %}<span class="plan-badge">O+D</span>
+          {% elif row.is_officer %}<span class="plan-badge">Officer</span>
+          {% elif row.is_director %}<span class="plan-badge">Dir</span>{% endif %}
+          {{ row.title }}
+        </td>
+        <td class="td num text-right" style="font-size:.75rem; color:var(--text-1); white-space:nowrap;" data-cell="value"></td>
+        {# Signal cells — class="sig-cell" data-sig used by JS #}
+        <td class="td text-center sig-cell" data-sig="gc"></td>
+        <td class="td text-center sig-cell" data-sig="rb"></td>
+        <td class="td text-center sig-cell" data-sig="hhl"></td>
+        <td class="td text-center sig-cell" data-sig="cb"></td>
+        <td class="td text-center num" style="font-size:.75rem; font-weight:700;" data-cell="stack"></td>
+        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret30"></td>
+        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret60"></td>
+        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret90"></td>
+      </tr>
+      {% else %}
+      <tr id="empty-row">
+        <td colspan="13" class="td text-center" style="padding:40px; color:var(--text-3);">No data available.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="flex items-center justify-between mt-2 px-1">
+  <span id="row-count" style="font-size:.68rem; color:var(--text-3);"></span>
+</div>
+
+{# ── Embedded row data for JS ─────────────────────────────────────── #}
+<script id="bt-data" type="application/json">
+{{ rows | tojson }}
+</script>
+
+{# ── JS ──────────────────────────────────────────────────────────── #}
+<script>
+(function () {
+  'use strict';
+
+  // ── State ─────────────────────────────────────────────────────────
+  let currentWindow = 60;
+  let sortCol       = null;   // null so first sortBy() hits the else branch (descending)
+  let sortAsc       = false;
+
+  // Parse embedded row data (avoid repeated JSON.parse on every filter)
+  const RAW_ROWS = JSON.parse(document.getElementById('bt-data').textContent);
+
+  // Map row index → <tr> element for fast access
+  const ROWS_EL = Array.from(document.querySelectorAll('#results-tbody .bt-row'));
+
+  // ── Helpers ───────────────────────────────────────────────────────
+
+  function fmtVal(v) {
+    if (v == null) return '—';
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+    if (abs >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (abs >= 1e3) return '$' + (v / 1e3).toFixed(0) + 'K';
+    return '$' + v.toFixed(0);
+  }
+
+  function fmtRet(v) {
+    if (v == null) return { text: '—', color: 'var(--text-3)' };
+    const sign = v >= 0 ? '+' : '';
+    return {
+      text:  sign + v.toFixed(1) + '%',
+      color: v > 0 ? 'var(--buy)' : v < 0 ? 'var(--sell)' : 'var(--text-2)',
+    };
+  }
+
+  function fmtSignal(row, sig, win) {
+    const compKey  = sig + '_computable';
+    const firedKey = sig + '_' + win + 'd';
+    const daysKey  = sig + '_days';
+
+    if (!row[compKey]) return { text: 'N/A', color: 'var(--text-3)', fired: false };
+    const fired = row[firedKey];
+    if (fired == null || fired === false || fired === 0) {
+      return { text: '–', color: 'var(--text-3)', fired: false };
+    }
+    const days = row[daysKey];
+    const dStr = (days != null) ? days + 'd' : '';
+    return {
+      text:  '✓' + (dStr ? ' ' + dStr : ''),
+      color: 'var(--sky)',
+      fired: true,
+    };
+  }
+
+  function getStacked(row, win) {
+    return row['stacked_' + win + 'd'] || 0;
+  }
+
+  // ── Render cells for a single <tr> ───────────────────────────────
+
+  function renderRow(el, row, win) {
+    // Value cell (rendered by JS to avoid requiring a custom Jinja filter)
+    const valCell = el.querySelector('[data-cell="value"]');
+    if (valCell) valCell.textContent = fmtVal(row.value);
+
+    // Signal cells
+    const sigCells = el.querySelectorAll('.sig-cell');
+    const sigs = ['gc', 'rb', 'hhl', 'cb'];
+    sigCells.forEach((td, i) => {
+      const s = fmtSignal(row, sigs[i], win);
+      td.textContent = s.text;
+      td.style.color     = s.color;
+      td.style.fontFamily = "'JetBrains Mono', monospace";
+      td.style.fontSize  = '.72rem';
+      td.style.fontWeight = s.fired ? '700' : '400';
+    });
+
+    // Stack
+    const stackCell = el.querySelector('[data-cell="stack"]');
+    const stacked   = getStacked(row, win);
+    stackCell.textContent = stacked > 0 ? stacked : '–';
+    stackCell.style.color = stacked >= 3 ? 'var(--sky)' : stacked >= 2 ? 'var(--buy)' : 'var(--text-3)';
+
+    // Conviction tint
+    if (stacked >= 2) {
+      el.classList.add('conviction-high');
+    } else {
+      el.classList.remove('conviction-high');
+    }
+
+    // Returns
+    function setRet(cell, val) {
+      const r = fmtRet(val);
+      cell.textContent = r.text;
+      cell.style.color = r.color;
+    }
+    setRet(el.querySelector('[data-cell="ret30"]'), row.return_30d);
+    setRet(el.querySelector('[data-cell="ret60"]'), row.return_60d);
+    setRet(el.querySelector('[data-cell="ret90"]'), row.return_90d);
+  }
+
+  // ── Initial render (fill all cells) ──────────────────────────────
+
+  function renderAllRows(win) {
+    ROWS_EL.forEach((el, i) => {
+      renderRow(el, RAW_ROWS[i], win);
+    });
+  }
+
+  // ── Window switch ─────────────────────────────────────────────────
+
+  window.setWindow = function (win) {
+    currentWindow = win;
+
+    // Update tab buttons
+    document.querySelectorAll('#window-tabs .seg').forEach(btn => {
+      const isActive = parseInt(btn.dataset.win) === win;
+      btn.classList.toggle('active-both', isActive);
+    });
+
+    // Update summary card stat panels
+    document.querySelectorAll('.win-stat').forEach(el => {
+      el.style.display = (parseInt(el.dataset.win) === win) ? '' : 'none';
+    });
+
+    // Re-render signal/stack cells for all rows
+    renderAllRows(win);
+
+    // Re-apply filters (stacked filter depends on window)
+    applyFilters();
+  };
+
+  // ── Sorting ───────────────────────────────────────────────────────
+
+  let sortedIndices = RAW_ROWS.map((_, i) => i); // order by original index
+
+  function sortValue(row, col) {
+    switch (col) {
+      case 'ticker':      return (row.ticker || '').toLowerCase();
+      case 'trade_date':  return row.trade_date || '';
+      case 'insider_name':return (row.insider_name || '').toLowerCase();
+      case 'value':       return row.value || 0;
+      case 'stacked':     return getStacked(row, currentWindow);
+      case 'ret30':       return row.return_30d != null ? row.return_30d : -9999;
+      case 'ret60':       return row.return_60d != null ? row.return_60d : -9999;
+      case 'ret90':       return row.return_90d != null ? row.return_90d : -9999;
+      default:            return 0;
+    }
+  }
+
+  window.sortBy = function (col) {
+    if (sortCol === col) {
+      sortAsc = !sortAsc;
+    } else {
+      sortCol = col;
+      sortAsc = false;
+    }
+
+    // Update indicators
+    document.querySelectorAll('.th.sort').forEach(th => {
+      const ind = th.querySelector('.sort-ind');
+      if (!ind) return;
+      if (th.dataset.col === col) {
+        ind.textContent = sortAsc ? ' ▲' : ' ▼';
+        ind.style.color = 'var(--sky)';
+      } else {
+        ind.textContent = '';
+      }
+    });
+
+    sortedIndices = RAW_ROWS
+      .map((row, i) => ({ v: sortValue(row, col), i }))
+      .sort((a, b) => {
+        if (a.v < b.v) return sortAsc ? -1 :  1;
+        if (a.v > b.v) return sortAsc ?  1 : -1;
+        return 0;
+      })
+      .map(x => x.i);
+
+    applyFilters();
+  };
+
+  // ── Filtering ─────────────────────────────────────────────────────
+
+  window.applyFilters = function () {
+    const minStacked = parseInt(document.getElementById('f-stacked').value) || 0;
+    const gcOn       = document.getElementById('f-gc').checked;
+    const rbOn       = document.getElementById('f-rb').checked;
+    const hhlOn      = document.getElementById('f-hhl').checked;
+    const cbOn       = document.getElementById('f-cb').checked;
+    const anySignal  = gcOn || rbOn || hhlOn || cbOn;
+    const hide10b5   = document.getElementById('f-hide10b5').checked;
+    const minRet     = parseFloat(document.getElementById('f-minret').value);
+    const tickerQ    = (document.getElementById('f-ticker').value || '').toUpperCase().trim();
+
+    let visible = 0;
+    const tbody = document.getElementById('results-tbody');
+
+    sortedIndices.forEach(i => {
+      const row = RAW_ROWS[i];
+      const el  = ROWS_EL[i];
+
+      // Signal filter (any checked signal must be fired)
+      if (anySignal) {
+        const win = currentWindow;
+        const gcFired  = gcOn  && row['gc_'  + win + 'd'];
+        const rbFired  = rbOn  && row['rb_'  + win + 'd'];
+        const hhlFired = hhlOn && row['hhl_' + win + 'd'];
+        const cbFired  = cbOn  && row['cb_'  + win + 'd'];
+        if (!gcFired && !rbFired && !hhlFired && !cbFired) {
+          el.style.display = 'none';
+          return;
+        }
+      }
+
+      // Min stacked
+      const stacked = getStacked(row, currentWindow);
+      if (stacked < minStacked) { el.style.display = 'none'; return; }
+
+      // Hide 10b5-1
+      if (hide10b5 && row.is_10b5_1) { el.style.display = 'none'; return; }
+
+      // Min return (uses the return for current window)
+      const retKey = 'return_' + currentWindow + 'd';
+      const retVal = row[retKey];
+      if (minRet > -9999) {
+        if (retVal == null || retVal < minRet) { el.style.display = 'none'; return; }
+      }
+
+      // Ticker search
+      if (tickerQ && !(row.ticker || '').toUpperCase().startsWith(tickerQ)) {
+        el.style.display = 'none';
+        return;
+      }
+
+      el.style.display = '';
+      visible++;
+
+      // Ensure DOM order matches sort order
+      tbody.appendChild(el);
+    });
+
+    // Row count
+    document.getElementById('row-count').textContent =
+      visible + ' of ' + RAW_ROWS.length + ' trades';
+  };
+
+  // ── Init ─────────────────────────────────────────────────────────
+  renderAllRows(currentWindow);
+  sortBy('value');   // default sort: biggest dollar value first
+})();
+</script>
+
+{% endif %}{# end if not running #}
+
+{% endblock %}
