@@ -137,7 +137,7 @@ def main() -> None:
             if not days_list:
                 continue
             signal_days = min(days_list)
-            signal_date = (date.fromisoformat(trade_date) + timedelta(days=signal_days)).isoformat()
+            signal_date = (date.fromisoformat(trade_date[:10]) + timedelta(days=signal_days)).isoformat()
             entries.append((ticker, trade_date, signal_date))
 
         # Simulate each trail level
