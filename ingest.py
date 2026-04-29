@@ -210,16 +210,26 @@ def _quarter(d: date) -> int:
 
 def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
     """
-    Fetch EDGAR full-index for the quarter containing target_date and filter
-    to Form 4 / Form 4/A filings on that exact date.
+    Fetch EDGAR index for target_date and return Form 4 / Form 4/A filings.
+    Tries the daily index first (updated same-day); falls back to the quarterly
+    full-index (updated with a multi-day lag) for older dates or if daily 404s.
     Returns list of dicts with keys: form_type, company, cik, date_filed, filename
     """
     year = target_date.year
     qtr = _quarter(target_date)
-    url = f"{EDGAR_BASE}/Archives/edgar/full-index/{year}/QTR{qtr}/form.idx"
+
+    # Daily index: updated same day, needed for dates within the last ~2 weeks
+    daily_url = (
+        f"{EDGAR_BASE}/Archives/edgar/daily-index/{year}/QTR{qtr}"
+        f"/form.{target_date.strftime('%Y%m%d')}.idx"
+    )
+    quarterly_url = f"{EDGAR_BASE}/Archives/edgar/full-index/{year}/QTR{qtr}/form.idx"
 
     time.sleep(RATE_SLEEP)
-    resp = client.get(url)
+    resp = client.get(daily_url)
+    if resp.status_code == 404:
+        # Daily index not yet published for this date — fall back to quarterly
+        resp = client.get(quarterly_url)
     resp.raise_for_status()
 
     date_str = target_date.strftime("%Y-%m-%d")
