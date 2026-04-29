@@ -29,6 +29,16 @@ import polygon_client
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def _replace_filter(filters: dict, key: str, value) -> str:
+    """Jinja2 filter: return query string with one key replaced."""
+    from urllib.parse import urlencode
+    updated = {**filters, key: value}
+    return urlencode({k: v for k, v in updated.items() if v not in (None, "", [])})
+
+
+templates.env.filters["replace_filter"] = _replace_filter
+
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _CIK_RE = re.compile(r"^\d{1,10}$")
 limiter = Limiter(key_func=get_remote_address)
