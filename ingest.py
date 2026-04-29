@@ -266,6 +266,10 @@ def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
         if form_type not in ("4", "4/A"):
             continue
 
+        # Normalize compact YYYYMMDD → YYYY-MM-DD so filed_at is always ISO format
+        if date_filed == date_str_compact:
+            date_filed = date_str
+
         entries.append({
             "form_type": form_type,
             "company": company,
