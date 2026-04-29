@@ -9,13 +9,9 @@ import httpx
 
 from ingest import get_db
 
-HOUSE_URL = (
-    "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com"
-    "/data/all_transactions.json"
-)
 SENATE_URL = (
     "https://raw.githubusercontent.com/timothycarambat"
-    "/senate-stock-watcher-data/master/data/all_transactions.json"
+    "/senate-stock-watcher-data/master/aggregate/all_transactions.json"
 )
 
 _AMOUNT_RE = re.compile(r"[\$,]")
@@ -98,9 +94,7 @@ def _normalize_house(record: dict) -> dict | None:
 
 def _normalize_senate(record: dict) -> dict | None:
     """Map a Senate Stock Watcher record to the congress_trades schema."""
-    first = (record.get("first_name") or "").strip()
-    last = (record.get("last_name") or "").strip()
-    politician = f"{first} {last}".strip()
+    politician = (record.get("senator") or "").strip()
     tx_date = (record.get("transaction_date") or "").strip()
     if not politician or not tx_date:
         return None
@@ -136,26 +130,14 @@ def _normalize_senate(record: dict) -> dict | None:
         "amount_min": amount_min,
         "amount_max": amount_max,
         "amount_label": amount_label,
-        "raw_url": (record.get("link") or "").strip() or None,
+        "raw_url": (record.get("ptr_link") or "").strip() or None,
     }
 
 
 def fetch_house() -> list[dict]:
-    """Fetch and normalize all House transactions."""
-    try:
-        resp = httpx.get(HOUSE_URL, timeout=30.0, follow_redirects=True)
-        resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        print(f"[congress_ingest] ERROR fetching house data: {exc}", file=sys.stderr)
-        return []
-
-    records = resp.json()
-    result = []
-    for rec in records:
-        normalized = _normalize_house(rec)
-        if normalized is not None:
-            result.append(normalized)
-    return result
+    """House Stock Watcher S3 bucket is no longer publicly accessible (403 as of 2025)."""
+    print("[congress_ingest] House Stock Watcher data source is unavailable (S3 bucket 403). Skipping.", file=sys.stderr)
+    return []
 
 
 def fetch_senate() -> list[dict]:
