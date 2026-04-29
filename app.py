@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -46,9 +46,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db = get_db()
-    yield
-    app.state.db.close()
+    yield  # nothing to set up/tear down at app level
 
 
 app = FastAPI(title="Insider Tracker", lifespan=lifespan)
@@ -57,8 +55,12 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
-def _db(request: Request) -> sqlite3.Connection:
-    return request.app.state.db
+def get_request_db() -> sqlite3.Connection:
+    conn = get_db()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _parse_date(d: str | None) -> date:
@@ -136,6 +138,7 @@ def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
 @limiter.limit("60/minute")
 async def index(
     request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -168,7 +171,6 @@ async def index(
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
-    db = _db(request)
     ctx = _make_ctx(db, active_config)
 
     effective_hide_funds = hide_funds == "1"
@@ -254,6 +256,7 @@ async def index(
 @limiter.limit("60/minute")
 async def htmx_filings(
     request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -285,7 +288,6 @@ async def htmx_filings(
     summary_mode = is_range and (range_end - range_start).days > 7
     target_date = range_end
 
-    db = _db(request)
     ctx = _make_ctx(db, active_config)
 
     date_range_arg = (range_start, range_end) if is_range else None
@@ -359,6 +361,7 @@ _CSV_MAX_ROWS = 10000
 @limiter.limit("10/minute")
 async def export_csv(
     request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -389,7 +392,6 @@ async def export_csv(
     range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
     target_date = range_end
 
-    db = _db(request)
     ctx = _make_ctx(db, active_config)
 
     date_range_arg = (range_start, range_end) if is_range else None
@@ -442,9 +444,12 @@ async def export_csv(
 # ---------------------------------------------------------------------------
 
 @app.get("/filing/{transaction_id:path}", response_class=HTMLResponse)
-async def filing_detail(request: Request, transaction_id: str):
+async def filing_detail(
+    request: Request,
+    transaction_id: str,
+    db: sqlite3.Connection = Depends(get_request_db),
+):
     active_config = cfg.load_config()
-    db = _db(request)
     ctx = _make_ctx(db, active_config)
     filing = queries.get_filing_detail(db, transaction_id, ctx=ctx)
     if filing is None:
@@ -471,10 +476,14 @@ async def filing_detail(request: Request, transaction_id: str):
 # ---------------------------------------------------------------------------
 
 @app.get("/issuer/{ticker}", response_class=HTMLResponse)
-async def issuer_view(request: Request, ticker: str, days: int = Query(default=90)):
+async def issuer_view(
+    request: Request,
+    ticker: str,
+    db: sqlite3.Connection = Depends(get_request_db),
+    days: int = Query(default=90),
+):
     if not _TICKER_RE.match(ticker.upper()):
         raise HTTPException(status_code=400, detail="Invalid ticker")
-    db = _db(request)
     filings = queries.get_issuer_filings(db, ticker, days=days)
     trend_svg = render_sparkline(queries.get_issuer_trend(db, ticker))
     return templates.TemplateResponse(request, "issuer.html", {
@@ -486,10 +495,13 @@ async def issuer_view(request: Request, ticker: str, days: int = Query(default=9
 
 
 @app.get("/insider/{cik}", response_class=HTMLResponse)
-async def insider_view(request: Request, cik: str):
+async def insider_view(
+    request: Request,
+    cik: str,
+    db: sqlite3.Connection = Depends(get_request_db),
+):
     if not _CIK_RE.match(cik):
         raise HTTPException(status_code=400, detail="Invalid CIK")
-    db = _db(request)
     config = cfg.load_config()
     ctx = _make_ctx(db, config)
     history = queries.get_insider_full_history(db, cik, ctx=ctx)
@@ -511,6 +523,7 @@ _RANGE_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
 async def chart_view(
     request: Request,
     ticker: str,
+    db: sqlite3.Connection = Depends(get_request_db),
     range: str = Query(default="6m"),
     mode: str = Query(default="both"),   # buys | sells | both
 ):
@@ -525,7 +538,7 @@ async def chart_view(
 
     bars = polygon_client.get_daily_bars(ticker, from_date, to_date, api_key)
     earnings = polygon_client.get_earnings_estimate(ticker, api_key)
-    filings = queries.get_issuer_filings(_db(request), ticker, days=days)
+    filings = queries.get_issuer_filings(db, ticker, days=days)
 
     # Build marker list for Lightweight Charts
     code_filter = {"buys": ["P"], "sells": ["S"], "both": ["P", "S"]}.get(mode, ["P", "S"])
@@ -567,14 +580,18 @@ async def chart_view(
 # ---------------------------------------------------------------------------
 
 @app.get("/watchlist", response_class=HTMLResponse)
-async def watchlist_page(request: Request):
-    wl = queries.list_watchlist(_db(request))
+async def watchlist_page(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
+):
+    wl = queries.list_watchlist(db)
     return templates.TemplateResponse(request, "watchlist.html", {"watchlist": wl})
 
 
 @app.post("/watchlist/add")
 async def watchlist_add(
     request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
     watch_type: str = Form(...),
     value: str = Form(...),
     label: str = Form(default=""),
@@ -585,13 +602,17 @@ async def watchlist_add(
     label = label.strip()
     if not value or len(value) > 64 or len(label) > 128:
         raise HTTPException(status_code=400, detail="Invalid value or label")
-    queries.add_watch(_db(request), watch_type, value, label or value)
+    queries.add_watch(db, watch_type, value, label or value)
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
 @app.post("/watchlist/remove")
-async def watchlist_remove(request: Request, watch_id: int = Form(...)):
-    queries.remove_watch(_db(request), watch_id)
+async def watchlist_remove(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
+    watch_id: int = Form(...),
+):
+    queries.remove_watch(db, watch_id)
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
@@ -599,6 +620,7 @@ async def watchlist_remove(request: Request, watch_id: int = Form(...)):
 @limiter.limit("60/minute")
 async def congress_view(
     request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
     ticker: str = Query(default=""),
     politician: str = Query(default=""),
     chamber: str = Query(default=""),
@@ -607,7 +629,6 @@ async def congress_view(
     sort_by: str = Query(default="transaction_date"),
     sort_order: str = Query(default="desc"),
 ):
-    db = _db(request)
     effective_days = days if days > 0 else None
     trades = queries.get_congress_trades(
         db,
@@ -638,8 +659,11 @@ async def congress_view(
 
 
 @app.get("/run-log", response_class=HTMLResponse)
-async def run_log(request: Request):
-    log = queries.get_run_log(_db(request))
+async def run_log(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
+):
+    log = queries.get_run_log(db)
     return templates.TemplateResponse(request, "run_log.html", {
         "log": log,
     })
@@ -769,9 +793,11 @@ async def backtest(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.get("/logic", response_class=HTMLResponse)
-async def logic_page(request: Request):
+async def logic_page(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_request_db),
+):
     active_config = cfg.load_config()
-    db = _db(request)
     stats = queries.get_10b5_1_stats(db)
     recent_alerts = queries.get_recent_alerts(db)
     slack_configured = bool(os.getenv("SLACK_WEBHOOK_URL", ""))
