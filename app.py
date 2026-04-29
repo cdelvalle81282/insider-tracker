@@ -34,7 +34,7 @@ def _replace_filter(filters: dict, key: str, value) -> str:
     """Jinja2 filter: return query string with one key replaced."""
     from urllib.parse import urlencode
     updated = {**filters, key: value}
-    return urlencode({k: v for k, v in updated.items() if v not in (None, "", [])})
+    return urlencode({k: v for k, v in updated.items() if v not in (None, "", [])}, doseq=True)
 
 
 templates.env.filters["replace_filter"] = _replace_filter
@@ -133,6 +133,7 @@ def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
 # ---------------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
+@limiter.limit("60/minute")
 async def index(
     request: Request,
     d: str | None = Query(default=None),
@@ -250,6 +251,7 @@ async def index(
 # ---------------------------------------------------------------------------
 
 @app.get("/htmx/filings", response_class=HTMLResponse)
+@limiter.limit("60/minute")
 async def htmx_filings(
     request: Request,
     d: str | None = Query(default=None),
@@ -594,6 +596,7 @@ async def watchlist_remove(request: Request, watch_id: int = Form(...)):
 
 
 @app.get("/congress", response_class=HTMLResponse)
+@limiter.limit("60/minute")
 async def congress_view(
     request: Request,
     ticker: str = Query(default=""),

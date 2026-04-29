@@ -186,6 +186,7 @@ def get_db(path: str | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA)
     conn.commit()
     _migrate(conn)
@@ -227,8 +228,8 @@ def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
 
     time.sleep(RATE_SLEEP)
     resp = client.get(daily_url)
-    if resp.status_code == 404:
-        # Daily index not yet published for this date — fall back to quarterly
+    if resp.status_code != 200:
+        # Daily index not available (404, 403, etc.) — fall back to quarterly
         resp = client.get(quarterly_url)
     resp.raise_for_status()
 

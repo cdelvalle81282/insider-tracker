@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 
@@ -12,7 +13,7 @@ from ingest import get_db
 AINVEST_BASE = "https://openapi.ainvest.com/open/ownership/congress"
 PAGE_SIZE = 100
 RATE_SLEEP = 0.5
-_VALID_TICKER = __import__("re").compile(r"^[A-Z]{1,5}$")
+_VALID_TICKER = re.compile(r"^[A-Z]{1,5}$")
 
 
 def _get_api_key() -> str:
@@ -168,6 +169,8 @@ def backfill(limit: int | None = None, stale_days: int = 7) -> None:
         inserted, skipped = ingest_ticker(conn, ticker, api_key)
         if inserted or skipped:
             print(f"[{i}/{total}] {ticker} → {inserted} inserted, {skipped} skipped")
+        all_inserted += inserted
+        all_skipped += skipped
         conn.commit()
         time.sleep(RATE_SLEEP)
 
