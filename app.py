@@ -590,22 +590,23 @@ async def congress_view(
     politician: str = Query(default=""),
     chamber: str = Query(default=""),
     tx_type: str = Query(default=""),
-    days: int = Query(default=90),
-    sort_by: str = Query(default="disclosure_date"),
+    days: int = Query(default=0),
+    sort_by: str = Query(default="transaction_date"),
     sort_order: str = Query(default="desc"),
 ):
     db = _db(request)
+    effective_days = days if days > 0 else None
     trades = queries.get_congress_trades(
         db,
         ticker=ticker or None,
         politician=politician or None,
         chamber=chamber or None,
         tx_type=tx_type or None,
-        days=days,
+        days=effective_days,
         sort_by=sort_by,
         sort_order=sort_order,
     )
-    summary = queries.get_congress_summary(db, days=days)
+    summary = queries.get_congress_summary(db, days=effective_days)
     filters = {
         "ticker": ticker,
         "politician": politician,
