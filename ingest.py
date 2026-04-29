@@ -232,7 +232,9 @@ def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
         resp = client.get(quarterly_url)
     resp.raise_for_status()
 
+    # Daily index uses YYYYMMDD; quarterly uses YYYY-MM-DD — accept both
     date_str = target_date.strftime("%Y-%m-%d")
+    date_str_compact = target_date.strftime("%Y%m%d")
     entries = []
     lines = resp.text.splitlines()
     in_data = False
@@ -259,7 +261,7 @@ def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
         cik = tokens[-1]
         company = " ".join(tokens[1:-1])
 
-        if date_filed != date_str:
+        if date_filed not in (date_str, date_str_compact):
             continue
         if form_type not in ("4", "4/A"):
             continue
