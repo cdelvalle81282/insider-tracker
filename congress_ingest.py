@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sys
+from datetime import datetime
 
 import httpx
 
@@ -16,6 +17,19 @@ SENATE_URL = (
 
 _AMOUNT_RE = re.compile(r"[\$,]")
 _OVER_RE = re.compile(r"[Oo]ver\s+\$?([\d,]+)")
+
+
+def _to_iso_date(date_str: str | None) -> str | None:
+    """Convert MM/DD/YYYY or YYYY-MM-DD to ISO YYYY-MM-DD. Returns None on failure."""
+    if not date_str:
+        return None
+    s = date_str.strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+    try:
+        return datetime.strptime(s, "%m/%d/%Y").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 
 def _make_tx_id(
@@ -95,7 +109,7 @@ def _normalize_house(record: dict) -> dict | None:
 def _normalize_senate(record: dict) -> dict | None:
     """Map a Senate Stock Watcher record to the congress_trades schema."""
     politician = (record.get("senator") or "").strip()
-    tx_date = (record.get("transaction_date") or "").strip()
+    tx_date = _to_iso_date(record.get("transaction_date"))
     if not politician or not tx_date:
         return None
 
@@ -126,7 +140,7 @@ def _normalize_senate(record: dict) -> dict | None:
         "asset_description": (record.get("asset_description") or "").strip() or None,
         "transaction_type": tx_type or None,
         "transaction_date": tx_date,
-        "disclosure_date": (record.get("disclosure_date") or "").strip() or None,
+        "disclosure_date": _to_iso_date(record.get("disclosure_date")) or tx_date,
         "amount_min": amount_min,
         "amount_max": amount_max,
         "amount_label": amount_label,
