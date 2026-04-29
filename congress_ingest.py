@@ -11,8 +11,8 @@ from ingest import get_db
 
 AINVEST_BASE = "https://openapi.ainvest.com/open/ownership/congress"
 PAGE_SIZE = 100
-# Conservative rate limit — pause between ticker fetches
 RATE_SLEEP = 0.5
+_VALID_TICKER = __import__("re").compile(r"^[A-Z]{1,5}$")
 
 
 def _get_api_key() -> str:
@@ -67,7 +67,8 @@ def fetch_ticker(ticker: str, api_key: str) -> list[dict]:
                 timeout=10.0,
             )
             resp.raise_for_status()
-            data = resp.json().get("data", {}).get("data", [])
+            outer = resp.json().get("data") or {}
+            data = outer.get("data") or []
         except Exception as exc:
             print(f"[congress_ingest] WARN {ticker} page {page}: {exc}", file=sys.stderr)
             break
@@ -155,7 +156,7 @@ def backfill(limit: int | None = None, stale_days: int = 7) -> None:
         ).fetchall()
     }
 
-    work = [t for t in tickers if t not in fresh]
+    work = [t for t in tickers if t not in fresh and _VALID_TICKER.match(t)]
     if limit:
         work = work[:limit]
 
