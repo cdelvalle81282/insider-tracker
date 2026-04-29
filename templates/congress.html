@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Congressional Trades — Insider Tracker{% endblock %}
+{% block nav_congress %}active{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex items-start justify-between gap-4 flex-wrap">
+  <div>
+    <h1 class="text-xl font-bold text-white">Congressional Trades</h1>
+    <p class="text-gray-500 text-sm mt-1">
+      Stock disclosures from U.S. House and Senate members.
+      Data via <a href="https://housestockwatcher.com" target="_blank" rel="noopener" class="underline hover:text-sky-400 transition-colors">House Stock Watcher</a>
+      and <a href="https://senatestockwatcher.com" target="_blank" rel="noopener" class="underline hover:text-sky-400 transition-colors">Senate Stock Watcher</a>.
+    </p>
+  </div>
+</div>
+
+<!-- KPI cards -->
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+  <div class="kpi">
+    <div class="kpi-label">Total Trades</div>
+    <div class="kpi-val num">{{ summary.total_trades }}</div>
+    <div class="kpi-sub">last {{ filters.days }}d</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Politicians</div>
+    <div class="kpi-val num">{{ summary.unique_politicians }}</div>
+    <div class="kpi-sub">unique</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Tickers</div>
+    <div class="kpi-val num">{{ summary.unique_tickers }}</div>
+    <div class="kpi-sub">unique</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Purchases</div>
+    <div class="kpi-val num" style="color:var(--buy);">{{ summary.purchase_count }}</div>
+    <div class="kpi-sub">buys</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Sales</div>
+    <div class="kpi-val num" style="color:var(--sell);">{{ summary.sale_count }}</div>
+    <div class="kpi-sub">sells</div>
+  </div>
+</div>
+
+<!-- Filter bar -->
+<form method="GET" action="/congress"
+      class="flex flex-wrap items-center gap-2 pb-4 mb-5"
+      style="border-bottom: 1px solid var(--border);">
+
+  <!-- Ticker -->
+  <div class="fg">
+    <span class="fg-label">Ticker</span>
+    <div class="fg-sep"></div>
+    <input type="text" name="ticker" value="{{ filters.ticker }}"
+           placeholder="e.g. AAPL" maxlength="10"
+           class="fg-in" style="width:72px; text-transform:uppercase;" />
+  </div>
+
+  <!-- Politician -->
+  <div class="fg">
+    <span class="fg-label">Politician</span>
+    <div class="fg-sep"></div>
+    <input type="text" name="politician" value="{{ filters.politician }}"
+           placeholder="name..." maxlength="80"
+           class="fg-in" style="width:130px;" />
+  </div>
+
+  <!-- Chamber -->
+  <div class="fg">
+    <span class="fg-label">Chamber</span>
+    <div class="fg-sep"></div>
+    <select name="chamber" class="fg-in" style="width:90px;">
+      <option value=""      {% if not filters.chamber %}selected{% endif %}>All</option>
+      <option value="house" {% if filters.chamber == 'house' %}selected{% endif %}>House</option>
+      <option value="senate"{% if filters.chamber == 'senate' %}selected{% endif %}>Senate</option>
+    </select>
+  </div>
+
+  <!-- Type -->
+  <div class="fg">
+    <span class="fg-label">Type</span>
+    <div class="fg-sep"></div>
+    <select name="tx_type" class="fg-in" style="width:100px;">
+      <option value=""         {% if not filters.tx_type %}selected{% endif %}>All</option>
+      <option value="purchase" {% if filters.tx_type == 'purchase' %}selected{% endif %}>Purchase</option>
+      <option value="sale"     {% if filters.tx_type == 'sale' %}selected{% endif %}>Sale</option>
+      <option value="exchange" {% if filters.tx_type == 'exchange' %}selected{% endif %}>Exchange</option>
+    </select>
+  </div>
+
+  <!-- Days -->
+  <div class="fg">
+    <span class="fg-label">Window</span>
+    <div class="fg-sep"></div>
+    <select name="days" class="fg-in" style="width:72px;">
+      <option value="30"  {% if filters.days == 30 %}selected{% endif %}>30d</option>
+      <option value="90"  {% if filters.days == 90 %}selected{% endif %}>90d</option>
+      <option value="180" {% if filters.days == 180 %}selected{% endif %}>180d</option>
+      <option value="365" {% if filters.days == 365 %}selected{% endif %}>1yr</option>
+      <option value="0"   {% if filters.days == 0 %}selected{% endif %}>All</option>
+    </select>
+  </div>
+
+  <input type="hidden" name="sort_by"    value="{{ filters.sort_by }}" />
+  <input type="hidden" name="sort_order" value="{{ filters.sort_order }}" />
+
+  <button type="submit" class="btn-ghost">Apply</button>
+
+  {% if filters.ticker or filters.politician or filters.chamber or filters.tx_type %}
+  <a href="/congress?days={{ filters.days }}" class="btn-ghost"
+     style="color:var(--sell);">Clear</a>
+  {% endif %}
+</form>
+
+<!-- Trades table -->
+{% if trades %}
+<div class="tbl-wrap">
+  <table class="w-full border-collapse">
+    <thead>
+      <tr>
+        <th class="th">
+          <a href="/congress?{{ filters | replace_filter('sort_by', 'disclosure_date') }}"
+             style="color:inherit;">Disclosed</a>
+        </th>
+        <th class="th">
+          <a href="/congress?{{ filters | replace_filter('sort_by', 'transaction_date') }}"
+             style="color:inherit;">Date</a>
+        </th>
+        <th class="th">
+          <a href="/congress?{{ filters | replace_filter('sort_by', 'politician_name') }}"
+             style="color:inherit;">Politician</a>
+        </th>
+        <th class="th">Party</th>
+        <th class="th">State</th>
+        <th class="th">
+          <a href="/congress?{{ filters | replace_filter('sort_by', 'ticker') }}"
+             style="color:inherit;">Ticker</a>
+        </th>
+        <th class="th">Asset</th>
+        <th class="th">Type</th>
+        <th class="th">
+          <a href="/congress?{{ filters | replace_filter('sort_by', 'amount_min') }}"
+             style="color:inherit;">Amount</a>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for trade in trades %}
+      <tr class="{% if trade.transaction_type == 'purchase' %}row-buy{% elif trade.transaction_type == 'sale' %}row-sell{% endif %}">
+
+        <!-- Disclosed -->
+        <td class="td num" style="color:var(--text-2); font-size:.72rem; white-space:nowrap;">
+          {{ trade.disclosure_date or '—' }}
+        </td>
+
+        <!-- Transaction date -->
+        <td class="td num" style="color:var(--text-2); font-size:.72rem; white-space:nowrap;">
+          {{ trade.transaction_date or '—' }}
+        </td>
+
+        <!-- Politician -->
+        <td class="td" style="white-space:nowrap;">
+          <span class="text-white font-medium text-sm">{{ trade.politician_name }}</span>
+          <span style="font-size:.6rem; color:var(--text-3); margin-left:4px; text-transform:uppercase; letter-spacing:.06em;">
+            {{ trade.chamber }}
+          </span>
+        </td>
+
+        <!-- Party -->
+        <td class="td" style="white-space:nowrap;">
+          {% if trade.party == 'Republican' or trade.party == 'R' %}
+            <span style="color:#f87171; font-size:.7rem; font-weight:600;">R</span>
+          {% elif trade.party == 'Democrat' or trade.party == 'D' %}
+            <span style="color:#60a5fa; font-size:.7rem; font-weight:600;">D</span>
+          {% elif trade.party %}
+            <span style="color:var(--text-2); font-size:.7rem;">{{ trade.party[:1] }}</span>
+          {% else %}
+            <span style="color:var(--text-3);">—</span>
+          {% endif %}
+        </td>
+
+        <!-- State -->
+        <td class="td" style="color:var(--text-2); font-size:.75rem; white-space:nowrap;">
+          {{ trade.state or '—' }}
+        </td>
+
+        <!-- Ticker -->
+        <td class="td" style="white-space:nowrap;">
+          {% if trade.ticker %}
+          <a href="/chart/{{ trade.ticker }}" class="ticker-link"
+             style="color:var(--sky);">{{ trade.ticker }}</a>
+          {% else %}
+          <span style="color:var(--text-3);">—</span>
+          {% endif %}
+        </td>
+
+        <!-- Asset description -->
+        <td class="td" style="color:var(--text-2); font-size:.75rem; max-width:220px;">
+          <span class="truncate block" title="{{ trade.asset_description or '' }}">
+            {{ (trade.asset_description or '—')[:60] }}{% if trade.asset_description and trade.asset_description|length > 60 %}…{% endif %}
+          </span>
+        </td>
+
+        <!-- Type badge -->
+        <td class="td" style="white-space:nowrap;">
+          {% if trade.transaction_type == 'purchase' %}
+            <span style="font-size:.6rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+                         padding:2px 7px; border-radius:4px;
+                         color:var(--buy); background:rgba(15,206,160,.1); border:1px solid rgba(15,206,160,.25);">
+              Buy
+            </span>
+          {% elif trade.transaction_type == 'sale' %}
+            <span style="font-size:.6rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+                         padding:2px 7px; border-radius:4px;
+                         color:var(--sell); background:rgba(246,75,110,.1); border:1px solid rgba(246,75,110,.25);">
+              Sell
+            </span>
+          {% elif trade.transaction_type %}
+            <span style="font-size:.6rem; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+                         padding:2px 7px; border-radius:4px;
+                         color:var(--text-2); background:rgba(30,42,65,.7); border:1px solid var(--border);">
+              {{ trade.transaction_type }}
+            </span>
+          {% else %}
+            <span style="color:var(--text-3);">—</span>
+          {% endif %}
+        </td>
+
+        <!-- Amount -->
+        <td class="td num" style="color:var(--text-1); font-size:.75rem; white-space:nowrap;">
+          {{ trade.amount_label or '—' }}
+        </td>
+
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p style="font-size:.6rem; color:var(--text-3); margin-top:10px; text-align:right;">
+  Showing {{ trades|length }} trade{{ 's' if trades|length != 1 else '' }}
+</p>
+
+{% else %}
+<!-- Empty state -->
+<div style="text-align:center; padding:64px 0;">
+  <div style="font-size:2rem; margin-bottom:12px; opacity:.3;">—</div>
+  <p style="color:var(--text-3); font-size:.8rem;">No congressional trades found for these filters.</p>
+  {% if filters.ticker or filters.politician or filters.chamber or filters.tx_type %}
+  <p style="color:var(--text-3); font-size:.72rem; margin-top:6px;">
+    Try <a href="/congress?days={{ filters.days }}" style="color:var(--sky); text-decoration:underline;">clearing the filters</a>
+    or running <code style="font-family:monospace; color:var(--text-2);">python congress_ingest.py</code> to populate data.
+  </p>
+  {% else %}
+  <p style="color:var(--text-3); font-size:.72rem; margin-top:6px;">
+    Run <code style="font-family:monospace; color:var(--text-2);">python congress_ingest.py</code> to populate congressional trade data.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Top tickers / politicians sidebar row -->
+{% if summary.top_tickers or summary.top_politicians %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-8">
+
+  {% if summary.top_tickers %}
+  <div class="surface p-4">
+    <div class="sh mb-4">
+      <span class="sh-dot" style="background:var(--sky);"></span>
+      <span style="color:var(--text-2);">Top Tickers</span>
+    </div>
+    <div class="space-y-1">
+      {% for item in summary.top_tickers %}
+      <div class="flex items-center justify-between py-1" style="border-bottom:1px solid var(--border-dim);">
+        <a href="/congress?ticker={{ item.ticker }}&days={{ filters.days }}"
+           class="ticker-link" style="color:var(--sky);">{{ item.ticker }}</a>
+        <span class="num" style="color:var(--text-2); font-size:.75rem;">{{ item.count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if summary.top_politicians %}
+  <div class="surface p-4">
+    <div class="sh mb-4">
+      <span class="sh-dot" style="background:var(--amber);"></span>
+      <span style="color:var(--text-2);">Most Active Politicians</span>
+    </div>
+    <div class="space-y-1">
+      {% for item in summary.top_politicians %}
+      <div class="flex items-center justify-between py-1" style="border-bottom:1px solid var(--border-dim);">
+        <a href="/congress?politician={{ item.name | urlencode }}&days={{ filters.days }}"
+           style="color:var(--text-1); font-size:.8rem; hover:color:var(--sky);">{{ item.name }}</a>
+        <span class="num" style="color:var(--text-2); font-size:.75rem;">{{ item.count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}
+
+{% endblock %}

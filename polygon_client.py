@@ -97,3 +97,44 @@ def get_earnings_estimate(ticker: str, api_key: str) -> dict | None:
         }
     except Exception:
         return None
+
+
+def fetch_ticker_metadata(ticker: str, api_key: str) -> dict | None:
+    """
+    Fetches market cap and options availability for a ticker from Polygon.io.
+
+    Calls two endpoints independently so a failure on one does not block the other.
+    Returns {'market_cap': float|None, 'has_options': 0|1|None} or None if both
+    calls fail (i.e. both market_cap and has_options are None).
+    """
+    if not api_key:
+        return None
+
+    market_cap: float | None = None
+    has_options: int | None = None
+
+    try:
+        resp = httpx.get(
+            f"https://api.polygon.io/v3/reference/tickers/{ticker.upper()}",
+            params={"apiKey": api_key},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            market_cap = resp.json().get("results", {}).get("market_cap")
+    except Exception:
+        pass
+
+    try:
+        resp = httpx.get(
+            "https://api.polygon.io/v3/reference/options/contracts",
+            params={"underlying_ticker": ticker.upper(), "limit": 1, "apiKey": api_key},
+            timeout=5.0,
+        )
+        if resp.status_code == 200:
+            has_options = 1 if len(resp.json().get("results", [])) > 0 else 0
+    except Exception:
+        pass
+
+    if market_cap is None and has_options is None:
+        return None
+    return {"market_cap": market_cap, "has_options": has_options}

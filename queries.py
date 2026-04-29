@@ -28,6 +28,19 @@ class EnrichContext:
 
 
 # ---------------------------------------------------------------------------
+# Market cap tier definitions — used by get_filings_for_date() and app.py
+# ---------------------------------------------------------------------------
+
+MARKET_CAP_TIERS = {
+    "micro": (0, 300_000_000),
+    "small": (300_000_000, 2_000_000_000),
+    "mid":   (2_000_000_000, 10_000_000_000),
+    "large": (10_000_000_000, 200_000_000_000),
+    "mega":  (200_000_000_000, 1e15),
+}
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -385,6 +398,9 @@ def get_filings_for_date(
     date_range: tuple[date, date] | None = None,
     limit: int | None = None,
     ctx: EnrichContext | None = None,
+    hide_funds: bool = False,
+    has_options_only: bool = False,
+    market_cap_tiers: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return (buys, sells) for a date or date range, applying all filters."""
     codes = transaction_codes or ["P", "S"]
@@ -406,12 +422,63 @@ def get_filings_for_date(
         if "ten_pct" in roles:
             role_clauses.append("is_ten_percent_owner = 1")
 
-    order_col = _SORT_COLUMNS.get(sort_by, "total_value")
-    order_dir = "ASC" if sort_order == "asc" else "DESC"
-    sql_sort = f"ORDER BY {order_col} {order_dir} NULLS LAST"
+    # Both values come from fixed constant maps — no user input reaches the SQL string.
+    _safe_col = _SORT_COLUMNS.get(sort_by, "total_value")
+    assert _safe_col in _SORT_COLUMNS.values(), f"Unexpected sort column: {_safe_col!r}"
+    _safe_dir = "ASC" if sort_order == "asc" else "DESC"
+    sql_sort = f"ORDER BY {_safe_col} {_safe_dir} NULLS LAST"
     # Conviction sort happens in Python after enrichment
     if sort_by == "conviction":
         sql_sort = "ORDER BY total_value DESC NULLS LAST"
+
+    # Build market cap tier SQL.
+    # valid_tiers is filtered strictly against MARKET_CAP_TIERS keys — unknown values are dropped.
+    # The SQL fragment is built from the *count* of tiers (an int), not from the tier name strings,
+    # so no user-supplied value ever reaches the SQL string.
+    valid_tiers = [t for t in (market_cap_tiers or []) if t in MARKET_CAP_TIERS]
+    _n_tiers = len(valid_tiers)  # int only — taint path from user input ends here
+    if _n_tiers:
+        _single_range = "(market_cap >= ? AND market_cap < ?)"
+        tier_range_clauses = (" OR ".join([_single_range] * _n_tiers))
+        mktcap_sql = (
+            "AND (\n"
+            "    issuer_ticker NOT IN (SELECT ticker FROM ticker_metadata WHERE market_cap IS NOT NULL)\n"
+            "    OR issuer_ticker IN (\n"
+            "        SELECT ticker FROM ticker_metadata WHERE\n"
+            "        " + tier_range_clauses + "\n"
+            "    )\n"
+            ")"
+        )
+        mktcap_params = [v for t in valid_tiers for v in MARKET_CAP_TIERS[t]]
+    else:
+        mktcap_sql = ""
+        mktcap_params = []
+
+    # All SQL fragments below are built from fixed string constants, never from user input.
+    # Boolean flags (hide_10b5_1, has_options_only, etc.) are already bool by the time
+    # they arrive here — the ternary outcomes are literal constant strings.
+    _frag_ten_b    = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
+    _frag_swap     = "AND equity_swap = 0" if hide_equity_swap else ""
+    _frag_role     = ("AND (" + " OR ".join(role_clauses) + ")") if role_clauses else ""
+    _frag_ceo      = (
+        "AND (" + " OR ".join("insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")"
+        if ceo_cfo_only and ceo_cfo_keywords else ""
+    )
+    _frag_search   = "AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else ""
+    _frag_sec      = "AND sector = ?" if sector else ""
+    _frag_watched  = (
+        "AND (issuer_ticker IN (SELECT value FROM watchlist WHERE type='ticker') "
+        "OR insider_cik IN (SELECT value FROM watchlist WHERE type='insider'))"
+        if watched_only else ""
+    )
+    _frag_funds    = (
+        "AND issuer_cik NOT IN (SELECT issuer_cik FROM sectors WHERE sic_code IN ('6726','6798'))"
+        if hide_funds else ""
+    )
+    _frag_options  = (
+        "AND issuer_ticker IN (SELECT ticker FROM ticker_metadata WHERE has_options = 1)"
+        if has_options_only else ""
+    )
 
     base_where = f"""
         WHERE {date_condition}
@@ -419,26 +486,17 @@ def get_filings_for_date(
           AND (total_value IS NULL OR total_value >= ?)
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
-          {{ten_b}}
-          {{swap_f}}
-          {{role}}
-          {{ceo}}
-          {{search}}
-          {{sec}}
-          {{watched}}
-    """.format(
-        codes=",".join("?" * len(codes)),
-        ten_b="AND is_10b5_1 = 0" if hide_10b5_1 else "",
-        swap_f="AND equity_swap = 0" if hide_equity_swap else "",
-        role=("AND (" + " OR ".join(role_clauses) + ")") if role_clauses else "",
-        ceo=("AND (" + " OR ".join("insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")") if ceo_cfo_only and ceo_cfo_keywords else "",
-        search="AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else "",
-        sec="AND sector = ?" if sector else "",
-        watched="" if not watched_only else (
-            "AND (issuer_ticker IN (SELECT value FROM watchlist WHERE type='ticker') "
-            "OR insider_cik IN (SELECT value FROM watchlist WHERE type='insider'))"
-        ),
-    )
+          {_frag_ten_b}
+          {_frag_swap}
+          {_frag_role}
+          {_frag_ceo}
+          {_frag_search}
+          {_frag_sec}
+          {_frag_watched}
+          {_frag_funds}
+          {_frag_options}
+          {mktcap_sql}
+    """.format(codes=",".join("?" * len(codes)))
 
     params += codes
     params.append(min_value)
@@ -449,6 +507,7 @@ def get_filings_for_date(
         params += [s, s, s]
     if sector:
         params.append(sector)
+    params += mktcap_params
 
     sql = f"""
         SELECT transaction_id, accession_no, filed_at,
@@ -720,6 +779,57 @@ def get_insider_history(
     return result
 
 
+def get_insider_full_history(
+    conn: sqlite3.Connection,
+    insider_cik: str,
+    ctx: EnrichContext | None = None,
+) -> list[dict]:
+    """All transactions by this insider across all companies, newest first."""
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM filings
+        WHERE insider_cik = ?
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+        ORDER BY transaction_date DESC, filed_at DESC
+        """,
+        [insider_cik],
+    ).fetchall()
+    return _enrich(rows, ctx=ctx)
+
+
+def get_insider_summary(conn: sqlite3.Connection, insider_cik: str) -> dict:
+    """Aggregate stats for a single insider across all filings."""
+    row = conn.execute(
+        """
+        SELECT
+            (SELECT insider_name FROM filings
+             WHERE insider_cik = ? ORDER BY filed_at DESC LIMIT 1) AS name,
+            SUM(CASE WHEN transaction_code = 'P' THEN COALESCE(total_value, 0) ELSE 0 END) AS total_bought,
+            SUM(CASE WHEN transaction_code = 'S' THEN COALESCE(total_value, 0) ELSE 0 END) AS total_sold,
+            COUNT(DISTINCT issuer_cik) AS distinct_issuers,
+            MIN(transaction_date) AS first_trade,
+            MAX(transaction_date) AS last_trade
+        FROM filings
+        WHERE insider_cik = ?
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+        """,
+        [insider_cik, insider_cik],
+    ).fetchone()
+    if row is None:
+        return {
+            "name": None,
+            "total_bought": 0,
+            "total_sold": 0,
+            "distinct_issuers": 0,
+            "first_trade": None,
+            "last_trade": None,
+        }
+    return dict(row)
+
+
 def get_issuer_recent_insiders(
     conn: sqlite3.Connection,
     issuer_cik: str,
@@ -781,4 +891,159 @@ def get_10b5_1_stats(conn: sqlite3.Connection) -> dict:
         "total_filings": total,
         "flagged": flagged_xml,
         "footnote_only": footnote_only,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Ticker metadata (market cap, options availability)
+# ---------------------------------------------------------------------------
+
+def get_ticker_metadata_map(conn: sqlite3.Connection, tickers: list[str]) -> dict[str, dict]:
+    """
+    Batch-fetch ticker metadata rows for the given tickers in a single query.
+    Returns {ticker: {'market_cap': float|None, 'has_options': int|None, 'fetched_at': str|None}}.
+    Returns {} when tickers is empty.
+    """
+    if not tickers:
+        return {}
+    placeholders = ",".join("?" * len(tickers))
+    rows = conn.execute(
+        f"SELECT ticker, market_cap, has_options, fetched_at FROM ticker_metadata"
+        f" WHERE ticker IN ({placeholders})",
+        tickers,
+    ).fetchall()
+    return {r["ticker"]: dict(r) for r in rows}
+
+
+def upsert_ticker_metadata(
+    conn: sqlite3.Connection,
+    ticker: str,
+    market_cap: float | None,
+    has_options: int | None,
+) -> None:
+    """Insert or update ticker metadata, setting fetched_at to the current UTC time."""
+    conn.execute(
+        """
+        INSERT INTO ticker_metadata (ticker, has_options, market_cap, fetched_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(ticker) DO UPDATE SET
+            has_options = excluded.has_options,
+            market_cap  = excluded.market_cap,
+            fetched_at  = excluded.fetched_at
+        """,
+        [ticker, has_options, market_cap],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Congressional trades queries
+# ---------------------------------------------------------------------------
+
+_CONGRESS_SORT_COLUMNS = {
+    "disclosure_date",
+    "transaction_date",
+    "politician_name",
+    "ticker",
+    "amount_min",
+}
+
+
+def get_congress_trades(
+    conn: sqlite3.Connection,
+    ticker: str | None = None,
+    politician: str | None = None,
+    chamber: str | None = None,
+    tx_type: str | None = None,
+    days: int = 90,
+    sort_by: str = "disclosure_date",
+    sort_order: str = "desc",
+    limit: int = 500,
+) -> list[dict]:
+    """Return congress_trades rows matching the given filters."""
+    _safe_col = sort_by if sort_by in _CONGRESS_SORT_COLUMNS else "disclosure_date"
+    _safe_dir = "ASC" if sort_order == "asc" else "DESC"
+
+    clauses: list[str] = []
+    params: list = []
+
+    if days and days > 0:
+        clauses.append("disclosure_date >= date('now', ?)")
+        params.append(f"-{days} days")
+
+    if ticker:
+        clauses.append("ticker LIKE ?")
+        params.append(ticker.upper())
+
+    if politician:
+        clauses.append("politician_name LIKE ?")
+        params.append(f"%{politician}%")
+
+    if chamber:
+        clauses.append("chamber = ?")
+        params.append(chamber)
+
+    if tx_type:
+        clauses.append("transaction_type = ?")
+        params.append(tx_type)
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    sql = f"""
+        SELECT id, source, transaction_id, politician_name, chamber, party, state,
+               ticker, asset_description, transaction_type,
+               transaction_date, disclosure_date,
+               amount_min, amount_max, amount_label, raw_url, ingested_at
+        FROM congress_trades
+        {where}
+        ORDER BY {_safe_col} {_safe_dir} NULLS LAST
+        LIMIT ?
+    """
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_congress_summary(conn: sqlite3.Connection, days: int = 30) -> dict:
+    """Return aggregate KPIs for the congress trades tab."""
+    use_date = days and days > 0
+    date_clause = "AND disclosure_date >= date('now', ?)" if use_date else ""
+    date_param: list = [f"-{days} days"] if use_date else []
+
+    totals = conn.execute(f"""
+        SELECT
+            COUNT(*) AS total_trades,
+            COUNT(DISTINCT politician_name) AS unique_politicians,
+            COUNT(DISTINCT ticker) AS unique_tickers,
+            SUM(CASE WHEN transaction_type = 'purchase' THEN 1 ELSE 0 END) AS purchase_count,
+            SUM(CASE WHEN transaction_type = 'sale' THEN 1 ELSE 0 END) AS sale_count
+        FROM congress_trades
+        WHERE 1=1 {date_clause}
+    """, date_param).fetchone()
+
+    top_tickers = conn.execute(f"""
+        SELECT ticker, COUNT(*) AS cnt
+        FROM congress_trades
+        WHERE ticker IS NOT NULL AND ticker != '' {date_clause}
+        GROUP BY ticker
+        ORDER BY cnt DESC
+        LIMIT 10
+    """, date_param).fetchall()
+
+    top_politicians = conn.execute(f"""
+        SELECT politician_name AS name, COUNT(*) AS cnt
+        FROM congress_trades
+        WHERE 1=1 {date_clause}
+        GROUP BY politician_name
+        ORDER BY cnt DESC
+        LIMIT 10
+    """, date_param).fetchall()
+
+    return {
+        "total_trades": totals["total_trades"] or 0,
+        "unique_politicians": totals["unique_politicians"] or 0,
+        "unique_tickers": totals["unique_tickers"] or 0,
+        "purchase_count": totals["purchase_count"] or 0,
+        "sale_count": totals["sale_count"] or 0,
+        "top_tickers": [{"ticker": r["ticker"], "count": r["cnt"]} for r in top_tickers],
+        "top_politicians": [{"name": r["name"], "count": r["cnt"]} for r in top_politicians],
     }

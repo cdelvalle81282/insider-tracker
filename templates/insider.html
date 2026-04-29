@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — Insider Activity{% endblock %}
+
+{% block content %}
+
+<div class="mb-5 flex items-start justify-between flex-wrap gap-3">
+  <div>
+    <h1 class="text-2xl font-bold" style="color:var(--text-1);">{{ name }}</h1>
+    <p class="num mt-1" style="font-size:.65rem;color:var(--text-3);">CIK {{ cik }}</p>
+  </div>
+  <form method="POST" action="/watchlist/add">
+    <input type="hidden" name="watch_type" value="insider" />
+    <input type="hidden" name="value" value="{{ cik }}" />
+    <input type="hidden" name="label" value="{{ name }}" />
+    <button type="submit"
+            class="text-sm transition-colors"
+            style="color:var(--text-3);"
+            onmouseover="this.style.color='var(--amber)'"
+            onmouseout="this.style.color='var(--text-3)'"
+            title="Watch this insider">
+      ★ Watch insider
+    </button>
+  </form>
+</div>
+
+<!-- ── Summary stat cards ─────────────────────────────────────────── -->
+{% if summary %}
+<div class="grid gap-3 mb-6" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+  <div class="kpi" style="border-color:rgba(15,206,160,.22);">
+    <div class="kpi-label">Total Bought</div>
+    <div class="kpi-val" style="color:var(--buy);">
+      {% if summary.total_bought %}
+        {% set v = summary.total_bought %}
+        {% if v >= 1000000 %}${{ "%.1f" | format(v / 1000000) }}M
+        {% elif v >= 1000 %}${{ "%.0f" | format(v / 1000) }}K
+        {% else %}${{ "%.0f" | format(v) }}{% endif %}
+      {% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="kpi" style="border-color:rgba(246,75,110,.22);">
+    <div class="kpi-label">Total Sold</div>
+    <div class="kpi-val" style="color:var(--sell);">
+      {% if summary.total_sold %}
+        {% set v = summary.total_sold %}
+        {% if v >= 1000000 %}${{ "%.1f" | format(v / 1000000) }}M
+        {% elif v >= 1000 %}${{ "%.0f" | format(v / 1000) }}K
+        {% else %}${{ "%.0f" | format(v) }}{% endif %}
+      {% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Companies</div>
+    <div class="kpi-val" style="color:var(--text-1);">{{ summary.distinct_issuers or '—' }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Date Range</div>
+    <div class="kpi-val num" style="font-size:.72rem;color:var(--text-2);">
+      {% if summary.first_trade %}
+        {{ summary.first_trade }} → {{ summary.last_trade }}
+      {% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Trades table ───────────────────────────────────────────────── -->
+{% if not history %}
+<div class="text-center py-16" style="color:var(--text-3);">
+  No Form 4 filings found for this insider
+</div>
+{% else %}
+
+<details open>
+  <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
+    <span class="caret">▶</span>
+    <span class="sh" style="color:var(--text-2);">
+      <span class="sh-dot" style="background:var(--text-2);"></span>
+      All Trades
+    </span>
+    <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ history | length }})</span>
+  </summary>
+
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">Date</th>
+          <th class="th text-left">Ticker</th>
+          <th class="th text-left">Company</th>
+          <th class="th text-center">Type</th>
+          <th class="th text-right">Shares</th>
+          <th class="th text-right">Held After</th>
+          <th class="th text-right">Price</th>
+          <th class="th text-right">$ Value</th>
+          <th class="th text-right">% Held</th>
+          <th class="th text-right">Score</th>
+          <th class="th text-right">Filed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in history %}
+        <tr class="{% if row.transaction_code == 'P' %}row-buy{% elif row.transaction_code == 'S' %}row-sell{% endif %} {% if row.conviction_tier == 'high' and row.transaction_code == 'P' %}conviction-high{% endif %} {% if row.is_10b5_1 %}row-dimmed{% endif %}">
+
+          <td class="td num" style="color:var(--text-2);font-size:.72rem;white-space:nowrap;">{{ row.transaction_date or '—' }}</td>
+
+          <td class="td">
+            {% if row.issuer_ticker %}
+            <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link text-white hover:text-sky-400">{{ row.issuer_ticker }}</a>
+            {% if row.is_watched %}<span class="watched-star">★</span>{% endif %}
+            {% else %}
+            <span style="color:var(--text-3);">—</span>
+            {% endif %}
+          </td>
+
+          <td class="td" style="max-width:160px;">
+            {% if row.issuer_ticker %}
+            <a href="/issuer/{{ row.issuer_ticker }}" style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" class="hover:text-sky-400">{{ row.issuer_name }}</a>
+            {% else %}
+            <div style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
+            {% endif %}
+            {% if row.sector %}<div style="font-size:.6rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
+          </td>
+
+          <td class="td text-center">
+            {% if row.transaction_code == 'P' %}
+            <span style="color:var(--buy);font-weight:700;font-size:.7rem;">▲ Buy</span>
+            {% elif row.transaction_code == 'S' %}
+            <span style="color:var(--sell);font-weight:700;font-size:.7rem;">▼ Sell</span>
+            {% else %}
+            <span style="color:var(--text-3);font-size:.7rem;">{{ row.transaction_code }}</span>
+            {% endif %}
+          </td>
+
+          <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
+
+          <td class="td num text-right font-bold"
+              style="color:{% if row.transaction_code == 'P' %}var(--buy){% elif row.transaction_code == 'S' %}var(--sell){% else %}var(--text-2){% endif %};">
+            {{ row.total_value_fmt or '—' }}
+          </td>
+
+          <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ row.pct_holdings or '—' }}</td>
+
+          <td class="td text-right" style="width:36px;">
+            {% if row.conviction %}
+            <span class="score score-{{ row.conviction_tier }}">{{ row.conviction }}</span>
+            {% else %}
+            <span style="color:var(--text-3);font-size:.65rem;">—</span>
+            {% endif %}
+          </td>
+
+          <td class="td text-right" style="white-space:nowrap;">
+            <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+{% endif %}
+
+{% endblock %}

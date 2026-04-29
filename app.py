@@ -30,6 +30,7 @@ BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+_CIK_RE = re.compile(r"^\d{1,10}$")
 limiter = Limiter(key_func=get_remote_address)
 
 
@@ -138,6 +139,9 @@ async def index(
     sort_order: str = Query(default="desc"),
     sector: str | None = Query(default=None),
     watched_only: str = Query(default="0"),
+    hide_funds: str = Query(default="0"),
+    has_options_only: str = Query(default="0"),
+    market_cap_tiers: list[str] = Query(default=[]),
 ):
     active_config = cfg.load_config()
     fd = active_config["filter_defaults"]
@@ -156,6 +160,10 @@ async def index(
     db = _db(request)
     ctx = _make_ctx(db, active_config)
 
+    effective_hide_funds = hide_funds == "1"
+    effective_has_options_only = has_options_only == "1"
+    effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
+
     date_range_arg = (range_start, range_end) if is_range else None
     buys, sells = queries.get_filings_for_date(
         db, target_date,
@@ -173,6 +181,9 @@ async def index(
         watched_only=only_watched,
         date_range=date_range_arg,
         ctx=ctx,
+        hide_funds=effective_hide_funds,
+        has_options_only=effective_has_options_only,
+        market_cap_tiers=effective_mktcap_tiers or None,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap)
     clusters = queries.get_cluster_activity(
@@ -215,6 +226,9 @@ async def index(
             "sort_order": sort_order,
             "sector": sector or "",
             "watched_only": only_watched,
+            "hide_funds": effective_hide_funds,
+            "has_options_only": effective_has_options_only,
+            "market_cap_tiers": effective_mktcap_tiers,
         },
         "config": active_config,
         "all_sectors": all_sectors,
@@ -242,10 +256,16 @@ async def htmx_filings(
     sort_order: str = Query(default="desc"),
     sector: str | None = Query(default=None),
     watched_only: str = Query(default="0"),
+    hide_funds: str = Query(default="0"),
+    has_options_only: str = Query(default="0"),
+    market_cap_tiers: list[str] = Query(default=[]),
 ):
     active_config = cfg.load_config()
     effective_hide = hide_10b5_1 != "0"
     effective_hide_swap = hide_equity_swap != "0"
+    effective_hide_funds = hide_funds == "1"
+    effective_has_options_only = has_options_only == "1"
+    effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
@@ -273,6 +293,9 @@ async def htmx_filings(
         watched_only=only_watched,
         date_range=date_range_arg,
         ctx=ctx,
+        hide_funds=effective_hide_funds,
+        has_options_only=effective_has_options_only,
+        market_cap_tiers=effective_mktcap_tiers or None,
     )
     stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap)
     clusters = queries.get_cluster_activity(
@@ -338,10 +361,16 @@ async def export_csv(
     sort_order: str = Query(default="desc"),
     sector: str | None = Query(default=None),
     watched_only: str = Query(default="0"),
+    hide_funds: str = Query(default="0"),
+    has_options_only: str = Query(default="0"),
+    market_cap_tiers: list[str] = Query(default=[]),
 ):
     active_config = cfg.load_config()
     effective_hide = hide_10b5_1 != "0"
     effective_hide_swap = hide_equity_swap != "0"
+    effective_hide_funds = hide_funds == "1"
+    effective_has_options_only = has_options_only == "1"
+    effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
@@ -369,6 +398,9 @@ async def export_csv(
         date_range=date_range_arg,
         limit=_CSV_MAX_ROWS,
         ctx=ctx,
+        hide_funds=effective_hide_funds,
+        has_options_only=effective_has_options_only,
+        market_cap_tiers=effective_mktcap_tiers or None,
     )
     rows = buys + sells  # already capped by SQL LIMIT
 
@@ -438,6 +470,24 @@ async def issuer_view(request: Request, ticker: str, days: int = Query(default=9
         "filings": filings,
         "days": days,
         "trend_svg": trend_svg,
+    })
+
+
+@app.get("/insider/{cik}", response_class=HTMLResponse)
+async def insider_view(request: Request, cik: str):
+    if not _CIK_RE.match(cik):
+        raise HTTPException(status_code=400, detail="Invalid CIK")
+    db = _db(request)
+    config = cfg.load_config()
+    ctx = _make_ctx(db, config)
+    history = queries.get_insider_full_history(db, cik, ctx=ctx)
+    summary = queries.get_insider_summary(db, cik)
+    name = history[0]["insider_name"] if history else cik
+    return templates.TemplateResponse(request, "insider.html", {
+        "history": history,
+        "summary": summary,
+        "name": name,
+        "cik": cik,
     })
 
 
@@ -531,6 +581,46 @@ async def watchlist_add(
 async def watchlist_remove(request: Request, watch_id: int = Form(...)):
     queries.remove_watch(_db(request), watch_id)
     return RedirectResponse(url="/watchlist", status_code=303)
+
+
+@app.get("/congress", response_class=HTMLResponse)
+async def congress_view(
+    request: Request,
+    ticker: str = Query(default=""),
+    politician: str = Query(default=""),
+    chamber: str = Query(default=""),
+    tx_type: str = Query(default=""),
+    days: int = Query(default=90),
+    sort_by: str = Query(default="disclosure_date"),
+    sort_order: str = Query(default="desc"),
+):
+    db = _db(request)
+    trades = queries.get_congress_trades(
+        db,
+        ticker=ticker or None,
+        politician=politician or None,
+        chamber=chamber or None,
+        tx_type=tx_type or None,
+        days=days,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    summary = queries.get_congress_summary(db, days=days)
+    filters = {
+        "ticker": ticker,
+        "politician": politician,
+        "chamber": chamber,
+        "tx_type": tx_type,
+        "days": days,
+        "sort_by": sort_by,
+        "sort_order": sort_order,
+    }
+    return templates.TemplateResponse(request, "congress.html", {
+        "request": request,
+        "trades": trades,
+        "summary": summary,
+        "filters": filters,
+    })
 
 
 @app.get("/run-log", response_class=HTMLResponse)

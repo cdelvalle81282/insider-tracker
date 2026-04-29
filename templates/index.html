@@ -77,6 +77,20 @@
     </label>
     <div class="fg-sep"></div>
     <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="hide_funds" value="1"
+             {% if filters.get('hide_funds') %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Hide Funds/ETFs/REITs</span>
+    </label>
+    <div class="fg-sep"></div>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="has_options_only" value="1"
+             {% if filters.get('has_options_only') %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Has Options Only</span>
+    </label>
+    <div class="fg-sep"></div>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
       <input type="checkbox" name="ceo_cfo" value="1"
              {% if filters.ceo_cfo %}checked{% endif %}
              class="accent-sky-500 w-3 h-3 rounded" />
@@ -112,6 +126,42 @@
              {% if 'ten_pct' in filters.roles %}checked{% endif %}
              class="accent-sky-500 w-3 h-3 rounded" />
       <span class="fg-label">10%</span>
+    </label>
+  </div>
+
+  <!-- Market Cap Tiers -->
+  <div class="fg" style="gap:10px;">
+    <span class="fg-label">Mkt Cap</span>
+    <div class="fg-sep"></div>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="market_cap_tiers" value="micro"
+             {% if 'micro' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Micro</span>
+    </label>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="market_cap_tiers" value="small"
+             {% if 'small' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Small</span>
+    </label>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="market_cap_tiers" value="mid"
+             {% if 'mid' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Mid</span>
+    </label>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="market_cap_tiers" value="large"
+             {% if 'large' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Large</span>
+    </label>
+    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+      <input type="checkbox" name="market_cap_tiers" value="mega"
+             {% if 'mega' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+             class="accent-sky-500 w-3 h-3 rounded" />
+      <span class="fg-label">Mega</span>
     </label>
   </div>
 

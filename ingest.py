@@ -19,7 +19,9 @@ from pathlib import Path
 import click
 import httpx
 
-from config import DB_PATH, SEC_USER_AGENT, SEC_RATE_LIMIT, load_config
+import polygon_client
+import queries
+from config import DB_PATH, POLYGON_API_KEY, SEC_USER_AGENT, SEC_RATE_LIMIT, load_config
 from parser import parse_form4
 from tickers import lookup_ticker
 import alerts as alert_module
@@ -136,6 +138,44 @@ def _migrate(conn: sqlite3.Connection) -> None:
             UNIQUE(type, value)
         )
     """)
+    # ticker_metadata table — options flag, market cap, fetch timestamp
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ticker_metadata (
+            ticker       TEXT PRIMARY KEY,
+            has_options  INTEGER,
+            market_cap   REAL,
+            fetched_at   TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tm_market_cap ON ticker_metadata(market_cap)")
+    # index on sectors.sic_code for hide_funds filter performance
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sectors_sic ON sectors(sic_code)")
+    # congress_trades table — HOUSE/SENATE financial disclosure trades
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS congress_trades (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            source            TEXT NOT NULL,
+            transaction_id    TEXT NOT NULL UNIQUE,
+            politician_name   TEXT NOT NULL,
+            chamber           TEXT NOT NULL,
+            party             TEXT,
+            state             TEXT,
+            ticker            TEXT,
+            asset_description TEXT,
+            transaction_type  TEXT,
+            transaction_date  TEXT,
+            disclosure_date   TEXT,
+            amount_min        REAL,
+            amount_max        REAL,
+            amount_label      TEXT,
+            raw_url           TEXT,
+            ingested_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_ticker ON congress_trades(ticker)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_disclosure_date ON congress_trades(disclosure_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_politician ON congress_trades(politician_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_source ON congress_trades(source)")
     conn.commit()
 
 
@@ -475,7 +515,10 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
 @click.option("--resolve-amendments", is_flag=True, default=False, help="Backfill amendment resolution for all existing 4/A rows")
 @click.option("--backfill-sectors", is_flag=True, default=False, help="Fetch missing sector labels for all issuers in DB")
 @click.option("--mark-joint-filers", "do_joint_filers", is_flag=True, default=False, help="Detect and deduplicate joint-filer Form 4 duplicates")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers):
+@click.option("--backfill-metadata", "do_backfill_metadata", is_flag=True, default=False, help="Fetch Polygon.io market cap and options flag for all tickers")
+@click.option("--limit", "metadata_limit", default=None, type=int, help="Max tickers to process in --backfill-metadata")
+@click.option("--stale-days", "metadata_stale_days", default=30, type=int, show_default=True, help="Re-fetch metadata older than N days")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days):
     conn = get_db()
     config = load_config()
 
@@ -489,6 +532,66 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
         click.echo("Marking joint-filer duplicates ...", nl=False)
         n = mark_joint_filers(conn)
         click.echo(f" {n} rows marked")
+        return
+
+    if do_backfill_metadata:
+        api_key = POLYGON_API_KEY
+        if not api_key:
+            click.echo("Error: POLYGON_API_KEY is not set. Export the environment variable and retry.")
+            return
+
+        # All distinct tickers in the filings table
+        all_tickers: list[str] = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT issuer_ticker FROM filings"
+                " WHERE issuer_ticker IS NOT NULL AND issuer_ticker != ''"
+            ).fetchall()
+        ]
+
+        # Skip tickers whose metadata is already fresh
+        fresh: set[str] = {
+            r[0] for r in conn.execute(
+                "SELECT ticker FROM ticker_metadata WHERE fetched_at > datetime('now', ?)",
+                [f"-{metadata_stale_days} days"],
+            ).fetchall()
+        }
+        work_list = [t for t in all_tickers if t not in fresh]
+
+        if metadata_limit is not None:
+            work_list = work_list[:metadata_limit]
+
+        total = len(work_list)
+        click.echo(
+            f"Fetching Polygon metadata for {total} tickers"
+            f" (stale_days={metadata_stale_days}, limit={metadata_limit}) ..."
+        )
+
+        fetched = 0
+        skipped = 0
+        for i, ticker in enumerate(work_list, start=1):
+            result = polygon_client.fetch_ticker_metadata(ticker, api_key)
+            if result is not None:
+                queries.upsert_ticker_metadata(
+                    conn, ticker, result["market_cap"], result["has_options"]
+                )
+                fetched += 1
+                click.echo(
+                    f"[{i}/{total}] {ticker} → "
+                    f"market_cap={result['market_cap']}, "
+                    f"has_options={result['has_options']}"
+                )
+            else:
+                skipped += 1
+                click.echo(f"[{i}/{total}] {ticker} → no data (skipped)")
+
+            if fetched % 10 == 0 and fetched > 0:
+                conn.commit()
+
+            if i < total:
+                time.sleep(12)  # Polygon free tier: 5 req/min per endpoint
+
+        conn.commit()
+        click.echo(f"Done — {fetched} upserted, {skipped} skipped (no data)")
         return
 
     if backfill_sectors:

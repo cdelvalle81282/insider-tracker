@@ -147,7 +147,9 @@
           <tbody>
             {% for tx in c.transactions %}
             <tr style="border-top:1px solid var(--border-dim);{% if tx.is_10b5_1 %}opacity:.4;{% endif %}">
-              <td style="padding:6px 8px;color:var(--text-1);">{{ tx.insider_name }}</td>
+              <td style="padding:6px 8px;color:var(--text-1);">
+                <a href="/insider/{{ tx.insider_cik }}" class="hover:underline hover:text-sky-400">{{ tx.insider_name }}</a>
+              </td>
               <td style="padding:6px 8px;color:var(--text-2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ tx.insider_title or '—' }}</td>
               <td style="padding:6px 8px;text-align:center;">
                 {% if tx.transaction_code == 'P' %}<span style="color:var(--buy);font-weight:700;">▲</span>
@@ -214,6 +216,7 @@
             {{ sort_th("Insider", "insider", "left") }}
             <th class="th text-left">Title</th>
             {{ sort_th("Shares", "shares") }}
+            <th class="th text-right">Held After</th>
             {{ sort_th("Price", "price") }}
             {{ sort_th("$ Value", "value") }}
             <th class="th text-right">% Held</th>
@@ -243,11 +246,12 @@
               {% if row.sector %}<div style="font-size:.6rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
             </td>
             <td class="td" style="font-size:.75rem;color:var(--text-1);">
-              {{ row.insider_name }}
+              <a href="/insider/{{ row.insider_cik }}" class="hover:underline hover:text-sky-400">{{ row.insider_name }}</a>
               {% if row.is_watched and not row.issuer_ticker %}<span class="watched-star">★</span>{% endif %}
             </td>
             <td class="td" style="font-size:.7rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+            <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
             <td class="td num text-right font-bold" style="color:var(--buy);">{{ row.total_value_fmt or '—' }}</td>
             <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ row.pct_holdings or '—' }}</td>
@@ -256,7 +260,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="10" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No buys matching current filters</td></tr>
+          <tr><td colspan="11" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No buys matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -283,6 +287,7 @@
             {{ sort_th("Insider", "insider", "left") }}
             <th class="th text-left">Title</th>
             {{ sort_th("Shares", "shares") }}
+            <th class="th text-right">Held After</th>
             {{ sort_th("Price", "price") }}
             {{ sort_th("$ Value", "value") }}
             <th class="th text-right">% Held</th>
@@ -305,9 +310,12 @@
               <div style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
               {% if row.sector %}<div style="font-size:.6rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
             </td>
-            <td class="td" style="font-size:.75rem;color:var(--text-1);">{{ row.insider_name }}</td>
+            <td class="td" style="font-size:.75rem;color:var(--text-1);">
+              <a href="/insider/{{ row.insider_cik }}" class="hover:underline hover:text-sky-400">{{ row.insider_name }}</a>
+            </td>
             <td class="td" style="font-size:.7rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+            <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
             <td class="td num text-right font-bold" style="color:var(--sell);">{{ row.total_value_fmt or '—' }}</td>
             <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ row.pct_holdings or '—' }}</td>
@@ -319,7 +327,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="11" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No sells matching current filters</td></tr>
+          <tr><td colspan="12" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No sells matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>
