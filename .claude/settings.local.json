@@ -42,7 +42,19 @@
       "Bash(.venv/Scripts/python -c \"import queries, app; print\\('imports OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"import queries, app; print\\('OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"import congress_ingest; print\\('Import OK'\\)\")",
-      "Bash(.venv/Scripts/python -c \"import congress_ingest; print\\('congress_ingest imports OK'\\)\")"
+      "Bash(.venv/Scripts/python -c \"import congress_ingest; print\\('congress_ingest imports OK'\\)\")",
+      "Bash(.venv/Scripts/python -m ruff check ingest.py)",
+      "Bash(.venv/Scripts/python -m ruff check congress_ingest.py)",
+      "WebFetch(domain:docs.ainvest.com)",
+      "WebFetch(domain:www.capitoltrades.com)",
+      "Bash(.venv/Scripts/python -c \"from ingest import get_db; db=get_db\\(\\); print\\([r[1] for r in db.execute\\('PRAGMA table_info\\(ticker_metadata\\)'\\).fetchall\\(\\)]\\)\")",
+      "Bash(.venv/Scripts/python -c \"from queries import _enrich; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from polygon_client import fetch_latest_close; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python ingest.py --help)",
+      "Bash(.venv/Scripts/python -c \"import app; print\\('app OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from queries import get_filings_for_date, get_filings_count, _build_filings_where; print\\('queries OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from polygon_client import fetch_latest_close; print\\('polygon OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from config import PAGE_SIZE; print\\(f'PAGE_SIZE={PAGE_SIZE}'\\)\")"
     ]
   }
 }

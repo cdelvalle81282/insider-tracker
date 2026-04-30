@@ -1,0 +1,9 @@
+[Unit]
+Description=Update insider tracker last_close daily after market close
+
+[Timer]
+OnCalendar=Mon..Fri 21:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

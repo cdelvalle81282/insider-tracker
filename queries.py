@@ -218,6 +218,18 @@ def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[d
     result = []
     raw_dicts = [dict(r) for r in rows]
 
+    # Batch-fetch last_close prices for all tickers in this result set
+    prices: dict[str, float] = {}
+    if ctx and ctx.conn:
+        _tickers = {r.get("issuer_ticker") for r in raw_dicts if r.get("issuer_ticker")}
+        if _tickers:
+            _ph = ",".join("?" * len(_tickers))
+            _price_rows = ctx.conn.execute(
+                f"SELECT ticker, last_close FROM ticker_metadata WHERE ticker IN ({_ph})",
+                list(_tickers),
+            ).fetchall()
+            prices = {r[0]: r[1] for r in _price_rows if r[1] is not None}
+
     cluster_counts: dict[tuple, int] = {}
     if ctx and ctx.compute_conviction and ctx.conn and ctx.conviction_flags:
         cluster_counts = _batch_cluster_counts(
@@ -233,7 +245,20 @@ def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[d
         d["total_value_fmt"] = _fmt_value(d.get("total_value"))
         d["price_fmt"] = _fmt_value(d.get("price_per_share"))
         d["filed_rel"] = _relative_time(d.get("filed_at"))
+        try:
+            filed_d = datetime.fromisoformat(str(d.get("filed_at") or "")).date()
+            tx_d = date.fromisoformat(str(d.get("transaction_date") or ""))
+            d["disclosure_lag"] = (filed_d - tx_d).days
+        except (ValueError, TypeError):
+            d["disclosure_lag"] = None
         d["pct_holdings"] = _pct_holdings(d)
+
+        last = prices.get(d.get("issuer_ticker") or "")
+        pps = d.get("price_per_share")
+        if last and pps and pps > 0 and d.get("transaction_code") == "P":
+            d["price_perf_pct"] = round((last - pps) / pps * 100, 1)
+        else:
+            d["price_perf_pct"] = None
 
         if ctx and ctx.compute_conviction and ctx.conviction_flags and ctx.conviction_tiers:
             cluster_n = cluster_counts.get(
@@ -380,31 +405,26 @@ def get_daily_summary(
     return result
 
 
-def get_filings_for_date(
-    conn: sqlite3.Connection,
+def _build_filings_where(
     target_date: date,
+    *,
+    transaction_codes: list[str],
     min_value: float = 0,
-    transaction_codes: list[str] | None = None,
     hide_10b5_1: bool = True,
     hide_equity_swap: bool = True,
     roles: list[str] | None = None,
     search: str | None = None,
     ceo_cfo_only: bool = False,
     ceo_cfo_keywords: list[str] | None = None,
-    sort_by: str = "value",
-    sort_order: str = "desc",
     sector: str | None = None,
     watched_only: bool = False,
     date_range: tuple[date, date] | None = None,
-    limit: int | None = None,
-    ctx: EnrichContext | None = None,
     hide_funds: bool = False,
     has_options_only: bool = False,
     market_cap_tiers: list[str] | None = None,
-) -> tuple[list[dict], list[dict]]:
-    """Return (buys, sells) for a date or date range, applying all filters."""
-    codes = transaction_codes or ["P", "S"]
-
+) -> tuple[str, list]:
+    """Build WHERE clause and params for filings queries.
+    Returns (where_sql, params) where where_sql starts with 'WHERE ...'."""
     # Date condition: single date or range
     if date_range:
         date_condition = "DATE(filed_at) BETWEEN ? AND ?"
@@ -421,15 +441,6 @@ def get_filings_for_date(
             role_clauses.append("is_officer = 1")
         if "ten_pct" in roles:
             role_clauses.append("is_ten_percent_owner = 1")
-
-    # Both values come from fixed constant maps — no user input reaches the SQL string.
-    _safe_col = _SORT_COLUMNS.get(sort_by, "total_value")
-    assert _safe_col in _SORT_COLUMNS.values(), f"Unexpected sort column: {_safe_col!r}"
-    _safe_dir = "ASC" if sort_order == "asc" else "DESC"
-    sql_sort = f"ORDER BY {_safe_col} {_safe_dir} NULLS LAST"
-    # Conviction sort happens in Python after enrichment
-    if sort_by == "conviction":
-        sql_sort = "ORDER BY total_value DESC NULLS LAST"
 
     # Build market cap tier SQL.
     # valid_tiers is filtered strictly against MARKET_CAP_TIERS keys — unknown values are dropped.
@@ -480,7 +491,7 @@ def get_filings_for_date(
         if has_options_only else ""
     )
 
-    base_where = f"""
+    where_sql = f"""
         WHERE {date_condition}
           AND transaction_code IN ({{codes}})
           AND (total_value IS NULL OR total_value >= ?)
@@ -496,9 +507,11 @@ def get_filings_for_date(
           {_frag_funds}
           {_frag_options}
           {mktcap_sql}
-    """.format(codes=",".join("?" * len(codes)))
+    """.format(codes=",".join("?" * len(transaction_codes)))
 
-    params += codes
+    # Param order must mirror placeholder order in the WHERE clause exactly:
+    # date -> codes -> min_value -> ceo_keywords -> search -> sector -> mktcap.
+    params += transaction_codes
     params.append(min_value)
     if ceo_cfo_only and ceo_cfo_keywords:
         params += [f"%{kw}%" for kw in ceo_cfo_keywords]
@@ -509,7 +522,53 @@ def get_filings_for_date(
         params.append(sector)
     params += mktcap_params
 
-    sql = f"""
+    return where_sql, params
+
+
+def get_filings_for_date(
+    conn: sqlite3.Connection,
+    target_date: date,
+    min_value: float = 0,
+    transaction_codes: list[str] | None = None,
+    hide_10b5_1: bool = True,
+    hide_equity_swap: bool = True,
+    roles: list[str] | None = None,
+    search: str | None = None,
+    ceo_cfo_only: bool = False,
+    ceo_cfo_keywords: list[str] | None = None,
+    sort_by: str = "value",
+    sort_order: str = "desc",
+    sector: str | None = None,
+    watched_only: bool = False,
+    date_range: tuple[date, date] | None = None,
+    limit: int | None = None,
+    ctx: EnrichContext | None = None,
+    hide_funds: bool = False,
+    has_options_only: bool = False,
+    market_cap_tiers: list[str] | None = None,
+    buys_page: int = 1,
+    sells_page: int = 1,
+    page_size: int | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Return (buys, sells) for a date or date range, applying all filters.
+
+    When page_size is provided, P-side and S-side queries are paginated independently
+    via buys_page and sells_page. When page_size is None (export/backtest path), the
+    legacy `limit` param is honored as a top-level LIMIT.
+    """
+    codes = transaction_codes or ["P", "S"]
+
+    # Both values come from fixed constant maps — no user input reaches the SQL string.
+    _safe_col = _SORT_COLUMNS.get(sort_by, "total_value")
+    assert _safe_col in _SORT_COLUMNS.values(), f"Unexpected sort column: {_safe_col!r}"
+    _safe_dir = "ASC" if sort_order == "asc" else "DESC"
+    use_conviction = (sort_by == "conviction")
+    if use_conviction:
+        sql_sort = "ORDER BY total_value DESC NULLS LAST"
+    else:
+        sql_sort = f"ORDER BY {_safe_col} {_safe_dir} NULLS LAST"
+
+    select_cols = """
         SELECT transaction_id, accession_no, filed_at,
                issuer_cik, issuer_ticker, issuer_name,
                insider_cik, insider_name, insider_title,
@@ -518,23 +577,130 @@ def get_filings_for_date(
                is_ten_percent_owner, ownership_type, table_type,
                transaction_date
         FROM filings
-        {base_where}
-        {sql_sort}
-        {"LIMIT ?" if limit else ""}
     """
 
-    if limit:
-        params.append(limit)
-    rows = conn.execute(sql, params).fetchall()
-    enriched = _enrich(rows, ctx=ctx)
+    # Iterate per-side (P, S) so each side can be paginated independently.
+    sides: list[tuple[str, int]] = []
+    if "P" in codes:
+        sides.append(("P", buys_page))
+    if "S" in codes:
+        sides.append(("S", sells_page))
 
-    if sort_by == "conviction":
-        reverse = sort_order != "asc"
-        enriched.sort(key=lambda r: r.get("conviction") or -1, reverse=reverse)
+    all_rows: list = []
+    for side_code, page in sides:
+        where_sql, side_params = _build_filings_where(
+            target_date,
+            transaction_codes=[side_code],
+            min_value=min_value,
+            hide_10b5_1=hide_10b5_1,
+            hide_equity_swap=hide_equity_swap,
+            roles=roles,
+            search=search,
+            ceo_cfo_only=ceo_cfo_only,
+            ceo_cfo_keywords=ceo_cfo_keywords,
+            sector=sector,
+            watched_only=watched_only,
+            date_range=date_range,
+            hide_funds=hide_funds,
+            has_options_only=has_options_only,
+            market_cap_tiers=market_cap_tiers,
+        )
+
+        # Pagination vs legacy limit:
+        #   - page_size provided => paginated path (LIMIT ? OFFSET ?), legacy limit ignored
+        #   - page_size None     => export/backtest path; legacy limit applied if set
+        if page_size is not None and not use_conviction:
+            sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT ? OFFSET ?"
+            side_params.append(page_size)
+            side_params.append((page - 1) * page_size)
+        else:
+            sql = f"{select_cols}\n{where_sql}\n{sql_sort}"
+            if page_size is None and limit:
+                sql += "\nLIMIT ?"
+                side_params.append(limit)
+
+        rows = conn.execute(sql, side_params).fetchall()
+        all_rows.extend(rows)
+
+    # Single _enrich call across both sides so cluster counting stays batched.
+    enriched = _enrich(all_rows, ctx=ctx)
 
     buys = [r for r in enriched if r["transaction_code"] == "P"]
     sells = [r for r in enriched if r["transaction_code"] == "S"]
+
+    if use_conviction:
+        # Python-sort each side by conviction desc, then slice for pagination.
+        buys = sorted(buys, key=lambda r: r.get("conviction") or 0, reverse=True)
+        sells = sorted(sells, key=lambda r: r.get("conviction") or 0, reverse=True)
+        if page_size is not None:
+            b_start = (buys_page - 1) * page_size
+            s_start = (sells_page - 1) * page_size
+            buys = buys[b_start : b_start + page_size]
+            sells = sells[s_start : s_start + page_size]
+
     return buys, sells
+
+
+def get_filings_count(
+    conn: sqlite3.Connection,
+    target_date: date,
+    *,
+    min_value: float = 0,
+    transaction_codes: list[str] | None = None,
+    hide_10b5_1: bool = True,
+    hide_equity_swap: bool = True,
+    roles: list[str] | None = None,
+    search: str | None = None,
+    ceo_cfo_only: bool = False,
+    ceo_cfo_keywords: list[str] | None = None,
+    sector: str | None = None,
+    watched_only: bool = False,
+    date_range: tuple[date, date] | None = None,
+    hide_funds: bool = False,
+    has_options_only: bool = False,
+    market_cap_tiers: list[str] | None = None,
+) -> tuple[int, int]:
+    """Returns (buy_count, sell_count) using the same WHERE clauses as get_filings_for_date.
+    Must accept the exact same filter kwargs (minus pagination/sort/ctx/limit)."""
+    codes = transaction_codes or ["P", "S"]
+
+    common_kwargs = dict(
+        min_value=min_value,
+        hide_10b5_1=hide_10b5_1,
+        hide_equity_swap=hide_equity_swap,
+        roles=roles,
+        search=search,
+        ceo_cfo_only=ceo_cfo_only,
+        ceo_cfo_keywords=ceo_cfo_keywords,
+        sector=sector,
+        watched_only=watched_only,
+        date_range=date_range,
+        hide_funds=hide_funds,
+        has_options_only=has_options_only,
+        market_cap_tiers=market_cap_tiers,
+    )
+
+    if "P" in codes:
+        buy_where, buy_params = _build_filings_where(
+            target_date, transaction_codes=["P"], **common_kwargs
+        )
+        buy_count = conn.execute(
+            f"SELECT COUNT(*) FROM filings {buy_where}", buy_params
+        ).fetchone()[0]
+    else:
+        buy_count = 0
+
+    if "S" in codes:
+        sell_where, sell_params = _build_filings_where(
+            target_date, transaction_codes=["S"], **common_kwargs
+        )
+        sell_count = conn.execute(
+            f"SELECT COUNT(*) FROM filings {sell_where}", sell_params
+        ).fetchone()[0]
+    else:
+        sell_count = 0
+
+    return buy_count, sell_count
 
 
 def get_summary_stats(

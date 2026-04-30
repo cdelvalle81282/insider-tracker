@@ -138,3 +138,20 @@ def fetch_ticker_metadata(ticker: str, api_key: str) -> dict | None:
     if market_cap is None and has_options is None:
         return None
     return {"market_cap": market_cap, "has_options": has_options}
+
+
+def fetch_latest_close(ticker: str, api_key: str) -> float | None:
+    """Most recent daily close price. Returns None on any error or missing data."""
+    if not api_key:
+        return None
+    try:
+        from datetime import date, timedelta
+        bars = get_daily_bars(
+            ticker,
+            (date.today() - timedelta(days=7)).strftime("%Y-%m-%d"),
+            date.today().strftime("%Y-%m-%d"),
+            api_key,
+        )
+        return bars[-1]["close"] if bars else None
+    except Exception:
+        return None

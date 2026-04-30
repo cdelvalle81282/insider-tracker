@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import csv
+import hashlib
 import io
+import json
 import os
 import re
 import sqlite3
@@ -10,6 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
+from cachetools import TTLCache
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,13 +22,13 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-import config as cfg
-from config import save_overrides
-from ingest import get_db
-import queries
-from queries import EnrichContext
 import alerts as alert_module
+import config as cfg
 import polygon_client
+import queries
+from config import PAGE_SIZE, save_overrides
+from ingest import get_db
+from queries import EnrichContext
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -42,6 +46,42 @@ templates.env.filters["replace_filter"] = _replace_filter
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _CIK_RE = re.compile(r"^\d{1,10}$")
 limiter = Limiter(key_func=get_remote_address)
+
+_query_cache: TTLCache = TTLCache(maxsize=256, ttl=30)
+
+
+def _cache_key(params: dict) -> str:
+    """Stable cache key — normalizes list values so order doesn't affect result."""
+    normalized = {k: sorted(v) if isinstance(v, list) else v for k, v in params.items()}
+    return hashlib.md5(json.dumps(normalized, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _filters_dict(
+    *,
+    d, start_date, end_date, min_value, codes, hide_10b5_1, hide_equity_swap,
+    roles, search, ceo_cfo, sort_by, sort_order, sector, watched_only,
+    hide_funds, has_options_only, market_cap_tiers, buys_page, sells_page,
+) -> dict:
+    """Canonical filters dict for templates. Stores checkboxes as '1'/'0' strings
+    so pager URLs serialize correctly. All list values included as lists."""
+    return {
+        "d": d, "start_date": start_date, "end_date": end_date,
+        "min_value": min_value,
+        "codes": codes or [],
+        "hide_10b5_1": "1" if hide_10b5_1 else "0",
+        "hide_equity_swap": "1" if hide_equity_swap else "0",
+        "roles": roles or [],
+        "search": search or "",
+        "ceo_cfo": ceo_cfo,
+        "sort_by": sort_by, "sort_order": sort_order,
+        "sector": sector or "",
+        "watched_only": watched_only,
+        "hide_funds": hide_funds,
+        "has_options_only": has_options_only,
+        "market_cap_tiers": market_cap_tiers or [],
+        "buys_page": buys_page,
+        "sells_page": sells_page,
+    }
 
 
 @asynccontextmanager
@@ -156,6 +196,8 @@ async def index(
     hide_funds: str = Query(default="0"),
     has_options_only: str = Query(default="0"),
     market_cap_tiers: list[str] = Query(default=[]),
+    buys_page: int = Query(default=1, ge=1),
+    sells_page: int = Query(default=1, ge=1),
 ):
     active_config = cfg.load_config()
     fd = active_config["filter_defaults"]
@@ -178,7 +220,23 @@ async def index(
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
 
     date_range_arg = (range_start, range_end) if is_range else None
-    buys, sells = queries.get_filings_for_date(
+
+    # Build canonical filters dict (used for template).
+    filters = _filters_dict(
+        d=d, start_date=start_date, end_date=end_date,
+        min_value=effective_min, codes=effective_codes,
+        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+        roles=roles, search=search, ceo_cfo=ceo_cfo,
+        sort_by=sort_by, sort_order=sort_order,
+        sector=sector, watched_only=watched_only,
+        hide_funds=hide_funds, has_options_only=has_options_only,
+        market_cap_tiers=effective_mktcap_tiers,
+        buys_page=buys_page, sells_page=sells_page,
+    )
+
+    # Index route is NOT cached — too many other context dependencies.
+    buys, sells = await asyncio.to_thread(
+        queries.get_filings_for_date,
         db, target_date,
         min_value=effective_min,
         transaction_codes=effective_codes,
@@ -197,10 +255,35 @@ async def index(
         hide_funds=effective_hide_funds,
         has_options_only=effective_has_options_only,
         market_cap_tiers=effective_mktcap_tiers or None,
+        buys_page=buys_page,
+        sells_page=sells_page,
+        page_size=PAGE_SIZE,
     )
-    stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap)
-    clusters = queries.get_cluster_activity(
-        db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+    buy_count, sell_count = await asyncio.to_thread(
+        queries.get_filings_count,
+        db, target_date,
+        min_value=effective_min,
+        transaction_codes=effective_codes,
+        hide_10b5_1=effective_hide,
+        hide_equity_swap=effective_hide_swap,
+        roles=roles,
+        search=search,
+        ceo_cfo_only=ceo_cfo_only,
+        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+        sector=sector or None,
+        watched_only=only_watched,
+        date_range=date_range_arg,
+        hide_funds=effective_hide_funds,
+        has_options_only=effective_has_options_only,
+        market_cap_tiers=effective_mktcap_tiers or None,
+    )
+    stats = await asyncio.to_thread(
+        queries.get_summary_stats, db, target_date,
+        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+    )
+    clusters = await asyncio.to_thread(
+        queries.get_cluster_activity, db, target_date,
+        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
         date_range=date_range_arg,
     )
     daily_summary = (
@@ -227,22 +310,13 @@ async def index(
         "prev_date": (target_date - timedelta(days=1)).isoformat(),
         "next_date": (target_date + timedelta(days=1)).isoformat(),
         "is_today": target_date == date.today(),
-        "filters": {
-            "min_value": effective_min,
-            "hide_10b5_1": effective_hide,
-            "hide_equity_swap": effective_hide_swap,
-            "codes": effective_codes,
-            "roles": roles or [],
-            "search": search or "",
-            "ceo_cfo": ceo_cfo_only,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-            "sector": sector or "",
-            "watched_only": only_watched,
-            "hide_funds": effective_hide_funds,
-            "has_options_only": effective_has_options_only,
-            "market_cap_tiers": effective_mktcap_tiers,
-        },
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "buys_page": buys_page,
+        "sells_page": sells_page,
+        "buys_total_pages": max(1, -(-buy_count // PAGE_SIZE)),
+        "sells_total_pages": max(1, -(-sell_count // PAGE_SIZE)),
+        "filters": filters,
         "config": active_config,
         "all_sectors": all_sectors,
     })
@@ -274,6 +348,8 @@ async def htmx_filings(
     hide_funds: str = Query(default="0"),
     has_options_only: str = Query(default="0"),
     market_cap_tiers: list[str] = Query(default=[]),
+    buys_page: int = Query(default=1, ge=1),
+    sells_page: int = Query(default=1, ge=1),
 ):
     active_config = cfg.load_config()
     effective_hide = hide_10b5_1 != "0"
@@ -281,6 +357,8 @@ async def htmx_filings(
     effective_hide_funds = hide_funds == "1"
     effective_has_options_only = has_options_only == "1"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
+    effective_min = min_value
+    effective_codes = codes
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
@@ -288,38 +366,85 @@ async def htmx_filings(
     summary_mode = is_range and (range_end - range_start).days > 7
     target_date = range_end
 
-    ctx = _make_ctx(db, active_config)
-
     date_range_arg = (range_start, range_end) if is_range else None
-    buys, sells = queries.get_filings_for_date(
-        db, target_date,
-        min_value=min_value,
-        transaction_codes=codes,
-        hide_10b5_1=effective_hide,
-        hide_equity_swap=effective_hide_swap,
-        roles=roles,
-        search=search,
-        ceo_cfo_only=ceo_cfo_only,
-        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-        sort_by=sort_by,
-        sort_order=sort_order,
-        sector=sector or None,
-        watched_only=only_watched,
-        date_range=date_range_arg,
-        ctx=ctx,
-        hide_funds=effective_hide_funds,
-        has_options_only=effective_has_options_only,
-        market_cap_tiers=effective_mktcap_tiers or None,
+
+    # Build canonical filters dict (used for cache key and template).
+    filters = _filters_dict(
+        d=d, start_date=start_date, end_date=end_date,
+        min_value=effective_min, codes=effective_codes,
+        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+        roles=roles, search=search, ceo_cfo=ceo_cfo,
+        sort_by=sort_by, sort_order=sort_order,
+        sector=sector, watched_only=watched_only,
+        hide_funds=hide_funds, has_options_only=has_options_only,
+        market_cap_tiers=effective_mktcap_tiers,
+        buys_page=buys_page, sells_page=sells_page,
     )
-    stats = queries.get_summary_stats(db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap)
-    clusters = queries.get_cluster_activity(
-        db, target_date, hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+
+    # Cache check
+    ckey = _cache_key(filters)
+    cached = _query_cache.get(ckey)
+    if cached is not None:
+        buys, sells, buy_count, sell_count = cached
+    else:
+        ctx = _make_ctx(db, active_config)
+        buys, sells = await asyncio.to_thread(
+            queries.get_filings_for_date,
+            db, target_date,
+            min_value=effective_min,
+            transaction_codes=effective_codes,
+            hide_10b5_1=effective_hide,
+            hide_equity_swap=effective_hide_swap,
+            roles=roles,
+            search=search,
+            ceo_cfo_only=ceo_cfo_only,
+            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+            sort_by=sort_by,
+            sort_order=sort_order,
+            sector=sector or None,
+            watched_only=only_watched,
+            date_range=date_range_arg,
+            ctx=ctx,
+            hide_funds=effective_hide_funds,
+            has_options_only=effective_has_options_only,
+            market_cap_tiers=effective_mktcap_tiers or None,
+            buys_page=buys_page,
+            sells_page=sells_page,
+            page_size=PAGE_SIZE,
+        )
+        buy_count, sell_count = await asyncio.to_thread(
+            queries.get_filings_count,
+            db, target_date,
+            min_value=effective_min,
+            transaction_codes=effective_codes,
+            hide_10b5_1=effective_hide,
+            hide_equity_swap=effective_hide_swap,
+            roles=roles,
+            search=search,
+            ceo_cfo_only=ceo_cfo_only,
+            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+            sector=sector or None,
+            watched_only=only_watched,
+            date_range=date_range_arg,
+            hide_funds=effective_hide_funds,
+            has_options_only=effective_has_options_only,
+            market_cap_tiers=effective_mktcap_tiers or None,
+        )
+        _query_cache[ckey] = (buys, sells, buy_count, sell_count)
+
+    stats = await asyncio.to_thread(
+        queries.get_summary_stats, db, target_date,
+        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+    )
+    clusters = await asyncio.to_thread(
+        queries.get_cluster_activity, db, target_date,
+        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
         date_range=date_range_arg,
     )
     daily_summary = (
         queries.get_daily_summary(
-            db, range_start, range_end, effective_hide, min_value,
-            transaction_codes=codes,
+            db, range_start, range_end, effective_hide, effective_min,
+            transaction_codes=effective_codes,
             hide_equity_swap=effective_hide_swap,
         )
         if summary_mode else []
@@ -334,12 +459,13 @@ async def htmx_filings(
         "range_start": range_start.isoformat(),
         "range_end": range_end.isoformat(),
         "target_date": target_date.isoformat(),
-        "filters": {
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-            "sector": sector or "",
-            "watched_only": only_watched,
-        },
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "buys_page": buys_page,
+        "sells_page": sells_page,
+        "buys_total_pages": max(1, -(-buy_count // PAGE_SIZE)),
+        "sells_total_pages": max(1, -(-sell_count // PAGE_SIZE)),
+        "filters": filters,
     })
 
 
@@ -395,6 +521,7 @@ async def export_csv(
     ctx = _make_ctx(db, active_config)
 
     date_range_arg = (range_start, range_end) if is_range else None
+    # CSV bypasses pagination — page_size left unset (default None) so legacy `limit` applies.
     buys, sells = queries.get_filings_for_date(
         db, target_date,
         min_value=min_value,

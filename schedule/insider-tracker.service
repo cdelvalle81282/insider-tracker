@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=deploy
 WorkingDirectory=/home/deploy/insider-tracker
-ExecStart=/home/deploy/insider-tracker/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8002
+ExecStart=/home/deploy/insider-tracker/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8002 --workers 2
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

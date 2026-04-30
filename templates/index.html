@@ -60,110 +60,140 @@
            step="10000" min="0" class="fg-in" style="width:82px;" />
   </div>
 
-  <!-- Toggles -->
-  <div class="fg" style="gap:12px;">
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="hide_10b5_1" value="1"
-             {% if filters.hide_10b5_1 %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Hide 10b5-1</span>
-    </label>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="hide_equity_swap" value="1"
-             {% if filters.hide_equity_swap %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Hide swaps</span>
-    </label>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="hide_funds" value="1"
-             {% if filters.get('hide_funds') %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Hide Funds/ETFs/REITs</span>
-    </label>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="has_options_only" value="1"
-             {% if filters.get('has_options_only') %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Has Options Only</span>
-    </label>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="ceo_cfo" value="1"
-             {% if filters.ceo_cfo %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">C-Suite</span>
-    </label>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="watched_only" value="1"
-             {% if filters.watched_only %}checked{% endif %}
-             class="accent-yellow-500 w-3 h-3 rounded" />
-      <span class="fg-label" style="{% if filters.watched_only %}color:var(--amber);{% endif %}">★ Watched</span>
-    </label>
-  </div>
+  {% set _panel_active = (
+      filters.get('hide_10b5_1') == '1' or
+      filters.get('hide_equity_swap') == '1' or
+      filters.get('hide_funds') == '1' or
+      filters.get('has_options_only') == '1' or
+      filters.get('ceo_cfo') == '1' or
+      filters.get('watched_only') == '1' or
+      filters.get('roles') or
+      filters.get('market_cap_tiers')
+  ) %}
+  {% set _active_count = [
+      filters.get('hide_10b5_1') == '1',
+      filters.get('hide_equity_swap') == '1',
+      filters.get('hide_funds') == '1',
+      filters.get('has_options_only') == '1',
+      filters.get('ceo_cfo') == '1',
+      filters.get('watched_only') == '1',
+      bool(filters.get('roles')),
+      bool(filters.get('market_cap_tiers')),
+  ] | select | list | length %}
 
-  <!-- Roles -->
-  <div class="fg" style="gap:10px;">
-    <span class="fg-label">Role</span>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="roles" value="director"
-             {% if 'director' in filters.roles %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Dir</span>
-    </label>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="roles" value="officer"
-             {% if 'officer' in filters.roles %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Officer</span>
-    </label>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="roles" value="ten_pct"
-             {% if 'ten_pct' in filters.roles %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">10%</span>
-    </label>
-  </div>
+  <details class="fg-panel" {% if _panel_active %}open{% endif %}>
+    <summary class="fg-toggle">
+      Filters{% if _active_count %} <span class="fg-badge">{{ _active_count }}</span>{% endif %}
+    </summary>
+    <div class="fg-panel-body flex flex-wrap items-center gap-2">
 
-  <!-- Market Cap Tiers -->
-  <div class="fg" style="gap:10px;">
-    <span class="fg-label">Mkt Cap</span>
-    <div class="fg-sep"></div>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="market_cap_tiers" value="micro"
-             {% if 'micro' in filters.get('market_cap_tiers', []) %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Micro</span>
-    </label>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="market_cap_tiers" value="small"
-             {% if 'small' in filters.get('market_cap_tiers', []) %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Small</span>
-    </label>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="market_cap_tiers" value="mid"
-             {% if 'mid' in filters.get('market_cap_tiers', []) %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Mid</span>
-    </label>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="market_cap_tiers" value="large"
-             {% if 'large' in filters.get('market_cap_tiers', []) %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Large</span>
-    </label>
-    <label class="flex items-center gap-1.5 cursor-pointer select-none">
-      <input type="checkbox" name="market_cap_tiers" value="mega"
-             {% if 'mega' in filters.get('market_cap_tiers', []) %}checked{% endif %}
-             class="accent-sky-500 w-3 h-3 rounded" />
-      <span class="fg-label">Mega</span>
-    </label>
-  </div>
+      <!-- Toggles -->
+      <div class="fg" style="gap:12px;">
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="hide_10b5_1" value="1"
+                 {% if filters.get('hide_10b5_1') == '1' %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Hide 10b5-1</span>
+        </label>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="hide_equity_swap" value="1"
+                 {% if filters.get('hide_equity_swap') == '1' %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Hide swaps</span>
+        </label>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="hide_funds" value="1"
+                 {% if filters.get('hide_funds') == '1' %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Hide Funds/ETFs/REITs</span>
+        </label>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="has_options_only" value="1"
+                 {% if filters.get('has_options_only') == '1' %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Has Options Only</span>
+        </label>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="ceo_cfo" value="1"
+                 {% if filters.get('ceo_cfo') == '1' %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">C-Suite</span>
+        </label>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="watched_only" value="1"
+                 {% if filters.get('watched_only') == '1' %}checked{% endif %}
+                 class="accent-yellow-500 w-3 h-3 rounded" />
+          <span class="fg-label" style="{% if filters.get('watched_only') == '1' %}color:var(--amber);{% endif %}">★ Watched</span>
+        </label>
+      </div>
+
+      <!-- Roles -->
+      <div class="fg" style="gap:10px;">
+        <span class="fg-label">Role</span>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="roles" value="director"
+                 {% if 'director' in filters.roles %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Dir</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="roles" value="officer"
+                 {% if 'officer' in filters.roles %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Officer</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="roles" value="ten_pct"
+                 {% if 'ten_pct' in filters.roles %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">10%</span>
+        </label>
+      </div>
+
+      <!-- Market Cap Tiers -->
+      <div class="fg" style="gap:10px;">
+        <span class="fg-label">Mkt Cap</span>
+        <div class="fg-sep"></div>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="market_cap_tiers" value="micro"
+                 {% if 'micro' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Micro</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="market_cap_tiers" value="small"
+                 {% if 'small' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Small</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="market_cap_tiers" value="mid"
+                 {% if 'mid' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Mid</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="market_cap_tiers" value="large"
+                 {% if 'large' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Large</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" name="market_cap_tiers" value="mega"
+                 {% if 'mega' in filters.get('market_cap_tiers', []) %}checked{% endif %}
+                 class="accent-sky-500 w-3 h-3 rounded" />
+          <span class="fg-label">Mega</span>
+        </label>
+      </div>
+
+    </div>
+  </details>
 
   <!-- Search -->
   <div class="fg">

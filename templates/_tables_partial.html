@@ -1,4 +1,23 @@
 {# HTMX partial — re-rendered on filter change. No <html> wrapper. #}
+{% macro pager(side, page, total_pages) %}
+  {% if total_pages > 1 %}
+  <div class="pager" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;font-size:.72rem;color:var(--text-3);">
+    {% if page > 1 %}
+    <button class="chip"
+            hx-get="/htmx/filings?{{ filters | replace_filter(side ~ '_page', page - 1) }}"
+            hx-target="#filings-container"
+            hx-include="false">‹ Prev</button>
+    {% endif %}
+    <span>Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <button class="chip"
+            hx-get="/htmx/filings?{{ filters | replace_filter(side ~ '_page', page + 1) }}"
+            hx-target="#filings-container"
+            hx-include="false">Next ›</button>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endmacro %}
 <div class="animate-in">
 
 <!-- ── Daily Summary ──────────────────────────────────────────────── -->
@@ -197,6 +216,7 @@
 <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
   <!-- Buys -->
+  <div>
   <details class="group" open>
     <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
       <span class="caret">▶</span>
@@ -204,7 +224,7 @@
         <span class="sh-dot" style="background:var(--buy);"></span>
         Buys
       </span>
-      <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ buys | length }})</span>
+      <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ buys|length }}{% if buy_count is defined and buy_count > buys|length %} of {{ buy_count }}{% endif %})</span>
     </summary>
     <div class="tbl-wrap">
       <table class="w-full">
@@ -253,10 +273,23 @@
             <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
-            <td class="td num text-right font-bold" style="color:var(--buy);">{{ row.total_value_fmt or '—' }}</td>
+            <td class="td num text-right" style="color:var(--buy);font-weight:600;">
+              {{ row.total_value_fmt or '—' }}
+              {% if row.price_perf_pct is not none %}
+              <div class="perf-pct {% if row.price_perf_pct >= 0 %}perf-pos{% else %}perf-neg{% endif %}">
+                {{ '+' if row.price_perf_pct >= 0 else '' }}{{ row.price_perf_pct }}%
+              </div>
+              {% endif %}
+            </td>
             <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ row.pct_holdings or '—' }}</td>
             <td class="td text-right" style="white-space:nowrap;">
               <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
+              {% if row.disclosure_lag is not none %}
+              <div class="lag-badge lag-{% if row.disclosure_lag <= 2 %}hot{% elif row.disclosure_lag <= 10 %}warm{% else %}late{% endif %}"
+                   title="{{ row.disclosure_lag }} days between trade and filing">
+                {{ row.disclosure_lag }}d
+              </div>
+              {% endif %}
             </td>
           </tr>
           {% else %}
@@ -266,8 +299,11 @@
       </table>
     </div>
   </details>
+  {{ pager('buys', buys_page if buys_page is defined else 1, buys_total_pages if buys_total_pages is defined else 1) }}
+  </div>
 
   <!-- Sells -->
+  <div>
   <details class="group" open>
     <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
       <span class="caret">▶</span>
@@ -275,7 +311,7 @@
         <span class="sh-dot" style="background:var(--sell);"></span>
         Sells
       </span>
-      <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ sells | length }})</span>
+      <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ sells|length }}{% if sell_count is defined and sell_count > sells|length %} of {{ sell_count }}{% endif %})</span>
     </summary>
     <div class="tbl-wrap">
       <table class="w-full">
@@ -324,6 +360,12 @@
             </td>
             <td class="td text-right" style="white-space:nowrap;">
               <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
+              {% if row.disclosure_lag is not none %}
+              <div class="lag-badge lag-{% if row.disclosure_lag <= 2 %}hot{% elif row.disclosure_lag <= 10 %}warm{% else %}late{% endif %}"
+                   title="{{ row.disclosure_lag }} days between trade and filing">
+                {{ row.disclosure_lag }}d
+              </div>
+              {% endif %}
             </td>
           </tr>
           {% else %}
@@ -333,6 +375,8 @@
       </table>
     </div>
   </details>
+  {{ pager('sells', sells_page if sells_page is defined else 1, sells_total_pages if sells_total_pages is defined else 1) }}
+  </div>
 
 </div><!-- /grid -->
 

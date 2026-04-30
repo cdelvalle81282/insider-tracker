@@ -81,6 +81,8 @@ SEC_RATE_LIMIT = 8  # requests per second — SEC cap is 10; stay safely under
 
 TICKER_CACHE_DAYS = 7
 
+PAGE_SIZE = 25
+
 BASE_DIR = Path(__file__).parent
 DB_PATH = str(BASE_DIR / "data" / "insider_tracker.db")
 TICKER_CACHE_PATH = str(BASE_DIR / "data" / "company_tickers.json")

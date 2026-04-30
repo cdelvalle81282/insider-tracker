@@ -76,6 +76,7 @@ python ingest.py --resolve-amendments      # backfill 4/A supersession
 python ingest.py --backfill-sectors        # fetch missing SIC/sector for all issuers
 python ingest.py --backfill-metadata       # fetch Polygon market_cap + has_options for all tickers
                                            # (free tier: ~5 req/min → hours for full DB)
+python ingest.py --update-prices           # fetch latest close prices for all tickers in ticker_metadata
 ```
 
 ## Congressional trades ingester
@@ -196,6 +197,9 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 6. The `filters` dict returned to the template in the index route
 7. The checkbox/input in `templates/index.html`
 8. Empty-state colspan increments in `templates/_tables_partial.html` if adding a column
+9. Add to `_build_filings_where()` in `queries.py` (the WHERE-builder)
+10. Add to `get_filings_count()` signature in `queries.py` (must stay in sync with data query)
+11. Add to `cache_key_dict` built in `_filters_dict()` in `app.py`
 
 ## Known gotchas
 
@@ -221,6 +225,13 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Congress data sources (2026):** Senate Stock Watcher GitHub archive ends 2020. House Stock Watcher S3 bucket (`house-stock-watcher-data.s3-us-west-2.amazonaws.com`) returns 403 — effectively dead. `senatestockwatcher.com/api` and `housestockwatcher.com/api` are unreliable. Use AInvest API for current data.
 - **`ticker_metadata` filter semantics:** `hide_funds` is conservative (unenriched = visible). `has_options_only` is restrictive (unenriched = excluded). `market_cap_tiers` is conservative (unenriched = visible). These semantics differ intentionally — document when adding new metadata-backed filters.
 - **`_replace_filter` Jinja2 filter:** Used in congress.html sort links to build query strings. Registered in `app.py` after `Jinja2Templates` init. Requires `doseq=True` for multi-value params.
+- **`_build_filings_where()` is the WHERE-clause source of truth:** Both `get_filings_for_date()` and `get_filings_count()` call this helper. New filters MUST go here first, then appear in both callers. Checklist items 9–10 in "Adding new filters" now reference this.
+- **Pagination conviction sort:** SQL `LIMIT/OFFSET` cannot be applied when `sort_by="conviction"` because Python must sort ALL results first. The refactored `get_filings_for_date()` skips SQL pagination for conviction sort and Python-slices after enrichment. Do not add `LIMIT/OFFSET` to the conviction SQL path.
+- **Response cache (TTLCache, 30s) is per-worker:** With `--workers 2`, each process has its own `_query_cache`. Cache key uses `json.dumps(normalized, sort_keys=True, default=str)` with lists pre-sorted — `sorted(v) if isinstance(v, list)`. Do not use `str(sorted(d.items()))` (unstable for list values).
+- **Pager buttons must use `hx-include="false"`:** Pager buttons build a complete query string via `replace_filter` on the full `filters` dict. Adding `hx-include="#filter-form"` would double-send all filter params (422 errors for typed Query params). Always use `hx-include="false"` on any button that carries a full URL via `hx-get`.
+- **`_filters_dict()` canonical contract:** Both `/` and `/htmx/filings` routes must call `_filters_dict()` to build the `filters` context. Boolean checkbox values are stored as `'1'`/`'0'` strings (not Python booleans) so they round-trip correctly through URLs and Jinja `== '1'` checks. Never pass raw Python booleans in the filters dict.
+- **`asyncio.to_thread` sequential — one DB connection:** Multiple `asyncio.to_thread` calls in one route are sequential (`await` waits for each). Same `db` connection used for all. Do NOT use `asyncio.gather` with the same connection (concurrent thread access to one sqlite3 connection is unsafe even with `check_same_thread=False`).
+- **`price_perf_pct` requires `--update-prices` to be meaningful:** The field is silently `None` until `insider-prices.timer` runs (weekdays 21:00 ET). Monitor staleness with `SELECT MAX(last_close_at) FROM ticker_metadata WHERE last_close IS NOT NULL`.
 
 ## SEC compliance
 
@@ -237,4 +248,3 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Notes/tags on filings** — internal editorial commentary
 - **Email digest** — daily summary as alternative to Slack
 - **Congress ingest on timer** — wire `congress_ingest.py` into a systemd timer for automatic daily refresh
-- **`asyncio.to_thread` for DB calls** — current sync queries block the event loop; wrapping in thread executor is the proper async fix (deferred — acceptable for current load)

@@ -8,6 +8,7 @@ Usage:
   python ingest.py --backfill-days 730
   python ingest.py --since-last-run
   python ingest.py --mark-joint-filers     # one-time backfill: dedup joint-filer pairs
+  python ingest.py --update-prices
 """
 from __future__ import annotations
 
@@ -148,6 +149,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tm_market_cap ON ticker_metadata(market_cap)")
+    tm_cols = {r[1] for r in conn.execute("PRAGMA table_info(ticker_metadata)")}
+    if "last_close" not in tm_cols:
+        conn.execute("ALTER TABLE ticker_metadata ADD COLUMN last_close REAL")
+    if "last_close_at" not in tm_cols:
+        conn.execute("ALTER TABLE ticker_metadata ADD COLUMN last_close_at TEXT")
     # index on sectors.sic_code for hide_funds filter performance
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sectors_sic ON sectors(sic_code)")
     # congress_trades table — HOUSE/SENATE financial disclosure trades
@@ -535,7 +541,9 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
 @click.option("--backfill-metadata", "do_backfill_metadata", is_flag=True, default=False, help="Fetch Polygon.io market cap and options flag for all tickers")
 @click.option("--limit", "metadata_limit", default=None, type=int, help="Max tickers to process in --backfill-metadata")
 @click.option("--stale-days", "metadata_stale_days", default=30, type=int, show_default=True, help="Re-fetch metadata older than N days")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days):
+@click.option("--update-prices", "do_update_prices", is_flag=True, default=False,
+              help="Fetch latest close for tickers in ticker_metadata where last_close_at < today or NULL")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices):
     conn = get_db()
     config = load_config()
 
@@ -609,6 +617,39 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
 
         conn.commit()
         click.echo(f"Done — {fetched} upserted, {skipped} skipped (no data)")
+        return
+
+    if do_update_prices:
+        if not POLYGON_API_KEY:
+            click.echo("Error: POLYGON_API_KEY is not set.", err=True)
+            return
+        today_iso = date.today().isoformat()
+        work = [
+            r[0] for r in conn.execute(
+                "SELECT ticker FROM ticker_metadata WHERE last_close_at IS NULL OR last_close_at < ?",
+                [today_iso],
+            ).fetchall()
+        ]
+        total = len(work)
+        click.echo(f"Updating last_close for {total} tickers ...")
+        updated = 0
+        for i, ticker in enumerate(work, start=1):
+            close = polygon_client.fetch_latest_close(ticker, POLYGON_API_KEY)
+            if close is not None:
+                conn.execute(
+                    "UPDATE ticker_metadata SET last_close=?, last_close_at=? WHERE ticker=?",
+                    [close, today_iso, ticker],
+                )
+                updated += 1
+                click.echo(f"[{i}/{total}] {ticker} → {close}")
+            else:
+                click.echo(f"[{i}/{total}] {ticker} → no data")
+            if i % 10 == 0:
+                conn.commit()
+            if i < total:
+                time.sleep(12)  # Polygon free tier: ~5 req/min
+        conn.commit()
+        click.echo(f"Done. Updated {updated}/{total} tickers.")
         return
 
     if backfill_sectors:

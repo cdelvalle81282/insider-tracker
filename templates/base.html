@@ -145,6 +145,32 @@
     .fg-in::placeholder { color: var(--text-3); }
     .fg-in option { background: var(--bg-raised); color: var(--text-1); }
 
+    .fg-toggle {
+      cursor: pointer;
+      user-select: none;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      font-size: .68rem;
+      color: var(--text-2);
+      list-style: none;
+      white-space: nowrap;
+    }
+    .fg-toggle::-webkit-details-marker { display: none; }
+    .fg-panel { width: 100%; flex-basis: 100%; }
+    .fg-panel[open] > summary.fg-toggle { color: var(--text-1); border-color: var(--sky); }
+    .fg-badge {
+      background: var(--sky);
+      color: #fff;
+      padding: 0 5px;
+      border-radius: 8px;
+      font-size: .55rem;
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+    .fg-panel-body { padding: 8px 0 4px; }
+
     /* Preset chips */
     .chip {
       font-size: .62rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
@@ -247,6 +273,22 @@
     /* ── Misc components ─────────────────────────── */
     .pct-hot { color: var(--amber); }
     .pct-dim { color: var(--text-3); }
+
+    .lag-badge {
+        display: inline-block;
+        font-size: .55rem;
+        font-weight: 600;
+        padding: 1px 5px;
+        border-radius: 6px;
+        margin-top: 2px;
+        line-height: 1.2;
+    }
+    .lag-hot  { background: rgba(15,206,160,.12); color: var(--buy);   border: 1px solid rgba(15,206,160,.28); }
+    .lag-warm { background: rgba(245,158,11,.12); color: var(--amber);  border: 1px solid rgba(245,158,11,.28); }
+    .lag-late { background: rgba(246,75,110,.12); color: var(--sell);  border: 1px solid rgba(246,75,110,.28); }
+    .perf-pct { font-size: .58rem; font-weight: 600; line-height: 1.2; margin-top: 1px; }
+    .perf-pos { color: var(--buy); }
+    .perf-neg { color: var(--sell); }
 
     /* Daily summary table */
     .ds-table td, .ds-table th { padding: 7px 12px; }

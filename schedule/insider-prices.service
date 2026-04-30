@@ -1,0 +1,9 @@
+[Unit]
+Description=Insider Tracker — Update last_close prices from Polygon
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+ExecStart=/home/deploy/insider-tracker/.venv/bin/python ingest.py --update-prices
