@@ -77,8 +77,8 @@
       filters.get('has_options_only') == '1',
       filters.get('ceo_cfo') == '1',
       filters.get('watched_only') == '1',
-      bool(filters.get('roles')),
-      bool(filters.get('market_cap_tiers')),
+      (filters.get('roles') or []) | length > 0,
+      (filters.get('market_cap_tiers') or []) | length > 0,
   ] | select | list | length %}
 
   <details class="fg-panel" {% if _panel_active %}open{% endif %}>
