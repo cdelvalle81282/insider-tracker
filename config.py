@@ -40,6 +40,7 @@ CONVICTION_FLAGS = {
 }
 
 CONVICTION_MAX = 10
+CONVICTION_CLUSTER_WINDOW_DAYS = 14  # separate from alert cluster_window_days
 CONVICTION_THRESHOLDS = {"high": 8, "medium": 5}  # tier labels for color coding
 
 FILTER_DEFAULTS = {
@@ -100,6 +101,7 @@ def load_config() -> dict:
         "conviction_tiers": {k: list(v) for k, v in CONVICTION_TIERS.items()},
         "conviction_flags": dict(CONVICTION_FLAGS),
         "conviction_max": CONVICTION_MAX,
+        "conviction_cluster_window_days": CONVICTION_CLUSTER_WINDOW_DAYS,
         "conviction_thresholds": dict(CONVICTION_THRESHOLDS),
         "sec_user_agent": SEC_USER_AGENT,
         "sec_rate_limit": SEC_RATE_LIMIT,

@@ -246,7 +246,7 @@ def _buy_alert_key(row: dict) -> str:
 
 def _cluster_alert_key(row: dict) -> str:
     # One cluster alert per issuer per calendar week
-    week = datetime.now(timezone.utc).strftime("%Y-W%W")
+    week = datetime.now(timezone.utc).strftime("%G-W%V")
     return f"cluster:{row.get('issuer_cik','')}:{week}"
 
 

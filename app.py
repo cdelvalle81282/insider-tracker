@@ -162,7 +162,7 @@ def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
         conviction_tiers=active_config.get("conviction_tiers"),
         conviction_max=active_config.get("conviction_max", 10),
         conviction_thresholds=active_config.get("conviction_thresholds"),
-        cluster_window_days=active_config.get("alert_rules", {}).get("cluster_window_days", 14),
+        cluster_window_days=active_config.get("conviction_cluster_window_days", 14),
         ceo_cfo_keywords=active_config.get("alert_rules", {}).get("insider_title_keywords", []),
         watched_tickers=queries.watched_tickers(db),
         watched_insiders=queries.watched_insiders(db),
