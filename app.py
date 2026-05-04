@@ -280,11 +280,12 @@ async def index(
     stats = await asyncio.to_thread(
         queries.get_summary_stats, db, target_date,
         hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+        codes=effective_codes,
     )
     clusters = await asyncio.to_thread(
         queries.get_cluster_activity, db, target_date,
         hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
-        date_range=date_range_arg,
+        date_range=date_range_arg, codes=effective_codes,
     )
     daily_summary = (
         queries.get_daily_summary(
@@ -435,11 +436,12 @@ async def htmx_filings(
     stats = await asyncio.to_thread(
         queries.get_summary_stats, db, target_date,
         hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+        codes=effective_codes,
     )
     clusters = await asyncio.to_thread(
         queries.get_cluster_activity, db, target_date,
         hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
-        date_range=date_range_arg,
+        date_range=date_range_arg, codes=effective_codes,
     )
     daily_summary = (
         queries.get_daily_summary(

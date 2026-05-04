@@ -708,10 +708,13 @@ def get_summary_stats(
     target_date: date,
     hide_10b5_1: bool = True,
     hide_equity_swap: bool = True,
+    codes: list[str] | None = None,
 ) -> dict:
     d = target_date.isoformat()
     ten_b  = "AND is_10b5_1 = 0"   if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0"  if hide_equity_swap else ""
+    codes_list = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
+    codes_ph   = ",".join("?" * len(codes_list))
 
     row = conn.execute(f"""
         SELECT
@@ -721,18 +724,20 @@ def get_summary_stats(
             COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
             COUNT(DISTINCT issuer_cik) AS issuer_count
         FROM filings
-        WHERE DATE(filed_at)=? AND transaction_code IN ('P','S')
+        WHERE DATE(filed_at)=? AND transaction_code IN ({codes_ph})
           AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
-    """, [d]).fetchone()
+    """, [d, *codes_list]).fetchone()
 
+    cluster_codes = [c for c in codes_list if c == "P"] or ["P"]
+    cluster_ph = ",".join("?" * len(cluster_codes))
     clusters = conn.execute(f"""
         SELECT COUNT(*) FROM (
           SELECT issuer_cik FROM filings
-          WHERE DATE(filed_at)=? AND transaction_code='P'
+          WHERE DATE(filed_at)=? AND transaction_code IN ({cluster_ph})
             AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
         )
-    """, [d]).fetchone()
+    """, [d, *cluster_codes]).fetchone()
 
     buy_total = row[1] or 0
     sell_total = row[3] or 0
@@ -756,6 +761,7 @@ def get_cluster_activity(
     hide_10b5_1: bool = True,
     hide_equity_swap: bool = True,
     date_range: tuple[date, date] | None = None,
+    codes: list[str] | None = None,
 ) -> list[dict]:
     if date_range:
         date_condition = "DATE(filed_at) BETWEEN ? AND ?"
@@ -765,6 +771,8 @@ def get_cluster_activity(
         date_params = [target_date.isoformat()]
     ten_b  = "AND is_10b5_1 = 0"  if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0" if hide_equity_swap else ""
+    codes_list = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
+    codes_ph   = ",".join("?" * len(codes_list))
 
     rows = conn.execute(f"""
         SELECT
@@ -783,7 +791,7 @@ def get_cluster_activity(
             GROUP_CONCAT(DISTINCT COALESCE(insider_title, '')) AS insider_titles
         FROM filings
         WHERE {date_condition}
-          AND transaction_code IN ('P', 'S')
+          AND transaction_code IN ({codes_ph})
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           {ten_b}
@@ -792,7 +800,7 @@ def get_cluster_activity(
         GROUP BY issuer_ticker, issuer_name
         HAVING COUNT(DISTINCT insider_cik) >= ?
         ORDER BY total_value DESC
-    """, [*date_params, min_insiders]).fetchall()
+    """, [*date_params, *codes_list, min_insiders]).fetchall()
 
     if not rows:
         return []
@@ -806,9 +814,9 @@ def get_cluster_activity(
         FROM filings
         WHERE {date_condition}
           AND issuer_ticker IN ({ticker_placeholders})
-          AND transaction_code IN ('P','S') {ten_b} {swap_f}
+          AND transaction_code IN ({codes_ph}) {ten_b} {swap_f}
         ORDER BY total_value DESC NULLS LAST
-    """, [*date_params, *cluster_tickers]).fetchall()
+    """, [*date_params, *cluster_tickers, *codes_list]).fetchall()
 
     tx_by_ticker: dict[str, list[dict]] = defaultdict(list)
     for tx in all_tx:
