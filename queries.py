@@ -44,6 +44,11 @@ MARKET_CAP_TIERS = {
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _sanitize_codes(codes: list[str] | None) -> tuple[list[str], str]:
+    result = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
+    return result, ",".join("?" * len(result))
+
+
 def _fmt_value(v: float | None) -> str:
     if v is None:
         return ""
@@ -713,8 +718,7 @@ def get_summary_stats(
     d = target_date.isoformat()
     ten_b  = "AND is_10b5_1 = 0"   if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0"  if hide_equity_swap else ""
-    codes_list = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
-    codes_ph   = ",".join("?" * len(codes_list))
+    codes_list, codes_ph = _sanitize_codes(codes)
 
     row = conn.execute(f"""
         SELECT
@@ -728,16 +732,16 @@ def get_summary_stats(
           AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
     """, [d, *codes_list]).fetchone()
 
-    cluster_codes = [c for c in codes_list if c == "P"] or ["P"]
-    cluster_ph = ",".join("?" * len(cluster_codes))
+    # Clusters are always buy-only — a cluster is 2+ distinct insiders buying
+    # the same stock. Sells are excluded regardless of the caller's codes filter.
     clusters = conn.execute(f"""
         SELECT COUNT(*) FROM (
           SELECT issuer_cik FROM filings
-          WHERE DATE(filed_at)=? AND transaction_code IN ({cluster_ph})
+          WHERE DATE(filed_at)=? AND transaction_code = 'P'
             AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
         )
-    """, [d, *cluster_codes]).fetchone()
+    """, [d]).fetchone()
 
     buy_total = row[1] or 0
     sell_total = row[3] or 0
@@ -771,8 +775,7 @@ def get_cluster_activity(
         date_params = [target_date.isoformat()]
     ten_b  = "AND is_10b5_1 = 0"  if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0" if hide_equity_swap else ""
-    codes_list = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
-    codes_ph   = ",".join("?" * len(codes_list))
+    codes_list, codes_ph = _sanitize_codes(codes)
 
     rows = conn.execute(f"""
         SELECT
