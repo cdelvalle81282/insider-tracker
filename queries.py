@@ -721,13 +721,15 @@ def get_summary_stats(
             COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
             COUNT(DISTINCT issuer_cik) AS issuer_count
         FROM filings
-        WHERE DATE(filed_at)=? AND transaction_code IN ('P','S') {ten_b} {swap_f}
+        WHERE DATE(filed_at)=? AND transaction_code IN ('P','S')
+          AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
     """, [d]).fetchone()
 
     clusters = conn.execute(f"""
         SELECT COUNT(*) FROM (
           SELECT issuer_cik FROM filings
-          WHERE DATE(filed_at)=? AND transaction_code='P' {ten_b} {swap_f}
+          WHERE DATE(filed_at)=? AND transaction_code='P'
+            AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
         )
     """, [d]).fetchone()

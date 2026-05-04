@@ -925,11 +925,12 @@ async def logic_page(
     db: sqlite3.Connection = Depends(get_request_db),
 ):
     active_config = cfg.load_config()
+    view_config = {k: v for k, v in active_config.items() if k != "polygon_api_key"}
     stats = queries.get_10b5_1_stats(db)
     recent_alerts = queries.get_recent_alerts(db)
     slack_configured = bool(os.getenv("SLACK_WEBHOOK_URL", ""))
     return templates.TemplateResponse(request, "logic.html", {
-        "config": active_config,
+        "config": view_config,
         "stats": stats,
         "transaction_codes": cfg.TRANSACTION_CODES,
         "conviction_tiers": cfg.CONVICTION_TIERS,

@@ -162,6 +162,7 @@ def _match_big_buy(
           AND total_value >= ?
           AND ingested_at >= ?
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
         ORDER BY total_value DESC
         """,
         [threshold, since_ts],
@@ -186,6 +187,7 @@ def _match_insider_buy(
           AND total_value >= ?
           AND ingested_at >= ?
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
           AND ({kw_clauses})
         ORDER BY total_value DESC
         """,
@@ -215,6 +217,7 @@ def _match_cluster(
         WHERE transaction_code = 'P'
           AND transaction_date >= ?
           AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
         GROUP BY issuer_cik, issuer_name, issuer_ticker
         HAVING COUNT(DISTINCT insider_cik) >= ?
            AND MAX(ingested_at) >= ?

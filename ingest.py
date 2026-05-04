@@ -430,7 +430,7 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
     inserted = 0
     for row in rows:
         try:
-            conn.execute(
+            cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO filings (
                   transaction_id, accession_no, filed_at, form_type,
@@ -454,7 +454,7 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
                 """,
                 row,
             )
-            if conn.execute("SELECT changes()").fetchone()[0]:
+            if cur.rowcount:
                 inserted += 1
                 _resolve_amendment(conn, row)
         except sqlite3.Error:
