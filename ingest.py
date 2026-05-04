@@ -501,7 +501,7 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
           AND transaction_code IN ('P', 'S')
           AND total_value IS NOT NULL
           AND shares > 0
-        GROUP BY issuer_ticker, transaction_date, transaction_code,
+        GROUP BY issuer_cik, transaction_date, transaction_code,
                  shares, total_value, table_type
         HAVING COUNT(DISTINCT insider_cik) > 1
     """).fetchall()
