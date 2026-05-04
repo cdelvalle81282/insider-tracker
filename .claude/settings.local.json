@@ -54,7 +54,11 @@
       "Bash(.venv/Scripts/python -c \"import app; print\\('app OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"from queries import get_filings_for_date, get_filings_count, _build_filings_where; print\\('queries OK'\\)\")",
       "Bash(.venv/Scripts/python -c \"from polygon_client import fetch_latest_close; print\\('polygon OK'\\)\")",
-      "Bash(.venv/Scripts/python -c \"from config import PAGE_SIZE; print\\(f'PAGE_SIZE={PAGE_SIZE}'\\)\")"
+      "Bash(.venv/Scripts/python -c \"from config import PAGE_SIZE; print\\(f'PAGE_SIZE={PAGE_SIZE}'\\)\")",
+      "Bash(mkdir -p data/polygon_cache)",
+      "Bash(.venv/Scripts/python backtest.py --min-value 1000000 --output data/backtest_results.csv)",
+      "Bash(.venv/Scripts/python -c \"from dotenv import load_dotenv; load_dotenv\\(\\); import os; k=os.environ.get\\('POLYGON_API_KEY',''\\); print\\('key set:', bool\\(k\\), 'len:', len\\(k\\)\\)\")",
+      "Bash(.venv/Scripts/python -m ruff check . --exclude .venv)"
     ]
   }
 }

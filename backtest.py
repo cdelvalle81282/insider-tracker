@@ -34,7 +34,7 @@ TRADE_START = "2024-08-01"   # earliest trade (90-day channel lookback feasible)
 TRADE_END   = "2026-01-25"   # latest trade with 90d of forward price data
 
 CACHE_DIR = Path("data/polygon_cache")
-RATE_LIMIT_SLEEP = 13        # seconds between live API calls (free tier ≈ 5/min)
+RATE_LIMIT_SLEEP = 0.25      # seconds between live API calls (paid tier)
 
 WINDOWS = [30, 60, 90]       # forward windows (calendar days)
 
