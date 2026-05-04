@@ -396,25 +396,34 @@ def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> int:
     if row.get("form_type") != "4/A":
         return 0
 
+    base_params = [
+        row["issuer_cik"],
+        row["insider_cik"],
+        row["transaction_date"],
+        row["transaction_code"],
+    ]
+    # Pass 1: exact share match — handles unchanged rows in a multi-row 4/A
     candidates = conn.execute(
         """
         SELECT transaction_id FROM filings
-        WHERE issuer_cik = ?
-          AND insider_cik = ?
-          AND transaction_date = ?
-          AND transaction_code = ?
-          AND shares = ?
-          AND form_type = '4'
+        WHERE issuer_cik = ? AND insider_cik = ? AND transaction_date = ?
+          AND transaction_code = ? AND shares = ? AND form_type = '4'
           AND superseded_by IS NULL
         """,
-        [
-            row["issuer_cik"],
-            row["insider_cik"],
-            row["transaction_date"],
-            row["transaction_code"],
-            row["shares"],
-        ],
+        [*base_params, row["shares"]],
     ).fetchall()
+
+    if len(candidates) != 1:
+        # Pass 2: share count may have been corrected in this 4/A
+        candidates = conn.execute(
+            """
+            SELECT transaction_id FROM filings
+            WHERE issuer_cik = ? AND insider_cik = ? AND transaction_date = ?
+              AND transaction_code = ? AND form_type = '4'
+              AND superseded_by IS NULL
+            """,
+            base_params,
+        ).fetchall()
 
     if len(candidates) == 1:
         cur = conn.execute(
