@@ -47,13 +47,58 @@ _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _CIK_RE = re.compile(r"^\d{1,10}$")
 limiter = Limiter(key_func=get_remote_address)
 
-_query_cache: TTLCache = TTLCache(maxsize=256, ttl=30)
+INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
+
+# Long-lived caches — sentinel mtime invalidates them on ingest, 24h TTL is a safety net.
+_query_cache:    TTLCache = TTLCache(maxsize=256, ttl=86400)
+_stats_cache:    TTLCache = TTLCache(maxsize=64,  ttl=86400)
+_clusters_cache: TTLCache = TTLCache(maxsize=64,  ttl=86400)
+_sectors_cache:  TTLCache = TTLCache(maxsize=1,   ttl=3600)
+_config_cache:   TTLCache = TTLCache(maxsize=1,   ttl=60)
+
+
+def _sentinel_mtime() -> float:
+    try:
+        return os.path.getmtime(INGEST_SENTINEL)
+    except FileNotFoundError:
+        return 0.0
+
+
+def _sentinel_get(cache: TTLCache, key: str):
+    entry = cache.get(key)
+    if entry is None:
+        return None
+    stored_mtime, value = entry
+    return value if stored_mtime >= _sentinel_mtime() else None
+
+
+def _sentinel_set(cache: TTLCache, key: str, pre_mtime: float, value) -> None:
+    cache[key] = (pre_mtime, value)
 
 
 def _cache_key(params: dict) -> str:
     """Stable cache key — normalizes list values so order doesn't affect result."""
     normalized = {k: sorted(v) if isinstance(v, list) else v for k, v in params.items()}
     return hashlib.md5(json.dumps(normalized, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _load_config_cached() -> dict:
+    cached = _config_cache.get("config")
+    if cached is not None:
+        return cached
+    result = cfg.load_config()
+    _config_cache["config"] = result
+    return result
+
+
+def _get_all_sectors_cached(db: sqlite3.Connection) -> list[str]:
+    cached = _sentinel_get(_sectors_cache, "sectors")
+    if cached is not None:
+        return cached
+    pre_mtime = _sentinel_mtime()
+    result = queries.get_all_sectors(db)
+    _sentinel_set(_sectors_cache, "sectors", pre_mtime, result)
+    return result
 
 
 def _filters_dict(
@@ -199,7 +244,7 @@ async def index(
     buys_page: int = Query(default=1, ge=1),
     sells_page: int = Query(default=1, ge=1),
 ):
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     fd = active_config["filter_defaults"]
 
     range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
@@ -212,16 +257,11 @@ async def index(
     effective_codes = codes if codes else fd["transaction_codes"]
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
-
-    ctx = _make_ctx(db, active_config)
-
     effective_hide_funds = hide_funds == "1"
     effective_has_options_only = has_options_only == "1"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
-
     date_range_arg = (range_start, range_end) if is_range else None
 
-    # Build canonical filters dict (used for template).
     filters = _filters_dict(
         d=d, start_date=start_date, end_date=end_date,
         min_value=effective_min, codes=effective_codes,
@@ -234,59 +274,57 @@ async def index(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    # Index route is NOT cached — too many other context dependencies.
-    buys, sells = await asyncio.to_thread(
-        queries.get_filings_for_date,
-        db, target_date,
-        min_value=effective_min,
-        transaction_codes=effective_codes,
-        hide_10b5_1=effective_hide,
-        hide_equity_swap=effective_hide_swap,
-        roles=roles,
-        search=search,
-        ceo_cfo_only=ceo_cfo_only,
-        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-        sort_by=sort_by,
-        sort_order=sort_order,
-        sector=sector or None,
-        watched_only=only_watched,
-        date_range=date_range_arg,
-        ctx=ctx,
-        hide_funds=effective_hide_funds,
-        has_options_only=effective_has_options_only,
-        market_cap_tiers=effective_mktcap_tiers or None,
-        buys_page=buys_page,
-        sells_page=sells_page,
-        page_size=PAGE_SIZE,
-    )
-    buy_count, sell_count = await asyncio.to_thread(
-        queries.get_filings_count,
-        db, target_date,
-        min_value=effective_min,
-        transaction_codes=effective_codes,
-        hide_10b5_1=effective_hide,
-        hide_equity_swap=effective_hide_swap,
-        roles=roles,
-        search=search,
-        ceo_cfo_only=ceo_cfo_only,
-        ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-        sector=sector or None,
-        watched_only=only_watched,
-        date_range=date_range_arg,
-        hide_funds=effective_hide_funds,
-        has_options_only=effective_has_options_only,
-        market_cap_tiers=effective_mktcap_tiers or None,
-    )
-    stats = await asyncio.to_thread(
-        queries.get_summary_stats, db, target_date,
-        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
-        codes=effective_codes,
-    )
-    clusters = await asyncio.to_thread(
-        queries.get_cluster_activity, db, target_date,
-        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
-        date_range=date_range_arg, codes=effective_codes,
-    )
+    ckey = _cache_key(filters)
+    cached_result = _sentinel_get(_query_cache, ckey)
+    if cached_result is not None:
+        buys, sells, buy_count, sell_count = cached_result
+    else:
+        pre_mtime = _sentinel_mtime()
+        ctx = _make_ctx(db, active_config)
+        buys, sells = await asyncio.to_thread(
+            queries.get_filings_for_date,
+            db, target_date,
+            min_value=effective_min,
+            transaction_codes=effective_codes,
+            hide_10b5_1=effective_hide,
+            hide_equity_swap=effective_hide_swap,
+            roles=roles,
+            search=search,
+            ceo_cfo_only=ceo_cfo_only,
+            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+            sort_by=sort_by,
+            sort_order=sort_order,
+            sector=sector or None,
+            watched_only=only_watched,
+            date_range=date_range_arg,
+            ctx=ctx,
+            hide_funds=effective_hide_funds,
+            has_options_only=effective_has_options_only,
+            market_cap_tiers=effective_mktcap_tiers or None,
+            buys_page=buys_page,
+            sells_page=sells_page,
+            page_size=PAGE_SIZE,
+        )
+        buy_count, sell_count = await asyncio.to_thread(
+            queries.get_filings_count,
+            db, target_date,
+            min_value=effective_min,
+            transaction_codes=effective_codes,
+            hide_10b5_1=effective_hide,
+            hide_equity_swap=effective_hide_swap,
+            roles=roles,
+            search=search,
+            ceo_cfo_only=ceo_cfo_only,
+            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+            sector=sector or None,
+            watched_only=only_watched,
+            date_range=date_range_arg,
+            hide_funds=effective_hide_funds,
+            has_options_only=effective_has_options_only,
+            market_cap_tiers=effective_mktcap_tiers or None,
+        )
+        _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
+
     daily_summary = (
         queries.get_daily_summary(
             db, range_start, range_end, effective_hide, effective_min,
@@ -295,13 +333,11 @@ async def index(
         )
         if summary_mode else []
     )
-    all_sectors = queries.get_all_sectors(db)
+    all_sectors = _get_all_sectors_cached(db)
 
     return templates.TemplateResponse(request, "index.html", {
         "buys": buys,
         "sells": sells,
-        "stats": stats,
-        "clusters": clusters,
         "daily_summary": daily_summary,
         "summary_mode": summary_mode,
         "target_date": target_date.isoformat(),
@@ -352,7 +388,7 @@ async def htmx_filings(
     buys_page: int = Query(default=1, ge=1),
     sells_page: int = Query(default=1, ge=1),
 ):
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     effective_hide = hide_10b5_1 != "0"
     effective_hide_swap = hide_equity_swap != "0"
     effective_hide_funds = hide_funds == "1"
@@ -382,12 +418,12 @@ async def htmx_filings(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    # Cache check
     ckey = _cache_key(filters)
-    cached = _query_cache.get(ckey)
-    if cached is not None:
-        buys, sells, buy_count, sell_count = cached
+    cached_result = _sentinel_get(_query_cache, ckey)
+    if cached_result is not None:
+        buys, sells, buy_count, sell_count = cached_result
     else:
+        pre_mtime = _sentinel_mtime()
         ctx = _make_ctx(db, active_config)
         buys, sells = await asyncio.to_thread(
             queries.get_filings_for_date,
@@ -431,18 +467,8 @@ async def htmx_filings(
             has_options_only=effective_has_options_only,
             market_cap_tiers=effective_mktcap_tiers or None,
         )
-        _query_cache[ckey] = (buys, sells, buy_count, sell_count)
+        _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
 
-    stats = await asyncio.to_thread(
-        queries.get_summary_stats, db, target_date,
-        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
-        codes=effective_codes,
-    )
-    clusters = await asyncio.to_thread(
-        queries.get_cluster_activity, db, target_date,
-        hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
-        date_range=date_range_arg, codes=effective_codes,
-    )
     daily_summary = (
         queries.get_daily_summary(
             db, range_start, range_end, effective_hide, effective_min,
@@ -454,8 +480,6 @@ async def htmx_filings(
     return templates.TemplateResponse(request, "_tables_partial.html", {
         "buys": buys,
         "sells": sells,
-        "stats": stats,
-        "clusters": clusters,
         "daily_summary": daily_summary,
         "summary_mode": summary_mode,
         "range_start": range_start.isoformat(),
@@ -469,6 +493,97 @@ async def htmx_filings(
         "sells_total_pages": max(1, -(-sell_count // PAGE_SIZE)),
         "filters": filters,
     })
+
+
+# ---------------------------------------------------------------------------
+# Async stats / cluster partials (loaded deferred by index.html)
+# ---------------------------------------------------------------------------
+
+@app.get("/htmx/stats", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_stats(
+    request: Request,
+    d: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    hide_10b5_1: str = Query(default="1"),
+    hide_equity_swap: str = Query(default="1"),
+    codes: list[str] = Query(default=["P", "S"]),
+):
+    effective_hide = hide_10b5_1 != "0"
+    effective_hide_swap = hide_equity_swap != "0"
+    effective_codes = codes or ["P", "S"]
+
+    _, range_end, _ = _resolve_date_range(d, start_date, end_date)
+    target_date = range_end
+
+    skey = _cache_key({
+        "target_date": target_date.isoformat(),
+        "hide_10b5_1": "1" if effective_hide else "0",
+        "hide_equity_swap": "1" if effective_hide_swap else "0",
+        "codes": sorted(effective_codes),
+    })
+    stats = _sentinel_get(_stats_cache, skey)
+    if stats is None:
+        pre_mtime = _sentinel_mtime()
+        db = get_db()
+        try:
+            stats = await asyncio.to_thread(
+                queries.get_summary_stats, db, target_date,
+                hide_10b5_1=effective_hide,
+                hide_equity_swap=effective_hide_swap,
+                codes=effective_codes,
+            )
+        finally:
+            db.close()
+        _sentinel_set(_stats_cache, skey, pre_mtime, stats)
+
+    return templates.TemplateResponse(request, "_stats_partial.html", {"stats": stats})
+
+
+@app.get("/htmx/clusters", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_clusters(
+    request: Request,
+    d: str | None = Query(default=None),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    hide_10b5_1: str = Query(default="1"),
+    hide_equity_swap: str = Query(default="1"),
+    codes: list[str] = Query(default=["P", "S"]),
+):
+    effective_hide = hide_10b5_1 != "0"
+    effective_hide_swap = hide_equity_swap != "0"
+    effective_codes = codes or ["P", "S"]
+
+    range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
+    target_date = range_end
+    date_range_arg = (range_start, range_end) if is_range else None
+
+    ckey = _cache_key({
+        "target_date": target_date.isoformat(),
+        "start_date": range_start.isoformat() if is_range else None,
+        "hide_10b5_1": "1" if effective_hide else "0",
+        "hide_equity_swap": "1" if effective_hide_swap else "0",
+        "codes": sorted(effective_codes),
+    })
+    clusters = _sentinel_get(_clusters_cache, ckey)
+    if clusters is None:
+        pre_mtime = _sentinel_mtime()
+        db = get_db()
+        try:
+            clusters = await asyncio.to_thread(
+                queries.get_cluster_activity, db, target_date,
+                hide_10b5_1=effective_hide,
+                hide_equity_swap=effective_hide_swap,
+                date_range=date_range_arg,
+                codes=effective_codes,
+            )
+        finally:
+            db.close()
+        _sentinel_set(_clusters_cache, ckey, pre_mtime, clusters)
+
+    return templates.TemplateResponse(request, "_clusters_partial.html", {"clusters": clusters})
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +623,7 @@ async def export_csv(
     has_options_only: str = Query(default="0"),
     market_cap_tiers: list[str] = Query(default=[]),
 ):
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     effective_hide = hide_10b5_1 != "0"
     effective_hide_swap = hide_equity_swap != "0"
     effective_hide_funds = hide_funds == "1"
@@ -578,7 +693,7 @@ async def filing_detail(
     transaction_id: str,
     db: sqlite3.Connection = Depends(get_request_db),
 ):
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     ctx = _make_ctx(db, active_config)
     filing = queries.get_filing_detail(db, transaction_id, ctx=ctx)
     if filing is None:
@@ -631,7 +746,7 @@ async def insider_view(
 ):
     if not _CIK_RE.match(cik):
         raise HTTPException(status_code=400, detail="Invalid CIK")
-    config = cfg.load_config()
+    config = _load_config_cached()
     ctx = _make_ctx(db, config)
     history = queries.get_insider_full_history(db, cik, ctx=ctx)
     summary = queries.get_insider_summary(db, cik)
@@ -659,7 +774,7 @@ async def chart_view(
     ticker = ticker.upper()
     if not _TICKER_RE.match(ticker):
         raise HTTPException(status_code=400, detail="Invalid ticker")
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     api_key = active_config.get("polygon_api_key", "")
     days = _RANGE_DAYS.get(range, 180)
     from_date = date.today() - timedelta(days=days)
@@ -732,6 +847,7 @@ async def watchlist_add(
     if not value or len(value) > 64 or len(label) > 128:
         raise HTTPException(status_code=400, detail="Invalid value or label")
     queries.add_watch(db, watch_type, value, label or value)
+    _query_cache.clear()
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
@@ -742,6 +858,7 @@ async def watchlist_remove(
     watch_id: int = Form(...),
 ):
     queries.remove_watch(db, watch_id)
+    _query_cache.clear()
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
@@ -926,7 +1043,7 @@ async def logic_page(
     request: Request,
     db: sqlite3.Connection = Depends(get_request_db),
 ):
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     view_config = {k: v for k, v in active_config.items() if k != "polygon_api_key"}
     stats = queries.get_10b5_1_stats(db)
     recent_alerts = queries.get_recent_alerts(db)
@@ -1001,7 +1118,7 @@ async def logic_save(
 
     if submitted_flags or submitted_tier_pts:
         # Load existing flags to merge into
-        existing = cfg.load_config()
+        existing = _load_config_cached()
         conviction_flags = dict(existing.get("conviction_flags") or cfg.CONVICTION_FLAGS)
         conviction_flags.update(submitted_flags)
         # Tier point overrides — update the points in CONVICTION_TIERS structure
@@ -1010,6 +1127,7 @@ async def logic_save(
         for key, val in submitted_tier_pts.items():
             conviction_flags[f"tier_pts_{key}"] = val
 
+    _config_cache.clear()
     save_overrides(alert_rules, filter_defaults, conviction_flags=conviction_flags or None)
     return RedirectResponse(url="/logic?saved=1", status_code=303)
 
@@ -1024,7 +1142,7 @@ async def test_alert(request: Request):
             {"ok": False, "error": "SLACK_WEBHOOK_URL is not set in the server environment"},
             status_code=400,
         )
-    active_config = cfg.load_config()
+    active_config = _load_config_cached()
     base_url = active_config.get("alert_base_url", "https://opi-insider.duckdns.org")
     ok = alert_module.send_test_alert(webhook_url, base_url)
     if ok:

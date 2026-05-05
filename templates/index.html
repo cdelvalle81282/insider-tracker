@@ -224,7 +224,31 @@
 
 </form>
 
-<!-- Main content, swapped by HTMX -->
+<!-- KPI stats bar: loads async after initial render, refreshes on filter change -->
+<div id="stats-container"
+     hx-get="/htmx/stats"
+     hx-trigger="load, change from:#filter-form delay:400ms, input from:#filter-form delay:400ms"
+     hx-include="#filter-form"
+     hx-swap="innerHTML">
+  <div class="grid gap-3 mb-6" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));">
+    {% for _ in range(4) %}
+    <div class="kpi" style="opacity:.2;">
+      <div style="height:12px;background:var(--border);border-radius:4px;width:60%;margin-bottom:8px;"></div>
+      <div style="height:28px;background:var(--border);border-radius:4px;width:40%;"></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- Cluster activity: loads async after initial render, refreshes on filter change -->
+<div id="clusters-container"
+     hx-get="/htmx/clusters"
+     hx-trigger="load, change from:#filter-form delay:400ms, input from:#filter-form delay:400ms"
+     hx-include="#filter-form"
+     hx-swap="innerHTML">
+</div>
+
+<!-- Filings tables: server-rendered on first load, swapped by filter form -->
 <div id="filings-container" class="animate-in">
   {% include "_tables_partial.html" %}
 </div>

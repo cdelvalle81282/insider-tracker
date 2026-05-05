@@ -31,6 +31,16 @@ import sector as sector_module
 EDGAR_BASE = "https://www.sec.gov"
 RATE_SLEEP = 1.0 / SEC_RATE_LIMIT  # seconds between requests
 
+INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
+
+
+def _write_sentinel() -> None:
+    """Touch sentinel so app workers know DB was updated and should invalidate cache."""
+    try:
+        INGEST_SENTINEL.touch()
+    except Exception:
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Database setup
@@ -566,6 +576,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
         click.echo("Marking joint-filer duplicates ...", nl=False)
         n = mark_joint_filers(conn)
         click.echo(f" {n} rows marked")
+        _write_sentinel()
         return
 
     if do_backfill_metadata:
@@ -626,6 +637,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
 
         conn.commit()
         click.echo(f"Done — {fetched} upserted, {skipped} skipped (no data)")
+        _write_sentinel()
         return
 
     if do_update_prices:
@@ -659,6 +671,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
                 time.sleep(12)  # Polygon free tier: ~5 req/min
         conn.commit()
         click.echo(f"Done. Updated {updated}/{total} tickers.")
+        _write_sentinel()
         return
 
     if backfill_sectors:
@@ -679,6 +692,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             except Exception:
                 pass
         click.echo(f"Done — enriched {done}/{len(ciks)} issuers")
+        _write_sentinel()
         return
 
     if resolve_amendments:
@@ -691,6 +705,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
         resolved = sum(_resolve_amendment(conn, dict(row)) for row in amendments)
         conn.commit()
         click.echo(f" {len(amendments)} amendments processed, {resolved} rows superseded")
+        _write_sentinel()
         return
 
     dates: list[date] = []
@@ -764,6 +779,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
 
     # Mark joint-filer duplicates introduced by this ingest
     mark_joint_filers(conn)
+    _write_sentinel()
 
     # Fire Slack alerts for newly ingested rows (real-time runs only)
     if not suppress_alerts:
