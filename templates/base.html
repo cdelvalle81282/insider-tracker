@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Insider Tracker{% endblock %}</title>
 
+  <script>if(localStorage.getItem('theme')==='light')document.documentElement.classList.add('light');</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -41,6 +42,45 @@
       --amber:  #f59e0b;
       --sky:    #38bdf8;
     }
+
+    /* ── Light mode token overrides ─────────────── */
+    html.light {
+      --bg-base:    #f3f6fb;
+      --bg-surface: #ffffff;
+      --bg-raised:  #e8edf7;
+      --border:     #c4cedf;
+      --border-dim: #dae1ee;
+      --text-1:     #0d1824;
+      --text-2:     #3b5068;
+      --text-3:     #8aa3bc;
+      --buy:        #0a9e7b;
+      --sell:       #e0324e;
+      --amber:      #c47a06;
+      --sky:        #0278c2;
+    }
+    html.light body {
+      background-image:
+        radial-gradient(ellipse 70% 50% at 8% 65%,  rgba(56,189,248,.06)  0%, transparent 55%),
+        radial-gradient(ellipse 55% 40% at 92% 12%, rgba(15,206,160,.04)  0%, transparent 50%);
+    }
+    html.light body::before {
+      background-image: radial-gradient(circle, rgba(0,0,0,.055) 1px, transparent 1px);
+    }
+    html.light nav {
+      background: rgba(243,246,251,.94);
+      box-shadow: 0 1px 0 rgba(0,0,0,.06);
+    }
+    html.light .nav-link:hover  { background: rgba(0,0,0,.05); }
+    html.light .nav-link.active { background: rgba(0,0,0,.08); }
+    html.light tr:hover td { background: rgba(0,0,0,.02); }
+    html.light .row-buy.conviction-high {
+      background: linear-gradient(90deg, rgba(10,158,123,.07) 0%, transparent 18%);
+    }
+    html.light .chip.active { background: rgba(0,0,0,.07); border-color: rgba(0,0,0,.14); }
+    html.light .seg.active-both { background: rgba(0,0,0,.07); border-color: rgba(0,0,0,.12); }
+    html.light .score-low { background: rgba(196,206,223,.45); border-color: var(--border); }
+    html.light .plan-badge { background: rgba(196,206,223,.6); }
+    html.light ::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
 
     /* ── Base ───────────────────────────────────── */
     html { background: var(--bg-base); }
@@ -323,11 +363,26 @@
         <a href="/logic"     class="nav-link {% block nav_logic %}{% endblock %}">Config</a>
       </div>
 
-      <div class="ml-auto">
+      <div class="ml-auto flex items-center gap-3">
         <div id="loading-indicator" style="opacity:0; transition:opacity .18s; display:flex; align-items:center; gap:6px; color:var(--sky);">
           <span style="width:6px;height:6px;border-radius:50%;background:var(--sky);display:inline-block;" class="animate-ping"></span>
           <span style="font-size:.6rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;">Loading</span>
         </div>
+        <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode"
+                style="width:30px;height:30px;border-radius:7px;border:1px solid var(--border);
+                       background:var(--bg-surface);color:var(--text-2);cursor:pointer;
+                       display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;">
+          <span id="theme-icon-dark" style="display:flex;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>
+            </svg>
+          </span>
+          <span id="theme-icon-light" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </span>
+        </button>
       </div>
     </div>
   </nav>
@@ -350,6 +405,18 @@
       if (ind) ind.style.opacity = '0';
       if (fc)  fc.style.opacity  = '1';
     });
+
+    function _syncThemeIcon() {
+      const light = document.documentElement.classList.contains('light');
+      document.getElementById('theme-icon-dark').style.display  = light ? 'none'  : 'flex';
+      document.getElementById('theme-icon-light').style.display = light ? 'flex'  : 'none';
+    }
+    function toggleTheme() {
+      const isLight = document.documentElement.classList.toggle('light');
+      localStorage.setItem('theme', isLight ? 'light' : 'dark');
+      _syncThemeIcon();
+    }
+    _syncThemeIcon();
   </script>
 
 </body>
