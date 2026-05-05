@@ -13,8 +13,8 @@ ALERT_RULES = {
     "insider_title_keywords": ["CEO", "Chief Executive", "CFO", "Chief Financial"],
     "cluster_window_days": 10,
     "cluster_min_insiders": 3,
-    "signal_scan_min_value": 500_000,    # min buy value to scan for technical signals
-    "signal_scan_lookback_days": 90,     # how far back to look for open insider buys
+    "signal_scan_min_value": 500_000,
+    "signal_scan_lookback_days": 90,
 }
 
 # Tiered bonuses: within each tier only the highest matching threshold applies.

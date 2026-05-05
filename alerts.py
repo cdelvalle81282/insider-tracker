@@ -372,17 +372,20 @@ def _format_signal_message(
     }
 
 
+def _signal_alert_key(sig_code: str, row: dict) -> str:
+    return (
+        f"signal:{sig_code}:"
+        f"{row.get('issuer_cik','')}:{row.get('insider_cik','')}:{row.get('transaction_date','')}"
+    )
+
+
 def check_and_send_signals(
     conn: sqlite3.Connection,
     config: dict,
     polygon_api_key: str,
     suppress: bool = False,
 ) -> int:
-    """
-    Scan recent insider buys for technical signals that have fired since the trade.
-    Groups by ticker to minimize Polygon API calls. Returns count of alerts sent.
-    One alert per (signal, trade) — deduped via alerts_sent table.
-    """
+    """Scan recent insider buys for technical signals firing post-trade. Returns alerts sent."""
     if suppress or not polygon_api_key:
         return 0
 
@@ -401,7 +404,7 @@ def check_and_send_signals(
     rows = conn.execute("""
         SELECT issuer_ticker, issuer_cik, issuer_name,
                insider_cik, insider_name, insider_title,
-               transaction_date, total_value, price_per_share, transaction_id
+               transaction_date, total_value
         FROM filings
         WHERE transaction_code = 'P'
           AND total_value >= ?
@@ -420,10 +423,11 @@ def check_and_send_signals(
     by_ticker: dict[str, list[dict]] = {}
     for r in rows:
         t = dict(r)
-        by_ticker.setdefault(t["issuer_ticker"], []).append(t)
+        by_ticker.setdefault(t["issuer_ticker"].strip(), []).append(t)
 
-    # 300-day warmup needed for 200-bar MA + up to 90 days post-trade
-    price_from = today - timedelta(days=lookback + 310)
+    # 200-bar MA warmup + calendar/trading-day ratio buffer + lookback window
+    _PRICE_WARMUP_DAYS = 310
+    price_from = today - timedelta(days=lookback + _PRICE_WARMUP_DAYS)
     sent = 0
 
     for ticker, trades in by_ticker.items():
@@ -444,16 +448,9 @@ def check_and_send_signals(
                 _, days_to_fire = detect_fn(bars, trade_idx)
                 if days_to_fire is None:
                     continue
-
-                alert_key = (
-                    f"signal:{sig_code}:"
-                    f"{trade['issuer_cik']}:{trade['insider_cik']}:{trade_date}"
-                )
-                if not _try_claim_alert(conn, alert_key, "signal"):
+                if not _try_claim_alert(conn, _signal_alert_key(sig_code, trade), "signal"):
                     continue
-
-                payload = _format_signal_message(sig_label, trade, days_to_fire, base_url)
-                if _post_to_slack(webhook_url, payload):
+                if _post_to_slack(webhook_url, _format_signal_message(sig_label, trade, days_to_fire, base_url)):
                     sent += 1
 
     return sent
