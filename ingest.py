@@ -249,6 +249,14 @@ def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
         resp = client.get(quarterly_url)
     resp.raise_for_status()
 
+    # SEC returns 200 with an HTML rate-limit page instead of plain text when
+    # the server IP exceeds the request threshold. Detect and raise so the
+    # error is recorded in run_log rather than silently returning 0 filings.
+    if resp.text.lstrip().startswith("<"):
+        raise RuntimeError(
+            f"SEC returned HTML instead of plain-text index (rate-limited?): {resp.url}"
+        )
+
     # Daily index uses YYYYMMDD; quarterly uses YYYY-MM-DD — accept both
     date_str = target_date.strftime("%Y-%m-%d")
     date_str_compact = target_date.strftime("%Y%m%d")
