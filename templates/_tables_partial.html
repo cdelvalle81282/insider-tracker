@@ -122,8 +122,8 @@
               {% endif %}
             </td>
             <td class="td">
-              {% if row.issuer_ticker %}
-              <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link text-white hover:text-sky-400">{{ row.issuer_ticker }}</a>
+              {% if row.issuer_ticker and row.issuer_ticker not in ('NONE', 'N/A') %}
+              <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400" style="color:var(--text-1);">{{ row.issuer_ticker }}</a>
               {% if row.is_watched %}<span class="watched-star">★</span>{% endif %}
               {% else %}
               <span style="color:var(--text-3);">—</span>
@@ -204,8 +204,8 @@
           <tr class="row-sell {% if row.is_10b5_1 %}row-dimmed{% endif %}">
             <td class="td text-right" style="width:36px;color:var(--text-3);font-size:.65rem;">—</td>
             <td class="td">
-              {% if row.issuer_ticker %}
-              <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link text-white hover:text-sky-400">{{ row.issuer_ticker }}</a>
+              {% if row.issuer_ticker and row.issuer_ticker not in ('NONE', 'N/A') %}
+              <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400" style="color:var(--text-1);">{{ row.issuer_ticker }}</a>
               {% else %}
               <span style="color:var(--text-3);">—</span>
               {% endif %}

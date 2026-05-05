@@ -1193,8 +1193,8 @@ def get_congress_summary(conn: sqlite3.Connection, days: int = 30) -> dict:
             COUNT(*) AS total_trades,
             COUNT(DISTINCT politician_name) AS unique_politicians,
             COUNT(DISTINCT ticker) AS unique_tickers,
-            SUM(CASE WHEN transaction_type = 'purchase' THEN 1 ELSE 0 END) AS purchase_count,
-            SUM(CASE WHEN transaction_type = 'sale' THEN 1 ELSE 0 END) AS sale_count
+            SUM(CASE WHEN LOWER(transaction_type) IN ('purchase', 'buy') THEN 1 ELSE 0 END) AS purchase_count,
+            SUM(CASE WHEN LOWER(transaction_type) IN ('sale', 'sell') THEN 1 ELSE 0 END) AS sale_count
         FROM congress_trades
         WHERE 1=1 {date_clause}
     """, date_param).fetchone()

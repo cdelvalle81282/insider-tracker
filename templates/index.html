@@ -34,9 +34,9 @@
 
   <!-- Range presets -->
   <div class="fg" style="padding:0 6px; gap:2px;">
-    <button type="button" onclick="setRange(0)"  class="chip {% if not is_range %}active{% endif %}">Today</button>
-    <button type="button" onclick="setRange(6)"  class="chip">7d</button>
-    <button type="button" onclick="setRange(29)" class="chip">30d</button>
+    <button type="button" onclick="setRange(0)"  data-days="0"  class="chip range-chip {% if not is_range %}active{% endif %}">Today</button>
+    <button type="button" onclick="setRange(6)"  data-days="6"  class="chip range-chip {% if is_range and filters.start_date is defined %}{% endif %}">7d</button>
+    <button type="button" onclick="setRange(29)" data-days="29" class="chip range-chip">30d</button>
   </div>
 
   <!-- Buy / Sell / Both -->
@@ -305,6 +305,8 @@
     start.setDate(today.getDate() - daysBack);
     document.getElementById('start_date').value = fmt(start);
     document.getElementById('end_date').value   = fmt(today);
+    document.querySelectorAll('.range-chip').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.range-chip[data-days="${daysBack}"]`)?.classList.add('active');
     htmx.trigger(document.getElementById('filter-form'), 'change');
   }
 </script>

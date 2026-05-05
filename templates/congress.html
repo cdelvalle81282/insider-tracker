@@ -6,7 +6,7 @@
 
 <div class="mb-5 flex items-start justify-between gap-4 flex-wrap">
   <div>
-    <h1 class="text-xl font-bold text-white">Congressional Trades</h1>
+    <h1 class="text-xl font-bold" style="color:var(--text-1);">Congressional Trades</h1>
     <p class="text-gray-500 text-sm mt-1">
       Stock disclosures from U.S. House and Senate members.
       Data via <a href="https://www.ainvest.com" target="_blank" rel="noopener noreferrer" class="underline hover:text-sky-400 transition-colors">AInvest</a>.
@@ -19,7 +19,7 @@
   <div class="kpi">
     <div class="kpi-label">Total Trades</div>
     <div class="kpi-val num">{{ summary.total_trades }}</div>
-    <div class="kpi-sub">last {{ filters.days }}d</div>
+    <div class="kpi-sub">{% if filters.days %}last {{ filters.days }}d{% else %}all time{% endif %}</div>
   </div>
   <div class="kpi">
     <div class="kpi-label">Politicians</div>

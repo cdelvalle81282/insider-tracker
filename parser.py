@@ -84,7 +84,7 @@ def _parse_issuer(root: etree._Element) -> dict[str, Any]:
     return {
         "issuer_cik": (_text(issuer, "issuerCik") or "").zfill(10),
         "issuer_name": _text(issuer, "issuerName") or "",
-        "issuer_ticker": _text(issuer, "issuerTradingSymbol"),
+        "issuer_ticker": (_text(issuer, "issuerTradingSymbol") or "").upper().strip() or None,
     }
 
 
