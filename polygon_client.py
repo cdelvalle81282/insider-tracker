@@ -13,6 +13,7 @@ def get_daily_bars(
     from_date: date,
     to_date: date,
     api_key: str,
+    limit: int = 365,
 ) -> list[dict]:
     """
     Fetch daily adjusted OHLCV bars from Polygon.io.
@@ -30,7 +31,7 @@ def get_daily_bars(
     try:
         resp = httpx.get(
             url,
-            params={"apiKey": api_key, "limit": 365, "adjusted": "true", "sort": "asc"},
+            params={"apiKey": api_key, "limit": limit, "adjusted": "true", "sort": "asc"},
             timeout=10.0,
         )
         resp.raise_for_status()

@@ -14,6 +14,13 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+import polygon_client
+from backtest import (
+    detect_channel_break,
+    detect_golden_cross,
+    detect_hhl,
+    detect_resistance_break,
+)
 from queries import _fmt_value as _fmt_money
 
 
@@ -310,6 +317,144 @@ def check_and_send(
             payload = _format_cluster_message(row, base_url)
             if _post_to_slack(webhook_url, payload):
                 sent += 1
+
+    return sent
+
+
+_SIGNAL_DETECTORS = {
+    "gc":  ("Golden Cross",     detect_golden_cross),
+    "rb":  ("Resistance Break", detect_resistance_break),
+    "hhl": ("HH+HL",            detect_hhl),
+    "cb":  ("Channel Break",    detect_channel_break),
+}
+
+
+def _format_signal_message(
+    signal_label: str,
+    trade: dict,
+    days_to_fire: int,
+    base_url: str,
+) -> dict:
+    ticker  = trade.get("issuer_ticker") or "?"
+    company = trade.get("issuer_name") or ""
+    insider = trade.get("insider_name") or "Unknown"
+    title   = trade.get("insider_title") or "Insider"
+    value   = _fmt(trade.get("total_value"))
+    trade_date = trade.get("transaction_date", "")
+    chart_url  = f"{base_url}/chart/{ticker}"
+
+    return {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"📡 Signal: {signal_label} — ${ticker}"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"Fired *{days_to_fire}d* after insider buy on {trade_date}\n"
+                        f"*{insider}* ({title}) · {value}"
+                    ),
+                },
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Chart"},
+                    "url": chart_url,
+                },
+            },
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"_{company}_"}],
+            },
+        ]
+    }
+
+
+def check_and_send_signals(
+    conn: sqlite3.Connection,
+    config: dict,
+    polygon_api_key: str,
+    suppress: bool = False,
+) -> int:
+    """
+    Scan recent insider buys for technical signals that have fired since the trade.
+    Groups by ticker to minimize Polygon API calls. Returns count of alerts sent.
+    One alert per (signal, trade) — deduped via alerts_sent table.
+    """
+    if suppress or not polygon_api_key:
+        return 0
+
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
+    if not webhook_url:
+        return 0
+
+    rules      = config.get("alert_rules", {})
+    base_url   = config.get("alert_base_url", "https://opi-insider.duckdns.org")
+    min_value  = rules.get("signal_scan_min_value", 500_000)
+    lookback   = rules.get("signal_scan_lookback_days", 90)
+
+    today  = datetime.now(timezone.utc).date()
+    cutoff = (today - timedelta(days=lookback)).isoformat()
+
+    rows = conn.execute("""
+        SELECT issuer_ticker, issuer_cik, issuer_name,
+               insider_cik, insider_name, insider_title,
+               transaction_date, total_value, price_per_share, transaction_id
+        FROM filings
+        WHERE transaction_code = 'P'
+          AND total_value >= ?
+          AND is_10b5_1 = 0
+          AND transaction_date >= ?
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+          AND issuer_ticker IS NOT NULL
+          AND TRIM(issuer_ticker) NOT IN ('', 'NONE', 'N/A')
+        ORDER BY issuer_ticker, transaction_date
+    """, [min_value, cutoff]).fetchall()
+
+    if not rows:
+        return 0
+
+    by_ticker: dict[str, list[dict]] = {}
+    for r in rows:
+        t = dict(r)
+        by_ticker.setdefault(t["issuer_ticker"], []).append(t)
+
+    # 300-day warmup needed for 200-bar MA + up to 90 days post-trade
+    price_from = today - timedelta(days=lookback + 310)
+    sent = 0
+
+    for ticker, trades in by_ticker.items():
+        raw_bars = polygon_client.get_daily_bars(ticker, price_from, today, polygon_api_key, limit=600)
+        if len(raw_bars) < 50:
+            continue
+        # polygon_client uses "time" key; backtest detectors expect "date"
+        bars = [{**b, "date": b["time"]} for b in raw_bars]
+        bar_dates = [b["date"] for b in bars]
+
+        for trade in trades:
+            trade_date = trade["transaction_date"]
+            trade_idx = next((i for i, d in enumerate(bar_dates) if d >= trade_date), None)
+            if trade_idx is None or trade_idx >= len(bars) - 1:
+                continue
+
+            for sig_code, (sig_label, detect_fn) in _SIGNAL_DETECTORS.items():
+                _, days_to_fire = detect_fn(bars, trade_idx)
+                if days_to_fire is None:
+                    continue
+
+                alert_key = (
+                    f"signal:{sig_code}:"
+                    f"{trade['issuer_cik']}:{trade['insider_cik']}:{trade_date}"
+                )
+                if not _try_claim_alert(conn, alert_key, "signal"):
+                    continue
+
+                payload = _format_signal_message(sig_label, trade, days_to_fire, base_url)
+                if _post_to_slack(webhook_url, payload):
+                    sent += 1
 
     return sent
 

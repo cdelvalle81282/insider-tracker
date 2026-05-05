@@ -800,6 +800,14 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
         except Exception as e:
             click.echo(f"Alert error (non-fatal): {e}")
 
+        if POLYGON_API_KEY:
+            try:
+                n = alert_module.check_and_send_signals(conn, config, POLYGON_API_KEY)
+                if n:
+                    click.echo(f"Sent {n} signal alert(s)")
+            except Exception as e:
+                click.echo(f"Signal scan error (non-fatal): {e}")
+
 
 if __name__ == "__main__":
     main()
