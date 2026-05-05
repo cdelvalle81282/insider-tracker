@@ -1,0 +1,113 @@
+{# Rendered by GET /htmx/clusters — cluster activity only. No <html> wrapper. #}
+{% if clusters %}
+<details class="mb-6" open>
+  <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
+    <span class="caret">▶</span>
+    <span class="sh" style="color:var(--amber);">
+      <span class="sh-dot" style="background:var(--amber);"></span>
+      Cluster Activity
+    </span>
+    <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">
+      {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} · 2+ insiders
+    </span>
+    <!-- Direction filters -->
+    <div class="flex gap-1 ml-auto" onclick="event.stopPropagation()">
+      <button onclick="filterClusters('all')"   data-cf="all"   data-active="1" class="cff">All</button>
+      <button onclick="filterClusters('buy')"   data-cf="buy"   data-active=""  class="cff cff-buy">▲ Buys</button>
+      <button onclick="filterClusters('sell')"  data-cf="sell"  data-active=""  class="cff cff-sell">▼ Sells</button>
+      <button onclick="filterClusters('mixed')" data-cf="mixed" data-active=""  class="cff cff-mixed">↕ Mixed</button>
+    </div>
+  </summary>
+
+  <div class="space-y-2" id="cluster-list">
+    {% for c in clusters %}
+    <details data-direction="{{ c.direction }}"
+             class="cc cc-{{ c.direction }}">
+
+      <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-white/[.03] rounded-xl transition-colors">
+        <span class="caret">▶</span>
+
+        {% if c.issuer_ticker %}
+        <a href="/chart/{{ c.issuer_ticker }}" class="ticker-link text-white hover:text-sky-400 w-16 shrink-0"
+           onclick="event.stopPropagation()">{{ c.issuer_ticker }}</a>
+        {% else %}
+        <span class="ticker-link text-white w-16 shrink-0">—</span>
+        {% endif %}
+
+        <span style="font-size:.75rem;color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.issuer_name }}</span>
+
+        {% if c.sector %}
+        <span style="font-size:.62rem;color:var(--text-3);flex-shrink:0;">{{ c.sector }}</span>
+        {% endif %}
+
+        {% if c.direction == 'buy' %}
+        <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;color:var(--buy);flex-shrink:0;">▲ BUY</span>
+        {% elif c.direction == 'sell' %}
+        <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;color:var(--sell);flex-shrink:0;">▼ SELL</span>
+        {% else %}
+        <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;color:var(--amber);flex-shrink:0;">↕ MIXED</span>
+        {% endif %}
+
+        <span style="font-size:.58rem;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.22);flex-shrink:0;">{{ c.insider_count }} insiders</span>
+
+        <span class="num font-bold shrink-0" style="font-size:.85rem;color:{% if c.direction == 'buy' %}var(--buy){% elif c.direction == 'sell' %}var(--sell){% else %}var(--amber){% endif %};">{{ c.total_value_fmt or '—' }}</span>
+      </summary>
+
+      <div style="padding:0 16px 14px;">
+        <table class="w-full" style="font-size:.75rem;">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+              <th class="th text-left" style="background:transparent;padding:6px 8px;">Insider</th>
+              <th class="th text-left" style="background:transparent;padding:6px 8px;">Title</th>
+              <th class="th text-center" style="background:transparent;padding:6px 8px;">Type</th>
+              <th class="th text-right" style="background:transparent;padding:6px 8px;">Shares</th>
+              <th class="th text-right" style="background:transparent;padding:6px 8px;">Price</th>
+              <th class="th text-right" style="background:transparent;padding:6px 8px;">Value</th>
+              <th style="padding:6px 8px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for tx in c.transactions %}
+            <tr style="border-top:1px solid var(--border-dim);{% if tx.is_10b5_1 %}opacity:.4;{% endif %}">
+              <td style="padding:6px 8px;color:var(--text-1);">
+                <a href="/insider/{{ tx.insider_cik }}" class="hover:underline hover:text-sky-400">{{ tx.insider_name }}</a>
+              </td>
+              <td style="padding:6px 8px;color:var(--text-2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ tx.insider_title or '—' }}</td>
+              <td style="padding:6px 8px;text-align:center;">
+                {% if tx.transaction_code == 'P' %}<span style="color:var(--buy);font-weight:700;">▲</span>
+                {% else %}<span style="color:var(--sell);font-weight:700;">▼</span>{% endif %}
+              </td>
+              <td class="num text-right" style="padding:6px 8px;color:var(--text-2);">{{ "{:,.0f}".format(tx.shares) if tx.shares else '—' }}</td>
+              <td class="num text-right" style="padding:6px 8px;color:var(--text-2);">{{ tx.price_fmt or '—' }}</td>
+              <td class="num text-right font-semibold" style="padding:6px 8px;color:{% if tx.transaction_code == 'P' %}var(--buy){% else %}var(--sell){% endif %};">{{ tx.total_value_fmt or '—' }}</td>
+              <td style="padding:6px 8px 6px 12px;text-align:right;">
+                <a href="/filing/{{ tx.transaction_id }}" style="color:var(--text-3);transition:color .12s;" class="hover:text-sky-400">↗</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if c.issuer_ticker %}
+        <div style="margin-top:10px;text-align:right;">
+          <a href="/chart/{{ c.issuer_ticker }}" style="font-size:.65rem;color:var(--sky);" class="hover:text-white transition-colors">
+            View ${{ c.issuer_ticker }} chart →
+          </a>
+        </div>
+        {% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
+<script>
+function filterClusters(dir) {
+  document.querySelectorAll('#cluster-list [data-direction]').forEach(el => {
+    el.style.display = (dir === 'all' || el.dataset.direction === dir) ? '' : 'none';
+  });
+  document.querySelectorAll('[data-cf]').forEach(btn => {
+    btn.dataset.active = btn.dataset.cf === dir ? '1' : '';
+  });
+}
+</script>

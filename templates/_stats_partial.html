@@ -1,0 +1,28 @@
+{# Rendered by GET /htmx/stats — KPI bar only. No <html> wrapper. #}
+<div class="grid gap-3 mb-6" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));" id="stats-bar">
+  <div class="kpi" style="border-color:rgba(15,206,160,.22);">
+    <div class="kpi-label">▲ Buys</div>
+    <div class="kpi-val" style="color:var(--buy);">{{ stats.buy_count }}</div>
+    <div class="kpi-sub">{{ stats.buy_total_fmt or '—' }}</div>
+  </div>
+  <div class="kpi" style="border-color:rgba(246,75,110,.22);">
+    <div class="kpi-label">▼ Sells</div>
+    <div class="kpi-val" style="color:var(--sell);">{{ stats.sell_count }}</div>
+    <div class="kpi-sub">{{ stats.sell_total_fmt or '—' }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Net Flow</div>
+    <div class="kpi-val" style="color:{% if stats.net_flow >= 0 %}var(--buy){% else %}var(--sell){% endif %};">{{ stats.net_flow_fmt }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Issuers</div>
+    <div class="kpi-val" style="color:var(--text-1);">{{ stats.issuer_count }}</div>
+  </div>
+  {% if stats.cluster_count > 0 %}
+  <div class="kpi" style="border-color:rgba(245,158,11,.28);">
+    <div class="kpi-label">⚡ Clusters</div>
+    <div class="kpi-val" style="color:var(--amber);">{{ stats.cluster_count }}</div>
+    <div class="kpi-sub">2+ insiders</div>
+  </div>
+  {% endif %}
+</div>
