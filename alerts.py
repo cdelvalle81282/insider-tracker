@@ -328,6 +328,9 @@ _SIGNAL_DETECTORS = {
     "cb":  ("Channel Break",    detect_channel_break),
 }
 
+# 200-bar MA warmup + calendar/trading-day ratio buffer
+_PRICE_WARMUP_DAYS = 310
+
 
 def _format_signal_message(
     signal_label: str,
@@ -375,7 +378,9 @@ def _format_signal_message(
 def _signal_alert_key(sig_code: str, row: dict) -> str:
     return (
         f"signal:{sig_code}:"
-        f"{row.get('issuer_cik','')}:{row.get('insider_cik','')}:{row.get('transaction_date','')}"
+        f"{row.get('issuer_cik','')}:"
+        f"{row.get('insider_cik','')}:"
+        f"{row.get('transaction_date','')}"
     )
 
 
@@ -425,8 +430,6 @@ def check_and_send_signals(
         t = dict(r)
         by_ticker.setdefault(t["issuer_ticker"].strip(), []).append(t)
 
-    # 200-bar MA warmup + calendar/trading-day ratio buffer + lookback window
-    _PRICE_WARMUP_DAYS = 310
     price_from = today - timedelta(days=lookback + _PRICE_WARMUP_DAYS)
     sent = 0
 
