@@ -309,9 +309,11 @@ def main():
     }};
 
     // ── Candle chart ─────────────────────────────────────────────────────
+    // Use autoSize:true + explicit height, same pattern as the working web app chart.
+    // fitContent() is used first, then setVisibleRange in a RAF to trim to display window.
     const candleEl = block.querySelector('.candle-chart');
     const candleChart = LightweightCharts.createChart(candleEl, Object.assign({{}}, OPTS, {{
-      autoSize: true,
+      autoSize: true, height: 300,
       rightPriceScale: {{ borderColor: GRID }},
       timeScale: {{ borderColor: GRID, timeVisible: false }},
     }}));
@@ -326,12 +328,12 @@ def main():
     const allM = data.buyMarkers.concat(data.sigMarkers)
       .sort(function(a,b){{return a.time<b.time?-1:a.time>b.time?1:0;}});
     if (allM.length) candles.setMarkers(allM);
-    candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+    candleChart.timeScale().fitContent();
 
     // ── RSI chart ────────────────────────────────────────────────────────
     const rsiEl = block.querySelector('.rsi-chart');
     const rsiChart = LightweightCharts.createChart(rsiEl, Object.assign({{}}, OPTS, {{
-      autoSize: true,
+      autoSize: true, height: 80,
       rightPriceScale: {{ borderColor: GRID, scaleMargins: {{top:0.05,bottom:0.05}} }},
       timeScale: {{ borderColor: GRID, timeVisible: false }},
     }}));
@@ -344,35 +346,35 @@ def main():
       rsiLine.createPriceLine({{price:y, color:y===50?'rgba(90,100,120,0.3)':'rgba(90,100,120,0.4)',
         lineWidth:1, lineStyle:2, axisLabelVisible:false}});
     }});
-    rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+    rsiChart.timeScale().fitContent();
 
     // ── Volume chart ─────────────────────────────────────────────────────
     const volEl = block.querySelector('.vol-chart');
     const volChart = LightweightCharts.createChart(volEl, Object.assign({{}}, OPTS, {{
-      autoSize: true,
+      autoSize: true, height: 60,
       rightPriceScale: {{ borderColor: GRID, scaleMargins: {{top:0.1,bottom:0}} }},
       timeScale: {{ borderColor: GRID, timeVisible: true }},
     }}));
     volChart.addHistogramSeries({{priceLineVisible:false}}).setData(data.volume);
-    volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+    volChart.timeScale().fitContent();
 
     // Crosshair sync
     function sync(src, others, p) {{
       if (!p.time) return;
-      var x = src.timeScale().timeToCoordinate(p.time);
       others.forEach(function(c){{ try{{c.setCrosshairPosition(0, p.time, c.series);}}catch(e){{}} }});
     }}
     candleChart.subscribeCrosshairMove(function(p){{sync(candleChart,[rsiChart,volChart],p);}});
     rsiChart.subscribeCrosshairMove(function(p){{sync(rsiChart,[candleChart,volChart],p);}});
     volChart.subscribeCrosshairMove(function(p){{sync(volChart,[candleChart,rsiChart],p);}});
 
-    // Double-RAF: with autoSize, the ResizeObserver fires after layout —
-    // a second RAF ensures the canvas is fully composited before any screenshot
+    // After autoSize ResizeObserver fires, trim all three to the display window
     requestAnimationFrame(function() {{
       requestAnimationFrame(function() {{
-        candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
-        rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
-        volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+        try {{
+          candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+          rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+          volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+        }} catch(e) {{}}
       }});
     }});
   }}
