@@ -298,108 +298,109 @@ def main():
 
   const root = document.getElementById('root');
 
+  function initBlock(block, data) {{
+    if (block._lc_done) return;
+    block._lc_done = true;
+
+    const OPTS = {{
+      layout:    {{ background: {{ color: PANEL_BG }}, textColor: TEXT }},
+      grid:      {{ vertLines: {{ color: GRID }}, horzLines: {{ color: GRID }} }},
+      crosshair: {{ mode: LightweightCharts.CrosshairMode.Normal }},
+    }};
+
+    // ── Candle chart ─────────────────────────────────────────────────────
+    const candleEl = block.querySelector('.candle-chart');
+    const candleChart = LightweightCharts.createChart(candleEl, Object.assign({{}}, OPTS, {{
+      width: 960, height: 300,
+      rightPriceScale: {{ borderColor: GRID }},
+      timeScale: {{ borderColor: GRID, timeVisible: false }},
+    }}));
+    const candles = candleChart.addCandlestickSeries({{
+      upColor:'#26a69a', downColor:'#ef5350',
+      borderUpColor:'#26a69a', borderDownColor:'#ef5350',
+      wickUpColor:'#26a69a', wickDownColor:'#ef5350',
+    }});
+    candles.setData(data.ohlcv);
+    candleChart.addLineSeries({{ color:'#f59e0b', lineWidth:1.3, priceLineVisible:false }}).setData(data.ma50);
+    candleChart.addLineSeries({{ color:'#818cf8', lineWidth:1.3, priceLineVisible:false }}).setData(data.ma200);
+    const allM = data.buyMarkers.concat(data.sigMarkers)
+      .sort(function(a,b){{return a.time<b.time?-1:a.time>b.time?1:0;}});
+    if (allM.length) candles.setMarkers(allM);
+    candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+
+    // ── RSI chart ────────────────────────────────────────────────────────
+    const rsiEl = block.querySelector('.rsi-chart');
+    const rsiChart = LightweightCharts.createChart(rsiEl, Object.assign({{}}, OPTS, {{
+      width: 960, height: 80,
+      rightPriceScale: {{ borderColor: GRID, scaleMargins: {{top:0.05,bottom:0.05}} }},
+      timeScale: {{ borderColor: GRID, timeVisible: false }},
+    }}));
+    const rsiLine = rsiChart.addLineSeries({{
+      color:'#22d3ee', lineWidth:1.2, priceLineVisible:false,
+      autoscaleInfoProvider: function(){{return{{priceRange:{{minValue:0,maxValue:100}}}};}}
+    }});
+    rsiLine.setData(data.rsi);
+    [30,50,70].forEach(function(y){{
+      rsiLine.createPriceLine({{price:y, color:y===50?'rgba(90,100,120,0.3)':'rgba(90,100,120,0.4)',
+        lineWidth:1, lineStyle:2, axisLabelVisible:false}});
+    }});
+    rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+
+    // ── Volume chart ─────────────────────────────────────────────────────
+    const volEl = block.querySelector('.vol-chart');
+    const volChart = LightweightCharts.createChart(volEl, Object.assign({{}}, OPTS, {{
+      width: 960, height: 60,
+      rightPriceScale: {{ borderColor: GRID, scaleMargins: {{top:0.1,bottom:0}} }},
+      timeScale: {{ borderColor: GRID, timeVisible: true }},
+    }}));
+    volChart.addHistogramSeries({{priceLineVisible:false}}).setData(data.volume);
+    volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+
+    // Crosshair sync
+    function sync(src, others, p) {{
+      if (!p.time) return;
+      var x = src.timeScale().timeToCoordinate(p.time);
+      others.forEach(function(c){{ try{{c.setCrosshairPosition(0, p.time, c.series);}}catch(e){{}} }});
+    }}
+    candleChart.subscribeCrosshairMove(function(p){{sync(candleChart,[rsiChart,volChart],p);}});
+    rsiChart.subscribeCrosshairMove(function(p){{sync(rsiChart,[candleChart,volChart],p);}});
+    volChart.subscribeCrosshairMove(function(p){{sync(volChart,[candleChart,rsiChart],p);}});
+  }}
+
+  // Build DOM skeletons first (fast), then init charts on scroll-into-view
   CHARTS.forEach(function(data) {{
-    // ── Wrapper ────────────────────────────────────────────────────────────
     const block = document.createElement('div');
     block.className = 'ticker-block';
+    block._lcData = data;
 
-    // Title row
     const title = document.createElement('div');
     title.className = 'ticker-title';
-    title.innerHTML =
-      '<span style="color:#e2e8f0">$' + data.ticker + '</span>' +
-      data.activeSigs.map(function(s) {{
-        return '<span class="sig-badge" style="color:' + (SIG_COLORS[s]||'#fff') + '">' + s + '</span>';
+    title.innerHTML = '<span style="color:#e2e8f0">$' + data.ticker + '</span>' +
+      data.activeSigs.map(function(s){{
+        return '<span class="sig-badge" style="color:'+(SIG_COLORS[s]||'#fff')+'">'+s+'</span>';
       }}).join(' ');
     block.appendChild(title);
 
-    // ── Candle chart ───────────────────────────────────────────────────────
-    const candleEl = document.createElement('div');
-    candleEl.className = 'candle-chart';
-    block.appendChild(candleEl);
-
-    const candleChart = LightweightCharts.createChart(candleEl, {{
-      width: 960, height: 300,
-      layout:    {{ background: {{ color: PANEL_BG }}, textColor: TEXT }},
-      grid:      {{ vertLines: {{ color: GRID }}, horzLines: {{ color: GRID }} }},
-      crosshair: {{ mode: LightweightCharts.CrosshairMode.Normal }},
-      rightPriceScale: {{ borderColor: GRID }},
-      timeScale: {{ borderColor: GRID, timeVisible: false }},
+    ['candle-chart','rsi-chart','vol-chart'].forEach(function(cls){{
+      const el = document.createElement('div');
+      el.className = cls;
+      block.appendChild(el);
     }});
 
-    const candles = candleChart.addCandlestickSeries({{
-      upColor: '#26a69a', downColor: '#ef5350',
-      borderUpColor: '#26a69a', borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-    }});
-    candles.setData(data.ohlcv);
-
-    const ma50 = candleChart.addLineSeries({{ color: '#f59e0b', lineWidth: 1.3, priceLineVisible: false }});
-    ma50.setData(data.ma50);
-
-    const ma200 = candleChart.addLineSeries({{ color: '#818cf8', lineWidth: 1.3, priceLineVisible: false }});
-    ma200.setData(data.ma200);
-
-    // Insider buy + signal markers merged and sorted
-    const allMarkers = data.buyMarkers.concat(data.sigMarkers)
-      .sort(function(a, b) {{ return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; }});
-    if (allMarkers.length) candles.setMarkers(allMarkers);
-
-    candleChart.timeScale().setVisibleRange({{ from: data.from, to: data.to }});
-
-    // ── RSI chart ──────────────────────────────────────────────────────────
-    const rsiEl = document.createElement('div');
-    rsiEl.className = 'rsi-chart';
-    block.appendChild(rsiEl);
-
-    const rsiChart = LightweightCharts.createChart(rsiEl, {{
-      width: 960, height: 80,
-      layout:    {{ background: {{ color: PANEL_BG }}, textColor: TEXT }},
-      grid:      {{ vertLines: {{ color: GRID }}, horzLines: {{ color: GRID }} }},
-      crosshair: {{ mode: LightweightCharts.CrosshairMode.Normal }},
-      rightPriceScale: {{ borderColor: GRID, scaleMargins: {{ top: 0.05, bottom: 0.05 }} }},
-      timeScale: {{ borderColor: GRID, timeVisible: false }},
-    }});
-    const rsiLine = rsiChart.addLineSeries({{
-      color: '#22d3ee', lineWidth: 1.2, priceLineVisible: false,
-      autoscaleInfoProvider: function() {{ return {{ priceRange: {{ minValue: 0, maxValue: 100 }} }}; }},
-    }});
-    rsiLine.setData(data.rsi);
-    // Reference lines
-    [30, 50, 70].forEach(function(y) {{
-      rsiLine.createPriceLine({{ price: y, color: y===50?'rgba(90,100,120,0.3)':'rgba(90,100,120,0.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false }});
-    }});
-    rsiChart.timeScale().setVisibleRange({{ from: data.from, to: data.to }});
-
-    // ── Volume chart ───────────────────────────────────────────────────────
-    const volEl = document.createElement('div');
-    volEl.className = 'vol-chart';
-    block.appendChild(volEl);
-
-    const volChart = LightweightCharts.createChart(volEl, {{
-      width: 960, height: 60,
-      layout:    {{ background: {{ color: PANEL_BG }}, textColor: TEXT }},
-      grid:      {{ vertLines: {{ color: GRID }}, horzLines: {{ color: GRID }} }},
-      crosshair: {{ mode: LightweightCharts.CrosshairMode.Normal }},
-      rightPriceScale: {{ borderColor: GRID, scaleMargins: {{ top: 0.1, bottom: 0 }} }},
-      timeScale: {{ borderColor: GRID, timeVisible: true }},
-    }});
-    const volBars = volChart.addHistogramSeries({{ priceLineVisible: false }});
-    volBars.setData(data.volume);
-    volChart.timeScale().setVisibleRange({{ from: data.from, to: data.to }});
-
-    // Sync crosshair across all three panels
-    function syncCrossHair(sourceChart, targetCharts, param) {{
-      if (!param.time) {{ targetCharts.forEach(function(c) {{ c.clearCrossHair && c.clearCrosshair(); }}); return; }}
-      targetCharts.forEach(function(c) {{ c.setCrossHairXY && c.setCrossHairXY(sourceChart.timeScale().timeToCoordinate(param.time), 0, true); }});
-    }}
-    candleChart.subscribeCrosshairMove(function(p) {{ syncCrossHair(candleChart, [rsiChart, volChart], p); }});
-    rsiChart.subscribeCrosshairMove(function(p)    {{ syncCrossHair(rsiChart,    [candleChart, volChart], p); }});
-    volChart.subscribeCrosshairMove(function(p)    {{ syncCrossHair(volChart,    [candleChart, rsiChart], p); }});
-
-    block.appendChild(document.createElement('hr')).className = 'sep';
+    const hr = document.createElement('hr');
+    hr.className = 'sep';
+    block.appendChild(hr);
     root.appendChild(block);
   }});
+
+  // IntersectionObserver: init each chart 300px before it enters viewport
+  const obs = new IntersectionObserver(function(entries){{
+    entries.forEach(function(e){{
+      if (e.isIntersecting) {{ initBlock(e.target, e.target._lcData); }}
+    }});
+  }}, {{ rootMargin: '300px' }});
+
+  document.querySelectorAll('.ticker-block').forEach(function(b){{ obs.observe(b); }});
   </script>
 </body>
 </html>"""
