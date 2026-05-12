@@ -365,6 +365,20 @@ def main():
     candleChart.subscribeCrosshairMove(function(p){{sync(candleChart,[rsiChart,volChart],p);}});
     rsiChart.subscribeCrosshairMove(function(p){{sync(rsiChart,[candleChart,volChart],p);}});
     volChart.subscribeCrosshairMove(function(p){{sync(volChart,[candleChart,rsiChart],p);}});
+
+    // Store instances so we can force-resize later
+    block._lcCharts = [
+      {{chart: candleChart, w: 960, h: 300}},
+      {{chart: rsiChart,    w: 960, h: 80}},
+      {{chart: volChart,    w: 960, h: 60}},
+    ];
+
+    // Double-RAF: force the paint cycle to commit after LC queues its repaint
+    requestAnimationFrame(function() {{
+      requestAnimationFrame(function() {{
+        block._lcCharts.forEach(function(o) {{ o.chart.resize(o.w, o.h); }});
+      }});
+    }});
   }}
 
   // Build DOM skeletons first (fast), then init charts on scroll-into-view
