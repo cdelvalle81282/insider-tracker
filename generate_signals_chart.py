@@ -304,6 +304,7 @@ def _build_figure(
     sig_badge = "  ".join(active_sigs)
 
     fig.update_layout(
+        width=960,
         height=440,
         margin=dict(l=10, r=75, t=38, b=8),
         paper_bgcolor=CHART_BG,
@@ -395,10 +396,9 @@ def main() -> None:
         inner = fig.to_html(
             include_plotlyjs=False, full_html=False,
             div_id=f"c_{ticker}",
-            config={"responsive": False},
+            config={"responsive": False, "staticPlot": False},
         )
-        # Wrap in fixed-height container so Plotly doesn't expand the div
-        html_parts.append(f'<div style="height:460px;overflow:hidden;">{inner}</div>')
+        html_parts.append(inner)
 
     conn.close()
 
