@@ -249,6 +249,7 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Ticker badges use `text-white` — invisible in light mode:** Any element using `class="... text-white"` in a template renders white text on the light-mode `rgb(243,246,251)` background (contrast ~1.07:1). Always use `style="color:var(--text-1);"` for text that must be readable in both modes. `text-white` is only safe inside elements that have an explicit dark background.
 - **Ticker case from SEC XML is not normalized:** `issuerTradingSymbol` can arrive lowercase (e.g. "vicr"). Always `.upper().strip()` the value in `parser.py` when extracting it. Existing rows with lowercase tickers in the DB won't be fixed retroactively by a re-ingest without a targeted UPDATE.
 - **`NONE` / `N/A` appear as real tickers from SEC XML:** Some filers (funds, BDCs) have no exchange symbol. The XML emits the literal string `"NONE"` or leaves the field blank. Template ticker checks must guard `row.issuer_ticker not in ('NONE', 'N/A')` or users see a chart link to `/chart/NONE`.
+- **Derivative table `price_per_share` is exercise/conversion price, not market price:** `table_type = 'D'` rows store the derivative's exercise/strike/conversion price in `transactionPricePerShare`, not what was paid. This makes `total_value` (shares × that price) meaningless for derivatives (e.g. VELO showed $31T). Always add `AND table_type = 'ND'` to any query that relies on `total_value` for value-based filtering — alerts, signal scanners, and any rank/sort by dollar value.
 
 ## SEC compliance
 

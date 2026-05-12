@@ -53,6 +53,17 @@
   {% endif %}
 </div>
 
+{% if has_api_key and signal_markers %}
+<div class="flex items-center flex-wrap gap-x-5 gap-y-1 mb-4 px-1" style="font-size:.62rem;color:var(--text-3);">
+  <span style="font-weight:600;letter-spacing:.1em;text-transform:uppercase;">Signal Markers</span>
+  <span><span style="color:#22c55e;">▲</span> Insider Buy</span>
+  <span><span style="color:#f59e0b;font-size:1.1em;">●</span> GC — Golden Cross</span>
+  <span><span style="color:#f97316;font-size:1.1em;">●</span> RB — Resistance Break</span>
+  <span><span style="color:#22d3ee;font-size:1.1em;">●</span> HH — Higher High + Higher Low</span>
+  <span><span style="color:#a855f7;font-size:1.1em;">●</span> CB — Channel Break</span>
+</div>
+{% endif %}
+
 <!-- Earnings card -->
 <div class="surface mb-5" style="padding:12px 18px;display:flex;flex-wrap:wrap;align-items:center;gap:16px;">
   <div class="flex items-center gap-3">
@@ -150,9 +161,11 @@
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 (function () {
-  const bars    = {{ bars | tojson }};
-  const markers = {{ markers | tojson }};
-  const el      = document.getElementById('chart');
+  const bars          = {{ bars | tojson }};
+  const markers       = {{ markers | tojson }};
+  const signalMarkers = {{ signal_markers | tojson }};
+  const chartFrom     = "{{ chart_from }}";
+  const el            = document.getElementById('chart');
 
   if (!bars.length) {
     el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3);font-size:.8rem;">No price data available for ${{ ticker }}</div>';
@@ -176,13 +189,17 @@
   });
   candles.setData(bars);
 
-  if (markers.length) {
-    candles.setMarkers(
-      markers.slice().sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0)
-    );
+  const allMarkers = [...markers, ...signalMarkers]
+    .sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+  if (allMarkers.length) {
+    candles.setMarkers(allMarkers);
   }
 
-  chart.timeScale().fitContent();
+  if (chartFrom && bars.length) {
+    chart.timeScale().setVisibleRange({ from: chartFrom, to: bars[bars.length - 1].time });
+  } else {
+    chart.timeScale().fitContent();
+  }
 })();
 </script>
 {% endif %}

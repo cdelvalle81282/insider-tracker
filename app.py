@@ -26,6 +26,13 @@ import alerts as alert_module
 import config as cfg
 import polygon_client
 import queries
+from backtest import (
+    PRICE_WARMUP_DAYS,
+    detect_channel_break,
+    detect_golden_cross,
+    detect_hhl,
+    detect_resistance_break,
+)
 from config import PAGE_SIZE, save_overrides
 from ingest import get_db
 from queries import EnrichContext
@@ -780,9 +787,51 @@ async def chart_view(
     from_date = date.today() - timedelta(days=days)
     to_date = date.today()
 
-    bars = polygon_client.get_daily_bars(ticker, from_date, to_date, api_key)
+    full_from = from_date - timedelta(days=PRICE_WARMUP_DAYS)
+    bars = polygon_client.get_daily_bars(ticker, full_from, to_date, api_key, limit=700)
     earnings = polygon_client.get_earnings_estimate(ticker, api_key)
     filings = queries.get_issuer_filings(db, ticker, days=days)
+    filings = [f for f in filings if f.get("table_type") == "ND"]
+
+    # Signal detection (runs on the extended bar history for warmup)
+    _CHART_SIG_DETECTORS = [
+        ("gc",  "GC",  "#f59e0b", detect_golden_cross),
+        ("rb",  "RB",  "#f97316", detect_resistance_break),
+        ("hhl", "HH",  "#22d3ee", detect_hhl),
+        ("cb",  "CB",  "#a855f7", detect_channel_break),
+    ]
+    signal_markers: list[dict] = []
+    if bars and api_key:
+        sig_bars = [{**b, "date": b["time"]} for b in bars]
+        sig_bar_dates = [b["date"] for b in sig_bars]
+        nd_buys = [
+            f for f in filings
+            if f.get("transaction_code") == "P"
+            and not f.get("is_10b5_1")
+            and f.get("transaction_date")
+        ]
+        seen_signals: set[tuple[str, str]] = set()
+        for f in nd_buys:
+            trade_date = f["transaction_date"]
+            trade_idx = next((i for i, d in enumerate(sig_bar_dates) if d >= trade_date), None)
+            if trade_idx is None or trade_idx >= len(sig_bars) - 1:
+                continue
+            for sig_code, label, color, detect_fn in _CHART_SIG_DETECTORS:
+                _, days_to_fire = detect_fn(sig_bars, trade_idx)
+                if days_to_fire is None:
+                    continue
+                fire_date = (date.fromisoformat(trade_date) + timedelta(days=days_to_fire)).isoformat()
+                key = (sig_code, fire_date)
+                if key in seen_signals:
+                    continue
+                seen_signals.add(key)
+                signal_markers.append({
+                    "time":     fire_date,
+                    "position": "aboveBar",
+                    "color":    color,
+                    "shape":    "circle",
+                    "text":     label,
+                })
 
     # Build marker list for Lightweight Charts
     code_filter = {"buys": ["P"], "sells": ["S"], "both": ["P", "S"]}.get(mode, ["P", "S"])
@@ -811,6 +860,8 @@ async def chart_view(
         "mode": mode,
         "bars": bars,
         "markers": markers,
+        "signal_markers": signal_markers,
+        "chart_from": from_date.isoformat(),
         "filings": filings,
         "earnings": earnings,
         "code_filter": code_filter,

@@ -64,6 +64,9 @@ GC_MIN_BARS  = GC_SLOW          # 200 bars for 200-day MA
 RB_MIN_BARS  = 130              # ~180 calendar days at 5/7 trading ratio
 CB_MIN_BARS_PRE = 65            # ~90 calendar days
 
+# calendar days needed for 200-bar MA warmup + trading-day ratio buffer
+PRICE_WARMUP_DAYS = 310
+
 
 # ---------------------------------------------------------------------------
 # Price data

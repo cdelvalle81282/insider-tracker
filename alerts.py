@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import polygon_client
 from backtest import (
+    PRICE_WARMUP_DAYS,
     detect_channel_break,
     detect_golden_cross,
     detect_hhl,
@@ -170,6 +171,7 @@ def _match_big_buy(
           AND ingested_at >= ?
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
+          AND table_type = 'ND'
         ORDER BY total_value DESC
         """,
         [threshold, since_ts],
@@ -195,6 +197,7 @@ def _match_insider_buy(
           AND ingested_at >= ?
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
+          AND table_type = 'ND'
           AND ({kw_clauses})
         ORDER BY total_value DESC
         """,
@@ -225,6 +228,7 @@ def _match_cluster(
           AND transaction_date >= ?
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
+          AND table_type = 'ND'
         GROUP BY issuer_cik, issuer_name, issuer_ticker
         HAVING COUNT(DISTINCT insider_cik) >= ?
            AND MAX(ingested_at) >= ?
@@ -328,9 +332,6 @@ _SIGNAL_DETECTORS = {
     "cb":  ("Channel Break",    detect_channel_break),
 }
 
-# 200-bar MA warmup + calendar/trading-day ratio buffer
-_PRICE_WARMUP_DAYS = 310
-
 
 def _format_signal_message(
     signal_label: str,
@@ -417,6 +418,7 @@ def check_and_send_signals(
           AND transaction_date >= ?
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
+          AND table_type = 'ND'
           AND issuer_ticker IS NOT NULL
           AND TRIM(issuer_ticker) NOT IN ('', 'NONE', 'N/A')
         ORDER BY issuer_ticker, transaction_date
@@ -430,7 +432,7 @@ def check_and_send_signals(
         t = dict(r)
         by_ticker.setdefault(t["issuer_ticker"].strip(), []).append(t)
 
-    price_from = today - timedelta(days=lookback + _PRICE_WARMUP_DAYS)
+    price_from = today - timedelta(days=lookback + PRICE_WARMUP_DAYS)
     sent = 0
 
     for ticker, trades in by_ticker.items():
