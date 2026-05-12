@@ -311,7 +311,7 @@ def main():
     // ── Candle chart ─────────────────────────────────────────────────────
     const candleEl = block.querySelector('.candle-chart');
     const candleChart = LightweightCharts.createChart(candleEl, Object.assign({{}}, OPTS, {{
-      width: 960, height: 300,
+      autoSize: true,
       rightPriceScale: {{ borderColor: GRID }},
       timeScale: {{ borderColor: GRID, timeVisible: false }},
     }}));
@@ -331,7 +331,7 @@ def main():
     // ── RSI chart ────────────────────────────────────────────────────────
     const rsiEl = block.querySelector('.rsi-chart');
     const rsiChart = LightweightCharts.createChart(rsiEl, Object.assign({{}}, OPTS, {{
-      width: 960, height: 80,
+      autoSize: true,
       rightPriceScale: {{ borderColor: GRID, scaleMargins: {{top:0.05,bottom:0.05}} }},
       timeScale: {{ borderColor: GRID, timeVisible: false }},
     }}));
@@ -349,7 +349,7 @@ def main():
     // ── Volume chart ─────────────────────────────────────────────────────
     const volEl = block.querySelector('.vol-chart');
     const volChart = LightweightCharts.createChart(volEl, Object.assign({{}}, OPTS, {{
-      width: 960, height: 60,
+      autoSize: true,
       rightPriceScale: {{ borderColor: GRID, scaleMargins: {{top:0.1,bottom:0}} }},
       timeScale: {{ borderColor: GRID, timeVisible: true }},
     }}));
@@ -366,17 +366,13 @@ def main():
     rsiChart.subscribeCrosshairMove(function(p){{sync(rsiChart,[candleChart,volChart],p);}});
     volChart.subscribeCrosshairMove(function(p){{sync(volChart,[candleChart,rsiChart],p);}});
 
-    // Store instances so we can force-resize later
-    block._lcCharts = [
-      {{chart: candleChart, w: 960, h: 300}},
-      {{chart: rsiChart,    w: 960, h: 80}},
-      {{chart: volChart,    w: 960, h: 60}},
-    ];
-
-    // Double-RAF: force the paint cycle to commit after LC queues its repaint
+    // Double-RAF: with autoSize, the ResizeObserver fires after layout —
+    // a second RAF ensures the canvas is fully composited before any screenshot
     requestAnimationFrame(function() {{
       requestAnimationFrame(function() {{
-        block._lcCharts.forEach(function(o) {{ o.chart.resize(o.w, o.h); }});
+        candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+        rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+        volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
       }});
     }});
   }}
