@@ -367,15 +367,19 @@ def main():
     rsiChart.subscribeCrosshairMove(function(p){{sync(rsiChart,[candleChart,volChart],p);}});
     volChart.subscribeCrosshairMove(function(p){{sync(volChart,[candleChart,rsiChart],p);}});
 
-    // After autoSize ResizeObserver fires, trim all three to the display window
+    // Force LC to commit the correct canvas buffer dimensions (autoSize alone doesn't
+    // update canvas.width/canvas.height from the default 300x150 until after a resize).
+    // chart.resize() is the authoritative way to set both the canvas and internal state.
     requestAnimationFrame(function() {{
-      requestAnimationFrame(function() {{
-        try {{
-          candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
-          rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
-          volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
-        }} catch(e) {{}}
-      }});
+      var cW = candleEl.clientWidth || 960;
+      try {{
+        candleChart.resize(cW, 300);
+        rsiChart.resize(cW, 80);
+        volChart.resize(cW, 60);
+        candleChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+        rsiChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+        volChart.timeScale().setVisibleRange({{from:data.from, to:data.to}});
+      }} catch(e) {{}}
     }});
   }}
 
