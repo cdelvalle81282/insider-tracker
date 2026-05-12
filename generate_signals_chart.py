@@ -242,6 +242,26 @@ def _build_figure(
         showlegend=False,
     ), row=3, col=1)
 
+    # add_vline with annotations is broken for string dates in Plotly 6;
+    # use add_shape + add_annotation instead.
+    def _vshape(x: str, color: str, width: float, dash: str, opacity: float = 0.65) -> None:
+        fig.add_shape(
+            type="line", x0=x, x1=x, y0=0, y1=1,
+            xref="x", yref="paper",
+            line=dict(color=color, width=width, dash=dash),
+            opacity=opacity,
+        )
+
+    def _vann(x: str, text: str, color: str, y: float, anchor: str) -> None:
+        fig.add_annotation(
+            x=x, y=y, xref="x", yref="paper",
+            text=text, showarrow=False,
+            font=dict(size=7, color=color, family="JetBrains Mono, monospace"),
+            bgcolor="rgba(11,18,32,0.82)",
+            bordercolor=color, borderwidth=1,
+            xanchor=anchor, yanchor="top",
+        )
+
     # ── Insider buy vertical lines (green dashed) ─────────────────────────
     d0, d1 = (min(dates), max(dates)) if dates else ("", "")
     for buy in buys:
@@ -255,18 +275,9 @@ def _build_figure(
         if tv:
             label += f"  {tv}"
         if title_s:
-            label += f"<br><i>{title_s}</i>"
-        fig.add_vline(
-            x=bd,
-            line_width=1.1, line_dash="dash", line_color=BUY_LINE,
-            annotation_text=label,
-            annotation_position="top left",
-            annotation_font_size=7,
-            annotation_font_color=BUY_TEXT,
-            annotation_bgcolor="rgba(11,18,32,0.75)",
-            annotation_bordercolor="rgba(34,197,94,0.3)",
-            annotation_borderwidth=1,
-        )
+            label += f"  {title_s}"
+        _vshape(bd, BUY_LINE, width=1.1, dash="dash")
+        _vann(bd, label, BUY_TEXT, y=0.985, anchor="left")
 
     # ── Signal fire vertical lines (solid, coloured) ──────────────────────
     for code, fire_dates in signals.items():
@@ -274,23 +285,16 @@ def _build_figure(
         for fd in fire_dates:
             if not d0 <= fd <= d1:
                 continue
-            fig.add_vline(
-                x=fd,
-                line_width=2.0, line_dash="solid", line_color=s["color"],
-                opacity=0.75,
-                annotation_text=s["label"],
-                annotation_position="top right",
-                annotation_font_size=8,
-                annotation_font_color=s["color"],
-                annotation_bgcolor="rgba(11,18,32,0.8)",
-                annotation_bordercolor=s["color"],
-                annotation_borderwidth=1,
-            )
+            _vshape(fd, s["color"], width=2.0, dash="solid", opacity=0.75)
+            _vann(fd, s["label"], s["color"], y=0.92, anchor="right")
 
-    # ── RSI guides ────────────────────────────────────────────────────────
-    fig.add_hline(y=70, row=2, col=1, line_width=0.7, line_dash="dot", line_color="rgba(239,83,80,0.4)")
-    fig.add_hline(y=50, row=2, col=1, line_width=0.4, line_dash="dot", line_color="rgba(110,120,140,0.3)")
-    fig.add_hline(y=30, row=2, col=1, line_width=0.7, line_dash="dot", line_color="rgba(38,166,154,0.4)")
+    # ── RSI guides (add_shape to avoid Plotly 6 row= issues) ─────────────
+    for rsi_y, rsi_col in [(70, "rgba(239,83,80,0.4)"), (50, "rgba(110,120,140,0.3)"), (30, "rgba(38,166,154,0.4)")]:
+        fig.add_shape(
+            type="line", x0=0, x1=1, y0=rsi_y, y1=rsi_y,
+            xref="paper", yref="y2",
+            line=dict(color=rsi_col, width=0.7, dash="dot"),
+        )
 
     # ── Layout ────────────────────────────────────────────────────────────
     active_sigs = [
