@@ -382,9 +382,7 @@ def main():
       grid:      {{ vertLines: {{ color: GRID }}, horzLines: {{ color: GRID }} }},
       crosshair: {{ mode: LightweightCharts.CrosshairMode.Normal }},
       rightPriceScale: {{ borderColor: GRID, scaleMargins: {{ top: 0.1, bottom: 0 }} }},
-      timeScale: {{ borderColor: GRID, timeVisible: true, tickMarkFormatter: function(t) {{
-        const d = new Date(t*1000); return (d.getMonth()+1)+'/'+d.getDate();
-      }} }},
+      timeScale: {{ borderColor: GRID, timeVisible: true }},
     }});
     const volBars = volChart.addHistogramSeries({{ priceLineVisible: false }});
     volBars.setData(data.volume);
