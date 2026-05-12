@@ -64,7 +64,7 @@ DEFAULT_TICKERS = [
     "GO",    # CEO + 3 directors cluster
     "SOFI",  # CEO Noto two buys
     "CPNG",  # $37-56M buys, RB+HH
-    "FLUT",  # massive repeat buying
+    "CAR",   # Pentwater $40M, GC+RB+HH (3-signal)
 ]
 
 SIGNAL_STYLES: dict[str, dict] = {
@@ -392,7 +392,13 @@ def main() -> None:
         n_sig   = sum(len(v) for v in signals.values())
         print(f" {len(buys)} buys  {n_sig} signal fires")
         fig  = _build_figure(ticker, raw_bars, display_bars, buys, signals)
-        html_parts.append(fig.to_html(include_plotlyjs=False, full_html=False, div_id=f"c_{ticker}"))
+        inner = fig.to_html(
+            include_plotlyjs=False, full_html=False,
+            div_id=f"c_{ticker}",
+            config={"responsive": False},
+        )
+        # Wrap in fixed-height container so Plotly doesn't expand the div
+        html_parts.append(f'<div style="height:460px;overflow:hidden;">{inner}</div>')
 
     conn.close()
 
