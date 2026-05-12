@@ -440,6 +440,16 @@ def main() -> None:
   <h1>Insider Buys + Technical Signal Triggers &nbsp;·&nbsp; {from_date} → {today}</h1>
   <div class="leg">{''.join(legend_items)}</div>
   {sep.join(html_parts)}
+  <script>
+    // Force all Plotly figures to render — Plotly 6 lazy-skips off-screen charts
+    window.addEventListener('load', function() {{
+      setTimeout(function() {{
+        document.querySelectorAll('.plotly-graph-div').forEach(function(el) {{
+          try {{ Plotly.Plots.resize(el); }} catch(e) {{}}
+        }});
+      }}, 400);
+    }});
+  </script>
 </body>
 </html>"""
 
