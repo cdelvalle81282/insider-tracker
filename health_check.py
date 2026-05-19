@@ -7,15 +7,16 @@ Called by ingest.py after --since-last-run completes.
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import date, datetime
 from pathlib import Path
+
+import psycopg
 
 INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
 STALE_HOURS = 36  # alert if sentinel older than this
 
 
-def check_ingest_health(conn: sqlite3.Connection) -> list[dict]:
+def check_ingest_health(conn: psycopg.Connection) -> list[dict]:
     """
     Return a list of health findings. Empty list = healthy.
     Each finding: {"kind": str, "message": str}
@@ -39,15 +40,12 @@ def check_ingest_health(conn: sqlite3.Connection) -> list[dict]:
     if len(rows) >= 2:
         # Most recent two nightly runs
         recent = rows[:2]
-        both_zero = all(r[1] == 0 for r in recent)
-        both_no_error = all(r[2] == 0 for r in recent)  # errors=0 means silent failure
-        # Only alert on weekday runs (Mon=0 ... Fri=4)
-        both_weekday = all(
-            datetime.fromisoformat(r[3]).weekday() < 5
-            for r in recent
-        )
+        both_zero = all(r["filings_found"] == 0 for r in recent)
+        both_no_error = all(r["errors"] == 0 for r in recent)  # errors=0 means silent failure
+        # Only alert on weekday runs (Mon=0 ... Fri=4); started_at is a datetime in PG
+        both_weekday = all(r["started_at"].weekday() < 5 for r in recent)
         if both_zero and both_no_error and both_weekday:
-            dates = [r[0] for r in recent]
+            dates = [r["date_processed"] for r in recent]
             findings.append({
                 "kind": "no_filings",
                 "message": (
@@ -60,7 +58,7 @@ def check_ingest_health(conn: sqlite3.Connection) -> list[dict]:
     # --- Check: consecutive nightly errors ---
     if len(rows) >= 2:
         recent = rows[:2]
-        both_errors = all(r[2] > 0 for r in recent)
+        both_errors = all(r["errors"] > 0 for r in recent)
         if both_errors:
             findings.append({
                 "kind": "consecutive_errors",
@@ -91,7 +89,7 @@ def check_ingest_health(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
-def send_health_alerts(conn: sqlite3.Connection, slack_webhook_url: str | None) -> int:
+def send_health_alerts(conn: psycopg.Connection, slack_webhook_url: str | None) -> int:
     """
     Check health and send Slack alerts for new findings. Returns count of alerts sent.
     Uses alerts_sent table for dedup — same pattern as existing alert system.
@@ -109,9 +107,9 @@ def send_health_alerts(conn: sqlite3.Connection, slack_webhook_url: str | None) 
     for finding in findings:
         alert_key = f"health:{finding['kind']}:{today}"
 
-        # Dedup: INSERT OR IGNORE, check rowcount — alert_type is NOT NULL in schema
+        # Dedup: ON CONFLICT DO NOTHING, check rowcount — alert_type is NOT NULL in schema
         cur = conn.execute(
-            "INSERT OR IGNORE INTO alerts_sent (alert_key, alert_type) VALUES (?, ?)",
+            "INSERT INTO alerts_sent (alert_key, alert_type) VALUES (%s, %s) ON CONFLICT (alert_key) DO NOTHING",
             (alert_key, "ingest_health"),
         )
         conn.commit()
@@ -139,7 +137,7 @@ def send_health_alerts(conn: sqlite3.Connection, slack_webhook_url: str | None) 
 
 
 if __name__ == "__main__":
-    from ingest import get_db
+    from db import get_db
     conn = get_db()
     findings = check_ingest_health(conn)
     if findings:

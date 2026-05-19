@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -49,7 +48,6 @@ from backtest import (
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-_DB = str(_HERE / "data" / "insider_tracker.db")
 _API_KEY = os.getenv("POLYGON_API_KEY", "")
 
 DEFAULT_TICKERS = [
@@ -130,21 +128,21 @@ def _fmt(v: float | None) -> str:
     return f"${v/1e3:.0f}K"
 
 
-def _get_buys(conn: sqlite3.Connection, ticker: str, days: int) -> list[dict]:
+def _get_buys(conn, ticker: str, days: int) -> list[dict]:
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     rows = conn.execute(
         """
-        SELECT transaction_date, insider_name, insider_title, total_value
+        SELECT transaction_date::text AS transaction_date,
+               insider_name, insider_title, total_value
         FROM filings
-        WHERE issuer_ticker = ?
+        WHERE issuer_ticker = %s
           AND transaction_code = 'P'
           AND table_type = 'ND'
           AND is_10b5_1 = 0
-          AND total_value >= ?
-          AND transaction_date >= ?
+          AND total_value >= %s
+          AND transaction_date >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
-          AND transaction_date != ''
         ORDER BY transaction_date
         """,
         [ticker.upper(), MIN_VALUE, cutoff],
@@ -373,8 +371,8 @@ def main() -> None:
     from_date  = today - timedelta(days=args.days)
     full_from  = from_date - timedelta(days=PRICE_WARMUP_DAYS)
 
-    conn = sqlite3.connect(_DB)
-    conn.row_factory = sqlite3.Row
+    from db import get_db
+    conn = get_db()
 
     html_parts: list[str] = []
 

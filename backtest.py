@@ -18,7 +18,6 @@ import argparse
 import csv
 import json
 import os
-import sqlite3
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -337,11 +336,12 @@ def main() -> None:
     if not api_key:
         raise SystemExit("POLYGON_API_KEY not set")
 
-    conn = sqlite3.connect("data/insider_tracker.db")
-    conn.row_factory = sqlite3.Row
+    from db import get_db
+    conn = get_db()
     rows = conn.execute("""
         SELECT issuer_ticker, issuer_name, insider_name, insider_title,
-               transaction_date, total_value, price_per_share,
+               transaction_date::text AS transaction_date,
+               total_value, price_per_share,
                is_10b5_1, is_director, is_officer, is_ten_percent_owner
         FROM filings
         WHERE transaction_code = 'P'
@@ -349,9 +349,9 @@ def main() -> None:
           AND joint_filer_of IS NULL
           AND TRIM(issuer_ticker) IS NOT NULL
           AND TRIM(issuer_ticker) NOT IN ('NONE', 'N/A', '')
-          AND total_value >= ?
-          AND transaction_date >= ?
-          AND transaction_date <= ?
+          AND total_value >= %s
+          AND transaction_date >= %s
+          AND transaction_date <= %s
         ORDER BY issuer_ticker, transaction_date
     """, [args.min_value, TRADE_START, TRADE_END]).fetchall()
 
