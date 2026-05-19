@@ -99,13 +99,16 @@ ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull && sudo s
 ## Systemd services (on server)
 
 - `insider-tracker.service` — uvicorn web app, always-on
-- `insider-ingest.timer` — runs ingest at 10:30 AM, 2:00 PM, 7:00 PM ET Mon–Fri
+- `insider-ingest.timer` — runs `--date today` at 10:30, 14:00, 19:00 UTC Mon–Fri (6:30 AM / 10 AM / 3 PM ET)
 - `insider-ingest.service` — oneshot triggered by timer
+- `insider-ingest-nightly.timer` — runs `--since-last-run` at 03:00 UTC Mon–Sat (11 PM ET) — catches EDGAR's end-of-day index update
+- `insider-ingest-nightly.service` — oneshot triggered by nightly timer
 
 ```bash
 sudo systemctl status insider-tracker.service
 sudo journalctl -u insider-tracker.service -f
 sudo systemctl status insider-ingest.timer
+sudo systemctl status insider-ingest-nightly.timer
 ```
 
 ## Schema
@@ -250,6 +253,8 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Ticker case from SEC XML is not normalized:** `issuerTradingSymbol` can arrive lowercase (e.g. "vicr"). Always `.upper().strip()` the value in `parser.py` when extracting it. Existing rows with lowercase tickers in the DB won't be fixed retroactively by a re-ingest without a targeted UPDATE.
 - **`NONE` / `N/A` appear as real tickers from SEC XML:** Some filers (funds, BDCs) have no exchange symbol. The XML emits the literal string `"NONE"` or leaves the field blank. Template ticker checks must guard `row.issuer_ticker not in ('NONE', 'N/A')` or users see a chart link to `/chart/NONE`.
 - **Derivative table `price_per_share` is exercise/conversion price, not market price:** `table_type = 'D'` rows store the derivative's exercise/strike/conversion price in `transactionPricePerShare`, not what was paid. This makes `total_value` (shares × that price) meaningless for derivatives (e.g. VELO showed $31T). Always add `AND table_type = 'ND'` to any query that relies on `total_value` for value-based filtering — alerts, signal scanners, and any rank/sort by dollar value.
+- **EDGAR daily index not available until ~03:00 UTC (11 PM ET):** `form.YYYYMMDD.idx` is published ~22:00 ET each business day. The three scheduled daytime runs (10:30/14:00/19:00 UTC = 6:30 AM/10 AM/3 PM ET) consistently return 0 filings for that day's date because the index file either doesn't exist yet or is empty. The `insider-ingest-nightly.timer` at 03:00 UTC uses `--since-last-run` to catch the previous business day's filings after EDGAR publishes them. Do NOT rely on the daytime runs to capture same-day filings reliably.
+- **Concurrent ingest processes multiply the EDGAR request rate:** `ingest.py` makes 2 HTTP requests per filing (index.htm + XML) at 0.12 sec/request (~8.3 req/sec per process). Running 2+ ingest processes simultaneously exceeds SEC's 10 req/sec cap, causing 429 errors and potentially triggering a temporary IP ban on the quarterly index (403). Never run a manual backfill while a scheduled ingest or `--update-prices` is running against EDGAR. `--update-prices` uses Polygon only — it is safe to run concurrently.
 
 ## SEC compliance
 
