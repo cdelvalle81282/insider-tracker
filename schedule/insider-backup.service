@@ -1,0 +1,12 @@
+[Unit]
+Description=Insider Tracker — SQLite backup to DigitalOcean Spaces
+After=network.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+ExecStart=/home/deploy/insider-tracker/scripts/backup_sqlite.sh
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+StandardOutput=journal
+StandardError=journal

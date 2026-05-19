@@ -1,0 +1,10 @@
+[Unit]
+Description=Insider Tracker — Daily SQLite backup (05:00 UTC, after nightly ingest)
+
+[Timer]
+OnCalendar=*-*-* 05:00 UTC
+Persistent=true
+Unit=insider-backup.service
+
+[Install]
+WantedBy=timers.target

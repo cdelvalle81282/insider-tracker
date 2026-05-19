@@ -12,6 +12,7 @@ Usage:
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -40,6 +41,17 @@ def _write_sentinel() -> None:
         INGEST_SENTINEL.touch()
     except Exception:
         pass
+
+
+def _ping_heartbeat(url: str | None) -> None:
+    """Ping an UptimeRobot (or similar) heartbeat URL. Failure is silently swallowed."""
+    if not url:
+        return
+    try:
+        import urllib.request
+        urllib.request.urlopen(url, timeout=10)
+    except Exception:
+        pass  # heartbeat failure must never break ingest
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +204,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_disclosure_date ON congress_trades(disclosure_date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_politician ON congress_trades(politician_name)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_source ON congress_trades(source)")
+    # run_kind: classify runs so health checks only alert on nightly failures
+    cur = conn.execute("PRAGMA table_info(run_log)")
+    run_log_cols = {row[1] for row in cur.fetchall()}
+    if "run_kind" not in run_log_cols:
+        conn.execute("ALTER TABLE run_log ADD COLUMN run_kind TEXT DEFAULT 'unknown'")
     conn.commit()
 
 
@@ -755,6 +772,16 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
     else:
         dates = [date.today()]
 
+    # Determine run_kind once for this invocation
+    if since_last_run:
+        _run_kind = "nightly"
+    elif backfill or backfill_days:
+        _run_kind = "backfill"
+    elif target_date:
+        _run_kind = "intraday"
+    else:
+        _run_kind = "intraday"
+
     for d in dates:
         # Skip weekends — EDGAR has no filings
         if d.weekday() >= 5:
@@ -768,9 +795,9 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             finished_at = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 """INSERT INTO run_log (started_at, finished_at, date_processed,
-                   filings_found, rows_inserted, errors, error_detail)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (started_at, finished_at, d.isoformat(), found, inserted, errors, error_detail or None),
+                   filings_found, rows_inserted, errors, error_detail, run_kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (started_at, finished_at, d.isoformat(), found, inserted, errors, error_detail or None, _run_kind),
             )
             conn.commit()
             click.echo(f" {found} filings, {inserted} rows inserted, {errors} errors")
@@ -778,9 +805,9 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             finished_at = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 """INSERT INTO run_log (started_at, finished_at, date_processed,
-                   filings_found, rows_inserted, errors, error_detail)
-                   VALUES (?, ?, ?, 0, 0, 1, ?)""",
-                (started_at, finished_at, d.isoformat(), str(e)),
+                   filings_found, rows_inserted, errors, error_detail, run_kind)
+                   VALUES (?, ?, ?, 0, 0, 1, ?, ?)""",
+                (started_at, finished_at, d.isoformat(), str(e), _run_kind),
             )
             conn.commit()
             click.echo(f" ERROR: {e}")
@@ -788,6 +815,20 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
     # Mark joint-filer duplicates introduced by this ingest
     mark_joint_filers(conn)
     _write_sentinel()
+
+    # Heartbeat ping — only for nightly runs (since_last_run path)
+    if since_last_run:
+        _ping_heartbeat(os.getenv("INGEST_HEARTBEAT_URL"))
+
+    # Health check — only for nightly runs; backfills skip alerts anyway
+    if since_last_run:
+        try:
+            import health_check
+            n_health = health_check.send_health_alerts(conn, os.getenv("SLACK_WEBHOOK_URL"))
+            if n_health:
+                click.echo(f"Sent {n_health} health alert(s)")
+        except Exception as e:
+            click.echo(f"Health check error (non-fatal): {e}")
 
     # Fire Slack alerts for newly ingested rows (real-time runs only)
     if not suppress_alerts:

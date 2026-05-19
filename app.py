@@ -86,7 +86,7 @@ def _sentinel_set(cache: TTLCache, key: str, pre_mtime: float, value) -> None:
 def _cache_key(params: dict) -> str:
     """Stable cache key — normalizes list values so order doesn't affect result."""
     normalized = {k: sorted(v) if isinstance(v, list) else v for k, v in params.items()}
-    return hashlib.md5(json.dumps(normalized, sort_keys=True, default=str).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def _load_config_cached() -> dict:
@@ -220,6 +220,21 @@ def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
         watched_insiders=queries.watched_insiders(db),
         compute_conviction=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Health check (no rate limit, no DB round-trip)
+# ---------------------------------------------------------------------------
+
+@app.get("/healthz")
+async def healthz():
+    from datetime import datetime
+    try:
+        mtime = _sentinel_mtime()
+        last_ingest = datetime.utcfromtimestamp(mtime).isoformat() + "Z" if mtime else None
+    except Exception:
+        last_ingest = None
+    return {"ok": True, "last_ingest": last_ingest}
 
 
 # ---------------------------------------------------------------------------
