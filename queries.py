@@ -966,7 +966,14 @@ def get_issuer_trend(conn: psycopg.Connection, ticker: str) -> list[dict]:
 
 def get_run_log(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
     rows = conn.execute(
-        "SELECT * FROM run_log ORDER BY started_at DESC LIMIT %s", [limit]
+        """
+        SELECT id, run_kind, date_processed,
+               started_at::text AS started_at,
+               finished_at::text AS finished_at,
+               filings_found, rows_inserted, errors, error_detail
+        FROM run_log ORDER BY started_at DESC LIMIT %s
+        """,
+        [limit],
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1105,7 +1112,7 @@ def get_issuer_recent_insiders(
 
 def get_recent_alerts(conn: psycopg.Connection, limit: int = 10) -> list[dict]:
     rows = conn.execute(
-        "SELECT alert_key, alert_type, sent_at FROM alerts_sent ORDER BY sent_at DESC LIMIT %s",
+        "SELECT alert_key, alert_type, sent_at::text AS sent_at FROM alerts_sent ORDER BY sent_at DESC LIMIT %s",
         [limit],
     ).fetchall()
     return [dict(r) for r in rows]
