@@ -25,6 +25,8 @@ from pathlib import Path
 
 import httpx
 
+from db import get_db
+
 # ---------------------------------------------------------------------------
 # Config — all fuzzy signal knobs in one place
 # ---------------------------------------------------------------------------
@@ -336,7 +338,6 @@ def main() -> None:
     if not api_key:
         raise SystemExit("POLYGON_API_KEY not set")
 
-    from db import get_db
     conn = get_db()
     rows = conn.execute("""
         SELECT issuer_ticker, issuer_name, insider_name, insider_title,
@@ -354,6 +355,7 @@ def main() -> None:
           AND transaction_date <= %s
         ORDER BY issuer_ticker, transaction_date
     """, [args.min_value, TRADE_START, TRADE_END]).fetchall()
+    conn.close()
 
     trades = [dict(r) for r in rows]
     by_ticker: dict[str, list[dict]] = defaultdict(list)

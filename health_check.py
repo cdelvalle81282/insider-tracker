@@ -6,7 +6,9 @@ Called by ingest.py after --since-last-run completes.
 """
 from __future__ import annotations
 
+import json
 import os
+import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
@@ -41,8 +43,7 @@ def check_ingest_health(conn: psycopg.Connection) -> list[dict]:
         # Most recent two nightly runs
         recent = rows[:2]
         both_zero = all(r["filings_found"] == 0 for r in recent)
-        both_no_error = all(r["errors"] == 0 for r in recent)  # errors=0 means silent failure
-        # Only alert on weekday runs (Mon=0 ... Fri=4); started_at is a datetime in PG
+        both_no_error = all(r["errors"] == 0 for r in recent)
         both_weekday = all(r["started_at"].weekday() < 5 for r in recent)
         if both_zero and both_no_error and both_weekday:
             dates = [r["date_processed"] for r in recent]
@@ -107,7 +108,6 @@ def send_health_alerts(conn: psycopg.Connection, slack_webhook_url: str | None) 
     for finding in findings:
         alert_key = f"health:{finding['kind']}:{today}"
 
-        # Dedup: ON CONFLICT DO NOTHING, check rowcount — alert_type is NOT NULL in schema
         cur = conn.execute(
             "INSERT INTO alerts_sent (alert_key, alert_type) VALUES (%s, %s) ON CONFLICT (alert_key) DO NOTHING",
             (alert_key, "ingest_health"),
@@ -116,10 +116,7 @@ def send_health_alerts(conn: psycopg.Connection, slack_webhook_url: str | None) 
         if cur.rowcount == 0:
             continue  # already sent today
 
-        # Send to Slack
         try:
-            import json
-            import urllib.request
             payload = json.dumps({
                 "text": f":warning: *Insider Tracker — Ingest Health Alert*\n{finding['message']}"
             }).encode()

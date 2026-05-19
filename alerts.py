@@ -11,7 +11,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import psycopg
 
@@ -412,7 +412,7 @@ def check_and_send_signals(
     rows = conn.execute("""
         SELECT issuer_ticker, issuer_cik, issuer_name,
                insider_cik, insider_name, insider_title,
-               transaction_date, total_value
+               transaction_date::text AS transaction_date, total_value
         FROM filings
         WHERE transaction_code = 'P'
           AND total_value >= %s
@@ -429,15 +429,9 @@ def check_and_send_signals(
     if not rows:
         return 0
 
-    # Normalize transaction_date to ISO string. PG returns DATE columns as
-    # Python `date` objects, but bar dates are strings ("YYYY-MM-DD").
-    from datetime import date as _date_t
     by_ticker: dict[str, list[dict]] = {}
     for r in rows:
         t = dict(r)
-        td = t.get("transaction_date")
-        if isinstance(td, _date_t):
-            t["transaction_date"] = td.isoformat()
         by_ticker.setdefault(t["issuer_ticker"].strip(), []).append(t)
 
     price_from = today - timedelta(days=lookback + PRICE_WARMUP_DAYS)

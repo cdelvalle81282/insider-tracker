@@ -45,6 +45,8 @@ from backtest import (
     detect_hhl,
     detect_resistance_break,
 )
+from db import get_db
+from queries import get_chart_buys
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -127,27 +129,6 @@ def _fmt(v: float | None) -> str:
         return f"${v/1e6:.1f}M"
     return f"${v/1e3:.0f}K"
 
-
-def _get_buys(conn, ticker: str, days: int) -> list[dict]:
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
-    rows = conn.execute(
-        """
-        SELECT transaction_date::text AS transaction_date,
-               insider_name, insider_title, total_value
-        FROM filings
-        WHERE issuer_ticker = %s
-          AND transaction_code = 'P'
-          AND table_type = 'ND'
-          AND is_10b5_1 = 0
-          AND total_value >= %s
-          AND transaction_date >= %s
-          AND superseded_by IS NULL
-          AND joint_filer_of IS NULL
-        ORDER BY transaction_date
-        """,
-        [ticker.upper(), MIN_VALUE, cutoff],
-    ).fetchall()
-    return [dict(r) for r in rows]
 
 
 def _detect_signals(raw_bars: list[dict], buys: list[dict]) -> dict[str, list[str]]:
@@ -371,7 +352,6 @@ def main() -> None:
     from_date  = today - timedelta(days=args.days)
     full_from  = from_date - timedelta(days=PRICE_WARMUP_DAYS)
 
-    from db import get_db
     conn = get_db()
 
     html_parts: list[str] = []
@@ -386,7 +366,7 @@ def main() -> None:
         if not display_bars:
             print(" no display bars")
             continue
-        buys    = _get_buys(conn, ticker, args.days)
+        buys    = get_chart_buys(conn, ticker, args.days, MIN_VALUE)
         signals = _detect_signals(raw_bars, buys)
         n_sig   = sum(len(v) for v in signals.values())
         print(f" {len(buys)} buys  {n_sig} signal fires")

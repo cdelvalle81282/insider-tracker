@@ -35,6 +35,8 @@ from backtest import (
     detect_hhl,
     detect_resistance_break,
 )
+from db import get_db
+from queries import get_chart_buys
 
 _API_KEY = os.getenv("POLYGON_API_KEY", "")
 
@@ -90,24 +92,6 @@ def _fmt(v):
     return f"${v/1e3:.0f}K"
 
 
-def _get_buys(conn, ticker, days):
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
-    rows = conn.execute("""
-        SELECT transaction_date::text AS transaction_date,
-               insider_name, insider_title, total_value
-        FROM filings
-        WHERE issuer_ticker = %s
-          AND transaction_code = 'P'
-          AND table_type = 'ND'
-          AND is_10b5_1 = 0
-          AND total_value >= %s
-          AND transaction_date >= %s
-          AND superseded_by IS NULL
-          AND joint_filer_of IS NULL
-        ORDER BY transaction_date
-    """, [ticker.upper(), MIN_VALUE, cutoff]).fetchall()
-    return [dict(r) for r in rows]
-
 
 def _detect_signals(raw_bars, buys):
     if len(raw_bars) < 50 or not buys:
@@ -144,7 +128,6 @@ def main():
     from_date = today - timedelta(days=args.days)
     full_from = from_date - timedelta(days=PRICE_WARMUP_DAYS)
 
-    from db import get_db
     conn = get_db()
 
     charts = []
@@ -159,7 +142,7 @@ def main():
         if not display_bars:
             print(" no display bars"); continue
 
-        buys    = _get_buys(conn, ticker, args.days)
+        buys    = get_chart_buys(conn, ticker, args.days, MIN_VALUE)
         signals = _detect_signals(raw_bars, buys)
         n_sig   = sum(len(v) for v in signals.values())
         print(f" {len(buys)} buys  {n_sig} signals")

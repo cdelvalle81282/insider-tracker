@@ -1252,6 +1252,34 @@ def get_congress_trades(
     return [dict(r) for r in rows]
 
 
+def get_chart_buys(
+    conn: psycopg.Connection,
+    ticker: str,
+    days: int,
+    min_value: float,
+) -> list[dict]:
+    """Open-market buys for a ticker within `days` days, for chart overlays."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT transaction_date::text AS transaction_date,
+               insider_name, insider_title, total_value
+        FROM filings
+        WHERE issuer_ticker = %s
+          AND transaction_code = 'P'
+          AND table_type = 'ND'
+          AND is_10b5_1 = 0
+          AND total_value >= %s
+          AND transaction_date >= %s
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+        ORDER BY transaction_date
+        """,
+        [ticker.upper(), min_value, cutoff],
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_congress_summary(conn: psycopg.Connection, days: int = 30) -> dict:
     """Return aggregate KPIs for the congress trades tab."""
     use_date = bool(days and days > 0)
