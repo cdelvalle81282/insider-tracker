@@ -1,10 +1,17 @@
-"""All SQL queries for the dashboard. No SQL in app.py."""
+"""All SQL queries for the dashboard. No SQL in app.py.
+
+PostgreSQL (psycopg3) port — rows are dict-like (`dict_row` factory in db.py),
+placeholders are `%s`, INSERT OR IGNORE is `ON CONFLICT DO NOTHING`, date
+arithmetic uses `INTERVAL` / `CURRENT_DATE`, and string search uses `ILIKE`
+for case-insensitive matching (SQLite's `LIKE` was case-insensitive by default).
+"""
 from __future__ import annotations
 
-import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+
+import psycopg
 
 
 # ---------------------------------------------------------------------------
@@ -15,7 +22,7 @@ from datetime import date, datetime, timedelta, timezone
 
 @dataclass
 class EnrichContext:
-    conn: sqlite3.Connection | None = None
+    conn: psycopg.Connection | None = None
     conviction_flags: dict | None = None      # CONVICTION_FLAGS values
     conviction_tiers: dict | None = None      # CONVICTION_TIERS values
     conviction_max: int = 10
@@ -46,7 +53,7 @@ MARKET_CAP_TIERS = {
 
 def _sanitize_codes(codes: list[str] | None) -> tuple[list[str], str]:
     result = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
-    return result, ",".join("?" * len(result))
+    return result, ",".join(["%s"] * len(result))
 
 
 def _fmt_value(v: float | None) -> str:
@@ -63,7 +70,11 @@ def _relative_time(ts: str | None) -> str:
     if not ts:
         return ""
     try:
-        dt = datetime.fromisoformat(ts)
+        # psycopg may hand us a datetime directly; tolerate both
+        if isinstance(ts, datetime):
+            dt = ts
+        else:
+            dt = datetime.fromisoformat(str(ts))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         now = datetime.now(tz=timezone.utc)
@@ -78,7 +89,7 @@ def _relative_time(ts: str | None) -> str:
             return f"yesterday {dt.strftime('%-I:%M%p').lower()}"
         return dt.strftime("%b %-d")
     except Exception:
-        return ts or ""
+        return str(ts) if ts else ""
 
 
 def _pct_holdings(row: dict) -> str | None:
@@ -110,7 +121,7 @@ def _pct_holdings(row: dict) -> str | None:
 
 
 def _batch_cluster_counts(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     rows: list[dict],
     window_days: int,
 ) -> dict[tuple, int]:
@@ -119,23 +130,37 @@ def _batch_cluster_counts(
     Uses the broadest date window across all pairs so a single SQL round-trip covers all.
     Python groups results back to the per-pair granularity.
     """
-    pairs = {(r.get("issuer_cik"), r.get("transaction_date")) for r in rows
-             if r.get("issuer_cik") and r.get("transaction_date")}
-    if not pairs:
+    # Normalize transaction_date values to ISO strings up-front so all dict
+    # keys + comparisons are string-vs-string. psycopg returns DATE columns as
+    # Python `date` objects; SQLite returned them as strings — normalize here.
+    def _to_iso(v) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, date):
+            return v.isoformat()
+        return str(v)
+
+    pairs_norm: set[tuple[str, str]] = set()
+    for r in rows:
+        cik = r.get("issuer_cik")
+        td = _to_iso(r.get("transaction_date"))
+        if cik and td:
+            pairs_norm.add((cik, td))
+    if not pairs_norm:
         return {}
 
-    all_ciks = list({p[0] for p in pairs})
-    all_dates = [p[1] for p in pairs]
+    all_ciks = list({p[0] for p in pairs_norm})
+    all_dates = [p[1] for p in pairs_norm]
     global_end = max(all_dates)
     global_start = (date.fromisoformat(min(all_dates)) - timedelta(days=window_days)).isoformat()
 
-    placeholders = ",".join("?" * len(all_ciks))
+    placeholders = ",".join(["%s"] * len(all_ciks))
     db_rows = conn.execute(
         f"""SELECT issuer_cik, transaction_date, insider_cik
             FROM filings
             WHERE transaction_code = 'P'
               AND issuer_cik IN ({placeholders})
-              AND transaction_date BETWEEN ? AND ?
+              AND transaction_date BETWEEN %s AND %s
               AND superseded_by IS NULL
               AND joint_filer_of IS NULL""",
         all_ciks + [global_start, global_end],
@@ -143,16 +168,24 @@ def _batch_cluster_counts(
 
     by_cik: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
     for r in db_rows:
-        by_cik[r[0]][r[1]].add(r[2])
+        td_key = _to_iso(r["transaction_date"])
+        by_cik[r["issuer_cik"]][td_key].add(r["insider_cik"])
 
+    # Original keys may include date objects from the caller; preserve them
+    # so callers (which look up by the same row dict's transaction_date) hit.
     result: dict[tuple, int] = {}
-    for (cik, dt) in pairs:
-        d0 = (date.fromisoformat(dt) - timedelta(days=window_days)).isoformat()
+    for r in rows:
+        cik = r.get("issuer_cik")
+        td_orig = r.get("transaction_date")
+        td_key = _to_iso(td_orig)
+        if not cik or not td_key:
+            continue
+        d0 = (date.fromisoformat(td_key) - timedelta(days=window_days)).isoformat()
         insiders: set = set()
         for d_key, iset in by_cik.get(cik, {}).items():
-            if d0 <= d_key <= dt:
+            if d0 <= d_key <= td_key:
                 insiders |= iset
-        result[(cik, dt)] = len(insiders)
+        result[(cik, td_orig)] = len(insiders)
     return result
 
 
@@ -219,8 +252,9 @@ def _conviction_score(
     return final, reasons
 
 
-def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[dict]:
+def _enrich(rows: list[dict], ctx: EnrichContext | None = None) -> list[dict]:
     result = []
+    # psycopg3 dict_row already returns dicts; dict(r) is idempotent.
     raw_dicts = [dict(r) for r in rows]
 
     # Batch-fetch last_close prices for all tickers in this result set
@@ -228,12 +262,12 @@ def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[d
     if ctx and ctx.conn:
         _tickers = {r.get("issuer_ticker") for r in raw_dicts if r.get("issuer_ticker")}
         if _tickers:
-            _ph = ",".join("?" * len(_tickers))
+            _ph = ",".join(["%s"] * len(_tickers))
             _price_rows = ctx.conn.execute(
                 f"SELECT ticker, last_close FROM ticker_metadata WHERE ticker IN ({_ph})",
                 list(_tickers),
             ).fetchall()
-            prices = {r[0]: r[1] for r in _price_rows if r[1] is not None}
+            prices = {r["ticker"]: r["last_close"] for r in _price_rows if r["last_close"] is not None}
 
     cluster_counts: dict[tuple, int] = {}
     if ctx and ctx.compute_conviction and ctx.conn and ctx.conviction_flags:
@@ -251,8 +285,17 @@ def _enrich(rows: list[sqlite3.Row], ctx: EnrichContext | None = None) -> list[d
         d["price_fmt"] = _fmt_value(d.get("price_per_share"))
         d["filed_rel"] = _relative_time(d.get("filed_at"))
         try:
-            filed_d = datetime.fromisoformat(str(d.get("filed_at") or "")).date()
-            tx_d = date.fromisoformat(str(d.get("transaction_date") or ""))
+            # filed_at may be a datetime (psycopg) or str (legacy)
+            filed_raw = d.get("filed_at") or ""
+            if isinstance(filed_raw, datetime):
+                filed_d = filed_raw.date()
+            else:
+                filed_d = datetime.fromisoformat(str(filed_raw)).date()
+            tx_raw = d.get("transaction_date") or ""
+            if isinstance(tx_raw, date):
+                tx_d = tx_raw
+            else:
+                tx_d = date.fromisoformat(str(tx_raw))
             d["disclosure_lag"] = (filed_d - tx_d).days
         except (ValueError, TypeError):
             d["disclosure_lag"] = None
@@ -319,7 +362,7 @@ _SORT_COLUMNS = {
 }
 
 
-def list_watchlist(conn: sqlite3.Connection) -> dict[str, list[dict]]:
+def list_watchlist(conn: psycopg.Connection) -> dict[str, list[dict]]:
     """Return {'tickers': [...], 'insiders': [...]} for the watchlist page."""
     rows = conn.execute(
         "SELECT id, type, value, label, created_at FROM watchlist ORDER BY created_at DESC"
@@ -329,43 +372,44 @@ def list_watchlist(conn: sqlite3.Connection) -> dict[str, list[dict]]:
     return {"tickers": tickers, "insiders": insiders}
 
 
-def add_watch(conn: sqlite3.Connection, watch_type: str, value: str, label: str) -> None:
+def add_watch(conn: psycopg.Connection, watch_type: str, value: str, label: str) -> None:
     conn.execute(
-        "INSERT OR IGNORE INTO watchlist (type, value, label) VALUES (?, ?, ?)",
+        "INSERT INTO watchlist (type, value, label) VALUES (%s, %s, %s)"
+        " ON CONFLICT DO NOTHING",
         [watch_type, value.strip(), label.strip()],
     )
     conn.commit()
 
 
-def remove_watch(conn: sqlite3.Connection, watch_id: int) -> None:
-    conn.execute("DELETE FROM watchlist WHERE id = ?", [watch_id])
+def remove_watch(conn: psycopg.Connection, watch_id: int) -> None:
+    conn.execute("DELETE FROM watchlist WHERE id = %s", [watch_id])
     conn.commit()
 
 
-def watched_tickers(conn: sqlite3.Connection) -> set[str]:
+def watched_tickers(conn: psycopg.Connection) -> set[str]:
     rows = conn.execute(
         "SELECT value FROM watchlist WHERE type = 'ticker'"
     ).fetchall()
-    return {r[0] for r in rows}
+    return {r["value"] for r in rows}
 
 
-def watched_insiders(conn: sqlite3.Connection) -> set[str]:
+def watched_insiders(conn: psycopg.Connection) -> set[str]:
     """Returns a set of insider_cik values."""
     rows = conn.execute(
         "SELECT value FROM watchlist WHERE type = 'insider'"
     ).fetchall()
-    return {r[0] for r in rows}
+    return {r["value"] for r in rows}
 
 
-def get_all_sectors(conn: sqlite3.Connection) -> list[str]:
+def get_all_sectors(conn: psycopg.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT DISTINCT sector FROM filings WHERE sector IS NOT NULL ORDER BY sector"
     ).fetchall()
-    return [r[0] for r in rows]
+    return [r["sector"] for r in rows]
 
 
 def get_daily_summary(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     start_date: date,
     end_date: date,
     hide_10b5_1: bool = True,
@@ -377,24 +421,24 @@ def get_daily_summary(
     codes = transaction_codes or ["P", "S"]
     ten_b = "AND is_10b5_1 = 0" if hide_10b5_1 else ""
     swap_f = "AND equity_swap = 0" if hide_equity_swap else ""
-    code_placeholders = ",".join("?" * len(codes))
+    code_placeholders = ",".join(["%s"] * len(codes))
     rows = conn.execute(f"""
         SELECT
-            DATE(filed_at) AS day,
+            filed_at::date AS day,
             SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) AS buy_count,
             COALESCE(SUM(CASE WHEN transaction_code='P' THEN total_value END), 0) AS buy_total,
             SUM(CASE WHEN transaction_code='S' THEN 1 ELSE 0 END) AS sell_count,
             COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
             COUNT(DISTINCT CASE WHEN transaction_code='P' THEN issuer_cik END) AS issuers
         FROM filings
-        WHERE DATE(filed_at) BETWEEN ? AND ?
+        WHERE filed_at::date BETWEEN %s AND %s
           AND transaction_code IN ({code_placeholders})
-          AND (total_value IS NULL OR total_value >= ?)
+          AND (total_value IS NULL OR total_value >= %s)
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           {ten_b}
           {swap_f}
-        GROUP BY DATE(filed_at)
+        GROUP BY filed_at::date
         ORDER BY day DESC
     """, [start_date.isoformat(), end_date.isoformat(), *codes, min_value]).fetchall()
 
@@ -432,10 +476,10 @@ def _build_filings_where(
     Returns (where_sql, params) where where_sql starts with 'WHERE ...'."""
     # Date condition: single date or range
     if date_range:
-        date_condition = "DATE(filed_at) BETWEEN ? AND ?"
+        date_condition = "filed_at::date BETWEEN %s AND %s"
         params: list = [date_range[0].isoformat(), date_range[1].isoformat()]
     else:
-        date_condition = "DATE(filed_at) = ?"
+        date_condition = "filed_at::date = %s"
         params = [target_date.isoformat()]
 
     role_clauses = []
@@ -454,7 +498,7 @@ def _build_filings_where(
     valid_tiers = [t for t in (market_cap_tiers or []) if t in MARKET_CAP_TIERS]
     _n_tiers = len(valid_tiers)  # int only — taint path from user input ends here
     if _n_tiers:
-        _single_range = "(market_cap >= ? AND market_cap < ?)"
+        _single_range = "(market_cap >= %s AND market_cap < %s)"
         tier_range_clauses = (" OR ".join([_single_range] * _n_tiers))
         mktcap_sql = (
             "AND (\n"
@@ -477,11 +521,11 @@ def _build_filings_where(
     _frag_swap     = "AND equity_swap = 0" if hide_equity_swap else ""
     _frag_role     = ("AND (" + " OR ".join(role_clauses) + ")") if role_clauses else ""
     _frag_ceo      = (
-        "AND (" + " OR ".join("insider_title LIKE ?" for _ in (ceo_cfo_keywords or [])) + ")"
+        "AND (" + " OR ".join("insider_title ILIKE %s" for _ in (ceo_cfo_keywords or [])) + ")"
         if ceo_cfo_only and ceo_cfo_keywords else ""
     )
-    _frag_search   = "AND (issuer_ticker LIKE ? OR issuer_name LIKE ? OR insider_name LIKE ?)" if search else ""
-    _frag_sec      = "AND sector = ?" if sector else ""
+    _frag_search   = "AND (issuer_ticker ILIKE %s OR issuer_name ILIKE %s OR insider_name ILIKE %s)" if search else ""
+    _frag_sec      = "AND sector = %s" if sector else ""
     _frag_watched  = (
         "AND (issuer_ticker IN (SELECT value FROM watchlist WHERE type='ticker') "
         "OR insider_cik IN (SELECT value FROM watchlist WHERE type='insider'))"
@@ -499,7 +543,7 @@ def _build_filings_where(
     where_sql = f"""
         WHERE {date_condition}
           AND transaction_code IN ({{codes}})
-          AND (total_value IS NULL OR total_value >= ?)
+          AND (total_value IS NULL OR total_value >= %s)
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           {_frag_ten_b}
@@ -512,7 +556,7 @@ def _build_filings_where(
           {_frag_funds}
           {_frag_options}
           {mktcap_sql}
-    """.format(codes=",".join("?" * len(transaction_codes)))
+    """.format(codes=",".join(["%s"] * len(transaction_codes)))
 
     # Param order must mirror placeholder order in the WHERE clause exactly:
     # date -> codes -> min_value -> ceo_keywords -> search -> sector -> mktcap.
@@ -531,7 +575,7 @@ def _build_filings_where(
 
 
 def get_filings_for_date(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     target_date: date,
     min_value: float = 0,
     transaction_codes: list[str] | None = None,
@@ -612,16 +656,16 @@ def get_filings_for_date(
         )
 
         # Pagination vs legacy limit:
-        #   - page_size provided => paginated path (LIMIT ? OFFSET ?), legacy limit ignored
+        #   - page_size provided => paginated path (LIMIT %s OFFSET %s), legacy limit ignored
         #   - page_size None     => export/backtest path; legacy limit applied if set
         if page_size is not None and not use_conviction:
-            sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT ? OFFSET ?"
+            sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT %s OFFSET %s"
             side_params.append(page_size)
             side_params.append((page - 1) * page_size)
         else:
             sql = f"{select_cols}\n{where_sql}\n{sql_sort}"
             if page_size is None and limit:
-                sql += "\nLIMIT ?"
+                sql += "\nLIMIT %s"
                 side_params.append(limit)
 
         rows = conn.execute(sql, side_params).fetchall()
@@ -647,7 +691,7 @@ def get_filings_for_date(
 
 
 def get_filings_count(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     target_date: date,
     *,
     min_value: float = 0,
@@ -690,8 +734,8 @@ def get_filings_count(
             target_date, transaction_codes=["P"], **common_kwargs
         )
         buy_count = conn.execute(
-            f"SELECT COUNT(*) FROM filings {buy_where}", buy_params
-        ).fetchone()[0]
+            f"SELECT COUNT(*) AS n FROM filings {buy_where}", buy_params
+        ).fetchone()["n"]
     else:
         buy_count = 0
 
@@ -700,8 +744,8 @@ def get_filings_count(
             target_date, transaction_codes=["S"], **common_kwargs
         )
         sell_count = conn.execute(
-            f"SELECT COUNT(*) FROM filings {sell_where}", sell_params
-        ).fetchone()[0]
+            f"SELECT COUNT(*) AS n FROM filings {sell_where}", sell_params
+        ).fetchone()["n"]
     else:
         sell_count = 0
 
@@ -709,7 +753,7 @@ def get_filings_count(
 
 
 def get_summary_stats(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     target_date: date,
     hide_10b5_1: bool = True,
     hide_equity_swap: bool = True,
@@ -728,38 +772,39 @@ def get_summary_stats(
             COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
             COUNT(DISTINCT issuer_cik) AS issuer_count
         FROM filings
-        WHERE DATE(filed_at)=? AND transaction_code IN ({codes_ph})
+        WHERE filed_at::date = %s AND transaction_code IN ({codes_ph})
           AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
     """, [d, *codes_list]).fetchone()
 
     # Clusters are always buy-only — a cluster is 2+ distinct insiders buying
     # the same stock. Sells are excluded regardless of the caller's codes filter.
+    # PostgreSQL requires an alias on subqueries — hence `AS sub`.
     clusters = conn.execute(f"""
-        SELECT COUNT(*) FROM (
+        SELECT COUNT(*) AS n FROM (
           SELECT issuer_cik FROM filings
-          WHERE DATE(filed_at)=? AND transaction_code = 'P'
+          WHERE filed_at::date = %s AND transaction_code = 'P'
             AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
-        )
+        ) AS sub
     """, [d]).fetchone()
 
-    buy_total = row[1] or 0
-    sell_total = row[3] or 0
+    buy_total = row["buy_total"] or 0
+    sell_total = row["sell_total"] or 0
     net = buy_total - sell_total
     return {
-        "buy_count": row[0] or 0,
-        "sell_count": row[2] or 0,
+        "buy_count": row["buy_count"] or 0,
+        "sell_count": row["sell_count"] or 0,
         "net_flow": net,
         "net_flow_fmt": _fmt_value(net),
-        "issuer_count": row[4] or 0,
-        "cluster_count": clusters[0] or 0,
+        "issuer_count": row["issuer_count"] or 0,
+        "cluster_count": clusters["n"] or 0,
         "buy_total_fmt": _fmt_value(buy_total),
         "sell_total_fmt": _fmt_value(sell_total),
     }
 
 
 def get_cluster_activity(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     target_date: date,
     min_insiders: int = 2,
     hide_10b5_1: bool = True,
@@ -768,10 +813,10 @@ def get_cluster_activity(
     codes: list[str] | None = None,
 ) -> list[dict]:
     if date_range:
-        date_condition = "DATE(filed_at) BETWEEN ? AND ?"
+        date_condition = "filed_at::date BETWEEN %s AND %s"
         date_params: list = [date_range[0].isoformat(), date_range[1].isoformat()]
     else:
-        date_condition = "DATE(filed_at) = ?"
+        date_condition = "filed_at::date = %s"
         date_params = [target_date.isoformat()]
     ten_b  = "AND is_10b5_1 = 0"  if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0" if hide_equity_swap else ""
@@ -790,8 +835,8 @@ def get_cluster_activity(
             COUNT(DISTINCT insider_cik) AS insider_count,
             COUNT(*) AS tx_count,
             COALESCE(SUM(total_value), 0) AS total_value,
-            GROUP_CONCAT(DISTINCT insider_name) AS insider_names,
-            GROUP_CONCAT(DISTINCT COALESCE(insider_title, '')) AS insider_titles
+            STRING_AGG(DISTINCT insider_name, ', ') AS insider_names,
+            STRING_AGG(DISTINCT COALESCE(insider_title, ''), ', ') AS insider_titles
         FROM filings
         WHERE {date_condition}
           AND transaction_code IN ({codes_ph})
@@ -801,15 +846,15 @@ def get_cluster_activity(
           {swap_f}
           AND issuer_ticker IS NOT NULL
         GROUP BY issuer_ticker, issuer_name
-        HAVING COUNT(DISTINCT insider_cik) >= ?
+        HAVING COUNT(DISTINCT insider_cik) >= %s
         ORDER BY total_value DESC
     """, [*date_params, *codes_list, min_insiders]).fetchall()
 
     if not rows:
         return []
 
-    cluster_tickers = [dict(r)["issuer_ticker"] for r in rows]
-    ticker_placeholders = ",".join("?" * len(cluster_tickers))
+    cluster_tickers = [r["issuer_ticker"] for r in rows]
+    ticker_placeholders = ",".join(["%s"] * len(cluster_tickers))
     all_tx = conn.execute(f"""
         SELECT transaction_id, insider_name, insider_title,
                transaction_code, shares, price_per_share, total_value, is_10b5_1,
@@ -838,12 +883,12 @@ def get_cluster_activity(
 
 
 def get_filing_detail(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     transaction_id: str,
     ctx: EnrichContext | None = None,
 ) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM filings WHERE transaction_id = ?", [transaction_id]
+        "SELECT * FROM filings WHERE transaction_id = %s", [transaction_id]
     ).fetchone()
     if row is None:
         return None
@@ -852,15 +897,15 @@ def get_filing_detail(
     # If this row was superseded, attach the amendment accession for display
     if d.get("superseded_by"):
         amendment = conn.execute(
-            "SELECT transaction_id FROM filings WHERE accession_no = ? LIMIT 1",
+            "SELECT transaction_id FROM filings WHERE accession_no = %s LIMIT 1",
             [d["superseded_by"]],
         ).fetchone()
-        d["amended_by_transaction_id"] = amendment[0] if amendment else None
+        d["amended_by_transaction_id"] = amendment["transaction_id"] if amendment else None
     return d
 
 
 def get_issuer_filings(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     ticker: str,
     days: int = 90,
 ) -> list[dict]:
@@ -868,7 +913,7 @@ def get_issuer_filings(
     rows = conn.execute(
         """
         SELECT * FROM filings
-        WHERE issuer_ticker = ? AND DATE(filed_at) >= ?
+        WHERE issuer_ticker = %s AND filed_at::date >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         ORDER BY filed_at DESC
@@ -883,26 +928,32 @@ def _week_start(d: date) -> str:
     return (d - timedelta(days=d.weekday())).isoformat()
 
 
-def get_issuer_trend(conn: sqlite3.Connection, ticker: str) -> list[dict]:
-    """Returns 26 weekly data points (≈ 6 months) for the buy/sell sparkline."""
+def get_issuer_trend(conn: psycopg.Connection, ticker: str) -> list[dict]:
+    """Returns 26 weekly data points (≈ 6 months) for the buy/sell sparkline.
+
+    PG: `date_trunc('week', ...)` returns Monday by definition, so the
+    Monday-of-week ISO date is `date_trunc('week', filed_at)::date`.
+    """
     today = date.today()
     cutoff = (today - timedelta(weeks=26)).isoformat()
 
-    # Use Monday-date keys to avoid %Y-%W year-boundary collisions across all SQLite versions.
-    # (strftime('%G-%V') would be cleaner but requires SQLite 3.38+; Ubuntu 22.04 ships 3.37)
     rows = conn.execute("""
-        SELECT DATE(filed_at, printf('-%d days', (strftime('%w', filed_at) + 6) % 7)) AS week_start,
+        SELECT date_trunc('week', filed_at)::date AS week_start,
                COALESCE(SUM(CASE WHEN transaction_code='P' THEN total_value END), 0) AS buy_total,
                COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total
         FROM filings
-        WHERE issuer_ticker = ? AND DATE(filed_at) >= ?
+        WHERE issuer_ticker = %s AND filed_at::date >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         GROUP BY week_start
         ORDER BY week_start
     """, [ticker.upper(), cutoff]).fetchall()
 
-    lookup = {r[0]: (r[1] or 0, r[2] or 0) for r in rows}
+    lookup = {}
+    for r in rows:
+        ws = r["week_start"]
+        key = ws.isoformat() if isinstance(ws, date) else str(ws)
+        lookup[key] = (r["buy_total"] or 0, r["sell_total"] or 0)
 
     series = []
     for i in range(25, -1, -1):
@@ -913,22 +964,21 @@ def get_issuer_trend(conn: sqlite3.Connection, ticker: str) -> list[dict]:
     return series
 
 
-def get_run_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+def get_run_log(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
     rows = conn.execute(
-        "SELECT * FROM run_log ORDER BY started_at DESC LIMIT ?", [limit]
+        "SELECT * FROM run_log ORDER BY started_at DESC LIMIT %s", [limit]
     ).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_insider_history(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     insider_cik: str,
     limit: int = 10,
 ) -> list[dict]:
     """
     Last N transactions by this insider across all companies.
     Uses a window function to flag the largest buy ever so it can be highlighted.
-    Requires SQLite 3.25+ (Ubuntu 22.04 ships 3.37).
     """
     rows = conn.execute(
         """
@@ -941,11 +991,11 @@ def get_insider_history(
             THEN 1 ELSE 0
           END AS is_largest_buy
         FROM filings
-        WHERE insider_cik = ?
+        WHERE insider_cik = %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         ORDER BY transaction_date DESC
-        LIMIT ?
+        LIMIT %s
         """,
         [insider_cik, limit],
     ).fetchall()
@@ -959,7 +1009,7 @@ def get_insider_history(
 
 
 def get_insider_full_history(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     insider_cik: str,
     ctx: EnrichContext | None = None,
 ) -> list[dict]:
@@ -968,7 +1018,7 @@ def get_insider_full_history(
         """
         SELECT *
         FROM filings
-        WHERE insider_cik = ?
+        WHERE insider_cik = %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         ORDER BY transaction_date DESC, filed_at DESC
@@ -978,20 +1028,20 @@ def get_insider_full_history(
     return _enrich(rows, ctx=ctx)
 
 
-def get_insider_summary(conn: sqlite3.Connection, insider_cik: str) -> dict:
+def get_insider_summary(conn: psycopg.Connection, insider_cik: str) -> dict:
     """Aggregate stats for a single insider across all filings."""
     row = conn.execute(
         """
         SELECT
             (SELECT insider_name FROM filings
-             WHERE insider_cik = ? ORDER BY filed_at DESC LIMIT 1) AS name,
+             WHERE insider_cik = %s ORDER BY filed_at DESC LIMIT 1) AS name,
             SUM(CASE WHEN transaction_code = 'P' THEN COALESCE(total_value, 0) ELSE 0 END) AS total_bought,
             SUM(CASE WHEN transaction_code = 'S' THEN COALESCE(total_value, 0) ELSE 0 END) AS total_sold,
             COUNT(DISTINCT issuer_cik) AS distinct_issuers,
             MIN(transaction_date) AS first_trade,
             MAX(transaction_date) AS last_trade
         FROM filings
-        WHERE insider_cik = ?
+        WHERE insider_cik = %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         """,
@@ -1010,7 +1060,7 @@ def get_insider_summary(conn: sqlite3.Connection, insider_cik: str) -> dict:
 
 
 def get_issuer_recent_insiders(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     issuer_cik: str,
     days: int = 90,
     exclude_transaction_id: str | None = None,
@@ -1021,8 +1071,12 @@ def get_issuer_recent_insiders(
     'Other insiders at X' sidebar on the filing detail page.
     """
     since = (date.today() - timedelta(days=days)).isoformat()
+    exclude_clause = "AND transaction_id != %s" if exclude_transaction_id else ""
+    params: list = [issuer_cik, since]
+    if exclude_transaction_id:
+        params.append(exclude_transaction_id)
     rows = conn.execute(
-        """
+        f"""
         SELECT
             insider_cik, insider_name, insider_title,
             SUM(CASE WHEN transaction_code='P' THEN COALESCE(total_value,0) ELSE 0 END) AS total_bought,
@@ -1030,15 +1084,15 @@ def get_issuer_recent_insiders(
             MAX(transaction_date) AS last_date,
             MAX(transaction_id) AS latest_transaction_id
         FROM filings
-        WHERE issuer_cik = ?
-          AND DATE(filed_at) >= ?
-          AND (? IS NULL OR transaction_id != ?)
+        WHERE issuer_cik = %s
+          AND filed_at::date >= %s
+          {exclude_clause}
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         GROUP BY insider_cik, insider_name, insider_title
         ORDER BY total_bought DESC
         """,
-        [issuer_cik, since, exclude_transaction_id, exclude_transaction_id],
+        params,
     ).fetchall()
     result = []
     for r in rows:
@@ -1049,23 +1103,23 @@ def get_issuer_recent_insiders(
     return result
 
 
-def get_recent_alerts(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
+def get_recent_alerts(conn: psycopg.Connection, limit: int = 10) -> list[dict]:
     rows = conn.execute(
-        "SELECT alert_key, alert_type, sent_at FROM alerts_sent ORDER BY sent_at DESC LIMIT ?",
+        "SELECT alert_key, alert_type, sent_at FROM alerts_sent ORDER BY sent_at DESC LIMIT %s",
         [limit],
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_10b5_1_stats(conn: sqlite3.Connection) -> dict:
-    total = conn.execute("SELECT COUNT(*) FROM filings").fetchone()[0]
+def get_10b5_1_stats(conn: psycopg.Connection) -> dict:
+    total = conn.execute("SELECT COUNT(*) AS n FROM filings").fetchone()["n"]
     flagged_xml = conn.execute(
-        "SELECT COUNT(*) FROM filings WHERE is_10b5_1=1"
-    ).fetchone()[0]
+        "SELECT COUNT(*) AS n FROM filings WHERE is_10b5_1=1"
+    ).fetchone()["n"]
     footnote_only = conn.execute(
-        """SELECT COUNT(*) FROM filings
-           WHERE is_10b5_1=1 AND footnote_text LIKE '%10b5-1%'"""
-    ).fetchone()[0]
+        """SELECT COUNT(*) AS n FROM filings
+           WHERE is_10b5_1=1 AND footnote_text ILIKE '%10b5-1%'"""
+    ).fetchone()["n"]
     return {
         "total_filings": total,
         "flagged": flagged_xml,
@@ -1077,7 +1131,7 @@ def get_10b5_1_stats(conn: sqlite3.Connection) -> dict:
 # Ticker metadata (market cap, options availability)
 # ---------------------------------------------------------------------------
 
-def get_ticker_metadata_map(conn: sqlite3.Connection, tickers: list[str]) -> dict[str, dict]:
+def get_ticker_metadata_map(conn: psycopg.Connection, tickers: list[str]) -> dict[str, dict]:
     """
     Batch-fetch ticker metadata rows for the given tickers in a single query.
     Returns {ticker: {'market_cap': float|None, 'has_options': int|None, 'fetched_at': str|None}}.
@@ -1085,7 +1139,7 @@ def get_ticker_metadata_map(conn: sqlite3.Connection, tickers: list[str]) -> dic
     """
     if not tickers:
         return {}
-    placeholders = ",".join("?" * len(tickers))
+    placeholders = ",".join(["%s"] * len(tickers))
     rows = conn.execute(
         f"SELECT ticker, market_cap, has_options, fetched_at FROM ticker_metadata"
         f" WHERE ticker IN ({placeholders})",
@@ -1095,7 +1149,7 @@ def get_ticker_metadata_map(conn: sqlite3.Connection, tickers: list[str]) -> dic
 
 
 def upsert_ticker_metadata(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     ticker: str,
     market_cap: float | None,
     has_options: int | None,
@@ -1104,11 +1158,11 @@ def upsert_ticker_metadata(
     conn.execute(
         """
         INSERT INTO ticker_metadata (ticker, has_options, market_cap, fetched_at)
-        VALUES (?, ?, ?, datetime('now'))
-        ON CONFLICT(ticker) DO UPDATE SET
-            has_options = excluded.has_options,
-            market_cap  = excluded.market_cap,
-            fetched_at  = excluded.fetched_at
+        VALUES (%s, %s, %s, NOW())
+        ON CONFLICT (ticker) DO UPDATE SET
+            has_options = EXCLUDED.has_options,
+            market_cap  = EXCLUDED.market_cap,
+            fetched_at  = EXCLUDED.fetched_at
         """,
         [ticker, has_options, market_cap],
     )
@@ -1128,7 +1182,7 @@ _CONGRESS_SORT_COLUMNS = {
 
 
 def get_congress_trades(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     ticker: str | None = None,
     politician: str | None = None,
     chamber: str | None = None,
@@ -1138,7 +1192,13 @@ def get_congress_trades(
     sort_order: str = "desc",
     limit: int = 500,
 ) -> list[dict]:
-    """Return congress_trades rows matching the given filters."""
+    """Return congress_trades rows matching the given filters.
+
+    Note: disclosure_date is stored as TEXT (ISO YYYY-MM-DD), so comparison
+    is lexicographic against a string. PG cast `CURRENT_DATE - INTERVAL %s`
+    produces a `date` value; psycopg adapts it back to text for comparison
+    via the implicit text < text rule, which works correctly for ISO dates.
+    """
     _safe_col = sort_by if sort_by in _CONGRESS_SORT_COLUMNS else "disclosure_date"
     _safe_dir = "ASC" if sort_order == "asc" else "DESC"
 
@@ -1146,23 +1206,26 @@ def get_congress_trades(
     params: list = []
 
     if days and days > 0:
-        clauses.append("disclosure_date >= date('now', ?)")
-        params.append(f"-{days} days")
+        # disclosure_date is stored as ISO YYYY-MM-DD TEXT; compute the cutoff
+        # in Python so we don't need to wrestle with PG INTERVAL syntax.
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        clauses.append("disclosure_date >= %s")
+        params.append(cutoff)
 
     if ticker:
-        clauses.append("ticker LIKE ?")
+        clauses.append("ticker ILIKE %s")
         params.append(ticker.upper())
 
     if politician:
-        clauses.append("politician_name LIKE ?")
+        clauses.append("politician_name ILIKE %s")
         params.append(f"%{politician}%")
 
     if chamber:
-        clauses.append("chamber = ?")
+        clauses.append("chamber = %s")
         params.append(chamber)
 
     if tx_type:
-        clauses.append("transaction_type = ?")
+        clauses.append("transaction_type = %s")
         params.append(tx_type)
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -1175,18 +1238,23 @@ def get_congress_trades(
         FROM congress_trades
         {where}
         ORDER BY {_safe_col} {_safe_dir} NULLS LAST
-        LIMIT ?
+        LIMIT %s
     """
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_congress_summary(conn: sqlite3.Connection, days: int = 30) -> dict:
+def get_congress_summary(conn: psycopg.Connection, days: int = 30) -> dict:
     """Return aggregate KPIs for the congress trades tab."""
-    use_date = days and days > 0
-    date_clause = "AND disclosure_date >= date('now', ?)" if use_date else ""
-    date_param: list = [f"-{days} days"] if use_date else []
+    use_date = bool(days and days > 0)
+    if use_date:
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        date_clause = "AND disclosure_date >= %s"
+        date_param: list = [cutoff]
+    else:
+        date_clause = ""
+        date_param = []
 
     totals = conn.execute(f"""
         SELECT

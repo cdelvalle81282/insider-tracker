@@ -1,0 +1,14 @@
+Alembic migrations for Insider Tracker.
+
+DATABASE_URL must be set in the environment before running migrations:
+  export DATABASE_URL=postgresql://user:pass@localhost:5432/insider_tracker
+
+Common commands:
+  alembic upgrade head          # apply all pending migrations
+  alembic current               # show current revision
+  alembic history --verbose     # show all revisions
+  alembic downgrade -1          # roll back one migration
+
+This project uses raw SQL (op.execute) rather than SQLAlchemy ORM models.
+The schema is the authoritative definition of the PostgreSQL tables —
+ingest.py's SCHEMA string is now SQLite-only (legacy reference).

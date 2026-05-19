@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
+
+import psycopg
 
 import polygon_client
 from backtest import (
@@ -29,14 +30,15 @@ from queries import _fmt_value as _fmt_money
 # Deduplication
 # ---------------------------------------------------------------------------
 
-def _try_claim_alert(conn: sqlite3.Connection, alert_key: str, alert_type: str) -> bool:
+def _try_claim_alert(conn: psycopg.Connection, alert_key: str, alert_type: str) -> bool:
     """
     Attempt to claim an alert slot. Returns True only if this process
     is the first to claim it (INSERT succeeded). Uses rowcount before commit
     to avoid the changes() race condition.
     """
     cur = conn.execute(
-        "INSERT OR IGNORE INTO alerts_sent (alert_key, alert_type) VALUES (?, ?)",
+        "INSERT INTO alerts_sent (alert_key, alert_type) VALUES (%s, %s)"
+        " ON CONFLICT DO NOTHING",
         [alert_key, alert_type],
     )
     claimed = cur.rowcount == 1
@@ -159,7 +161,7 @@ def _format_cluster_message(row: dict, base_url: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _match_big_buy(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     since_ts: str,
     threshold: float,
 ) -> list[dict]:
@@ -167,8 +169,8 @@ def _match_big_buy(
         """
         SELECT * FROM filings
         WHERE transaction_code = 'P'
-          AND total_value >= ?
-          AND ingested_at >= ?
+          AND total_value >= %s
+          AND ingested_at >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
@@ -180,21 +182,21 @@ def _match_big_buy(
 
 
 def _match_insider_buy(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     since_ts: str,
     threshold: float,
     keywords: list[str],
 ) -> list[dict]:
     if not keywords:
         return []
-    kw_clauses = " OR ".join("insider_title LIKE ?" for _ in keywords)
+    kw_clauses = " OR ".join("insider_title ILIKE %s" for _ in keywords)
     params = [threshold, since_ts] + [f"%{kw}%" for kw in keywords]
     rows = conn.execute(
         f"""
         SELECT * FROM filings
         WHERE transaction_code = 'P'
-          AND total_value >= ?
-          AND ingested_at >= ?
+          AND total_value >= %s
+          AND ingested_at >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
@@ -207,7 +209,7 @@ def _match_insider_buy(
 
 
 def _match_cluster(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     since_ts: str,
     min_insiders: int,
     window_days: int,
@@ -225,13 +227,13 @@ def _match_cluster(
                MAX(ingested_at) AS latest_ingested_at
         FROM filings
         WHERE transaction_code = 'P'
-          AND transaction_date >= ?
+          AND transaction_date >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
         GROUP BY issuer_cik, issuer_name, issuer_ticker
-        HAVING COUNT(DISTINCT insider_cik) >= ?
-           AND MAX(ingested_at) >= ?
+        HAVING COUNT(DISTINCT insider_cik) >= %s
+           AND MAX(ingested_at) >= %s
         ORDER BY total_value DESC
         """,
         [cutoff, min_insiders, since_ts],
@@ -266,7 +268,7 @@ def _cluster_alert_key(row: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def check_and_send(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     config: dict,
     since_ts: str | None = None,
     suppress: bool = False,
@@ -386,7 +388,7 @@ def _signal_alert_key(sig_code: str, row: dict) -> str:
 
 
 def check_and_send_signals(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     config: dict,
     polygon_api_key: str,
     suppress: bool = False,
@@ -413,9 +415,9 @@ def check_and_send_signals(
                transaction_date, total_value
         FROM filings
         WHERE transaction_code = 'P'
-          AND total_value >= ?
+          AND total_value >= %s
           AND is_10b5_1 = 0
-          AND transaction_date >= ?
+          AND transaction_date >= %s
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
@@ -427,9 +429,15 @@ def check_and_send_signals(
     if not rows:
         return 0
 
+    # Normalize transaction_date to ISO string. PG returns DATE columns as
+    # Python `date` objects, but bar dates are strings ("YYYY-MM-DD").
+    from datetime import date as _date_t
     by_ticker: dict[str, list[dict]] = {}
     for r in rows:
         t = dict(r)
+        td = t.get("transaction_date")
+        if isinstance(td, _date_t):
+            t["transaction_date"] = td.isoformat()
         by_ticker.setdefault(t["issuer_ticker"].strip(), []).append(t)
 
     price_from = today - timedelta(days=lookback + PRICE_WARMUP_DAYS)

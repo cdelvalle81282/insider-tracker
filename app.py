@@ -7,12 +7,12 @@ import io
 import json
 import os
 import re
-import sqlite3
 import statistics
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
+import psycopg
 from cachetools import TTLCache
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
@@ -34,7 +34,7 @@ from backtest import (
     detect_resistance_break,
 )
 from config import PAGE_SIZE, save_overrides
-from ingest import get_db
+from db import get_db, get_request_db
 from queries import EnrichContext
 
 BASE_DIR = Path(__file__).parent
@@ -98,7 +98,7 @@ def _load_config_cached() -> dict:
     return result
 
 
-def _get_all_sectors_cached(db: sqlite3.Connection) -> list[str]:
+def _get_all_sectors_cached(db: psycopg.Connection) -> list[str]:
     cached = _sentinel_get(_sectors_cache, "sectors")
     if cached is not None:
         return cached
@@ -145,14 +145,6 @@ app = FastAPI(title="Insider Tracker", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-
-
-def get_request_db() -> sqlite3.Connection:
-    conn = get_db()
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 def _parse_date(d: str | None) -> date:
@@ -206,7 +198,7 @@ def render_sparkline(series: list[dict]) -> str:
     )
 
 
-def _make_ctx(db: sqlite3.Connection, active_config: dict) -> EnrichContext:
+def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
     """Build an EnrichContext with conviction config and watchlist sets."""
     return EnrichContext(
         conn=db,
@@ -245,7 +237,7 @@ async def healthz():
 @limiter.limit("60/minute")
 async def index(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -389,7 +381,7 @@ async def index(
 @limiter.limit("60/minute")
 async def htmx_filings(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -626,7 +618,7 @@ _CSV_MAX_ROWS = 10000
 @limiter.limit("10/minute")
 async def export_csv(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -713,7 +705,7 @@ async def export_csv(
 async def filing_detail(
     request: Request,
     transaction_id: str,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
 ):
     active_config = _load_config_cached()
     ctx = _make_ctx(db, active_config)
@@ -745,7 +737,7 @@ async def filing_detail(
 async def issuer_view(
     request: Request,
     ticker: str,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     days: int = Query(default=90),
 ):
     if not _TICKER_RE.match(ticker.upper()):
@@ -764,7 +756,7 @@ async def issuer_view(
 async def insider_view(
     request: Request,
     cik: str,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
 ):
     if not _CIK_RE.match(cik):
         raise HTTPException(status_code=400, detail="Invalid CIK")
@@ -789,7 +781,7 @@ _RANGE_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
 async def chart_view(
     request: Request,
     ticker: str,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     range: str = Query(default="6m"),
     mode: str = Query(default="both"),   # buys | sells | both
 ):
@@ -892,7 +884,7 @@ async def chart_view(
 @app.get("/watchlist", response_class=HTMLResponse)
 async def watchlist_page(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
 ):
     wl = queries.list_watchlist(db)
     return templates.TemplateResponse(request, "watchlist.html", {"watchlist": wl})
@@ -901,7 +893,7 @@ async def watchlist_page(
 @app.post("/watchlist/add")
 async def watchlist_add(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     watch_type: str = Form(...),
     value: str = Form(...),
     label: str = Form(default=""),
@@ -920,7 +912,7 @@ async def watchlist_add(
 @app.post("/watchlist/remove")
 async def watchlist_remove(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     watch_id: int = Form(...),
 ):
     queries.remove_watch(db, watch_id)
@@ -932,7 +924,7 @@ async def watchlist_remove(
 @limiter.limit("60/minute")
 async def congress_view(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
     ticker: str = Query(default=""),
     politician: str = Query(default=""),
     chamber: str = Query(default=""),
@@ -973,7 +965,7 @@ async def congress_view(
 @app.get("/run-log", response_class=HTMLResponse)
 async def run_log(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
 ):
     log = queries.get_run_log(db)
     return templates.TemplateResponse(request, "run_log.html", {
@@ -1107,7 +1099,7 @@ async def backtest(request: Request):
 @app.get("/logic", response_class=HTMLResponse)
 async def logic_page(
     request: Request,
-    db: sqlite3.Connection = Depends(get_request_db),
+    db: psycopg.Connection = Depends(get_request_db),
 ):
     active_config = _load_config_cached()
     view_config = {k: v for k, v in active_config.items() if k != "polygon_api_key"}

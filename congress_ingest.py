@@ -5,10 +5,11 @@ import os
 import re
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from ingest import get_db
+from db import get_db
 
 AINVEST_BASE = "https://openapi.ainvest.com/open/ownership/congress"
 PAGE_SIZE = 100
@@ -112,12 +113,13 @@ def ingest_ticker(conn, ticker: str, api_key: str) -> tuple[int, int]:
             continue
         cur = conn.execute(
             """
-            INSERT OR IGNORE INTO congress_trades (
+            INSERT INTO congress_trades (
                 source, transaction_id, politician_name, chamber, party, state,
                 ticker, asset_description, transaction_type,
                 transaction_date, disclosure_date,
                 amount_min, amount_max, amount_label, raw_url
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT DO NOTHING
             """,
             [
                 rec["source"], rec["transaction_id"], rec["politician_name"],
@@ -138,43 +140,47 @@ def backfill(limit: int | None = None, stale_days: int = 7) -> None:
     """Fetch congressional trades for every distinct ticker in the filings DB."""
     api_key = _get_api_key()
     conn = get_db()
+    try:
+        # All distinct tickers from insider filings
+        tickers = [
+            r["issuer_ticker"] for r in conn.execute(
+                "SELECT DISTINCT issuer_ticker FROM filings "
+                "WHERE issuer_ticker IS NOT NULL AND issuer_ticker != '' "
+                "ORDER BY issuer_ticker"
+            ).fetchall()
+        ]
 
-    # All distinct tickers from insider filings
-    tickers = [
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT issuer_ticker FROM filings "
-            "WHERE issuer_ticker IS NOT NULL AND issuer_ticker != '' "
-            "ORDER BY issuer_ticker"
-        ).fetchall()
-    ]
+        # Skip tickers already ingested recently. Compute cutoff in Python and
+        # pass as a timestamp string — avoids PG/SQLite interval syntax drift.
+        cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
+        fresh = {
+            r["ticker"] for r in conn.execute(
+                "SELECT DISTINCT ticker FROM congress_trades "
+                "WHERE source='ainvest' AND ingested_at >= %s",
+                [cutoff_ts],
+            ).fetchall()
+        }
 
-    # Skip tickers already ingested recently
-    fresh = {
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT ticker FROM congress_trades "
-            "WHERE source='ainvest' AND ingested_at >= datetime('now', ?)",
-            [f"-{stale_days} days"],
-        ).fetchall()
-    }
+        work = [t for t in tickers if t not in fresh and _VALID_TICKER.match(t)]
+        if limit:
+            work = work[:limit]
 
-    work = [t for t in tickers if t not in fresh and _VALID_TICKER.match(t)]
-    if limit:
-        work = work[:limit]
+        total = len(work)
+        print(f"[congress_ingest] Fetching for {total} tickers (skipping {len(fresh)} fresh) ...")
 
-    total = len(work)
-    print(f"[congress_ingest] Fetching for {total} tickers (skipping {len(fresh)} fresh) ...")
+        all_inserted = all_skipped = 0
+        for i, ticker in enumerate(work, 1):
+            inserted, skipped = ingest_ticker(conn, ticker, api_key)
+            if inserted or skipped:
+                print(f"[{i}/{total}] {ticker} → {inserted} inserted, {skipped} skipped")
+            all_inserted += inserted
+            all_skipped += skipped
+            conn.commit()
+            time.sleep(RATE_SLEEP)
 
-    all_inserted = all_skipped = 0
-    for i, ticker in enumerate(work, 1):
-        inserted, skipped = ingest_ticker(conn, ticker, api_key)
-        if inserted or skipped:
-            print(f"[{i}/{total}] {ticker} → {inserted} inserted, {skipped} skipped")
-        all_inserted += inserted
-        all_skipped += skipped
-        conn.commit()
-        time.sleep(RATE_SLEEP)
-
-    print(f"[congress_ingest] Done. {all_inserted} inserted, {all_skipped} skipped total.")
+        print(f"[congress_ingest] Done. {all_inserted} inserted, {all_skipped} skipped total.")
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
@@ -189,8 +195,11 @@ if __name__ == "__main__":
     if args.ticker:
         api_key = _get_api_key()
         conn = get_db()
-        ins, skip = ingest_ticker(conn, args.ticker.upper(), api_key)
-        conn.commit()
-        print(f"{args.ticker}: {ins} inserted, {skip} skipped")
+        try:
+            ins, skip = ingest_ticker(conn, args.ticker.upper(), api_key)
+            conn.commit()
+            print(f"{args.ticker}: {ins} inserted, {skip} skipped")
+        finally:
+            conn.close()
     else:
         backfill(limit=args.limit, stale_days=args.stale_days)

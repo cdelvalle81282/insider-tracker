@@ -6,13 +6,13 @@ sector labels, and caches results in the `sectors` table.
 """
 from __future__ import annotations
 
-import sqlite3
 import time
 from datetime import date
 
 import httpx
+import psycopg
 
-from config import SEC_USER_AGENT, SEC_RATE_LIMIT
+from config import SEC_RATE_LIMIT, SEC_USER_AGENT
 
 RATE_SLEEP = 1.0 / SEC_RATE_LIMIT
 
@@ -132,7 +132,7 @@ _REFRESH_DAYS = 90
 _session_cache: dict[str, str] = {}   # in-memory per-process cache
 
 
-def get_or_fetch_sector(conn: sqlite3.Connection, cik: str) -> str:
+def get_or_fetch_sector(conn: psycopg.Connection, cik: str) -> str:
     """
     Return sector label for a CIK. Checks in order:
       1. In-memory session cache (instant)
@@ -143,7 +143,7 @@ def get_or_fetch_sector(conn: sqlite3.Connection, cik: str) -> str:
         return _session_cache[cik]
 
     row = conn.execute(
-        "SELECT sector, fetched_at FROM sectors WHERE issuer_cik = ?", [cik]
+        "SELECT sector, fetched_at FROM sectors WHERE issuer_cik = %s", [cik]
     ).fetchone()
 
     if row:
@@ -159,10 +159,10 @@ def get_or_fetch_sector(conn: sqlite3.Connection, cik: str) -> str:
 
     conn.execute(
         """INSERT INTO sectors (issuer_cik, sic_code, sic_desc, sector, fetched_at)
-           VALUES (?, ?, ?, ?, DATE('now'))
-           ON CONFLICT(issuer_cik) DO UPDATE SET
-             sic_code=excluded.sic_code, sic_desc=excluded.sic_desc,
-             sector=excluded.sector, fetched_at=excluded.fetched_at""",
+           VALUES (%s, %s, %s, %s, CURRENT_DATE::text)
+           ON CONFLICT (issuer_cik) DO UPDATE SET
+             sic_code=EXCLUDED.sic_code, sic_desc=EXCLUDED.sic_desc,
+             sector=EXCLUDED.sector, fetched_at=EXCLUDED.fetched_at""",
         [cik, sic_code, sic_desc, sector],
     )
     conn.commit()

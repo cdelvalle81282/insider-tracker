@@ -13,21 +13,22 @@ Usage:
 from __future__ import annotations
 
 import os
-import sqlite3
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import click
 import httpx
+import psycopg
 
+import alerts as alert_module
 import polygon_client
 import queries
-from config import DB_PATH, POLYGON_API_KEY, SEC_USER_AGENT, SEC_RATE_LIMIT, load_config
+import sector as sector_module
+from config import POLYGON_API_KEY, SEC_RATE_LIMIT, SEC_USER_AGENT, load_config
+from db import get_db
 from parser import parse_form4
 from tickers import lookup_ticker
-import alerts as alert_module
-import sector as sector_module
 
 EDGAR_BASE = "https://www.sec.gov"
 RATE_SLEEP = 1.0 / SEC_RATE_LIMIT  # seconds between requests
@@ -57,173 +58,21 @@ def _ping_heartbeat(url: str | None) -> None:
 # ---------------------------------------------------------------------------
 # Database setup
 # ---------------------------------------------------------------------------
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS filings (
-  transaction_id       TEXT PRIMARY KEY,
-  accession_no         TEXT NOT NULL,
-  filed_at             TIMESTAMP NOT NULL,
-  form_type            TEXT NOT NULL,
-
-  issuer_cik           TEXT NOT NULL,
-  issuer_name          TEXT NOT NULL,
-  issuer_ticker        TEXT,
-
-  insider_cik          TEXT NOT NULL,
-  insider_name         TEXT NOT NULL,
-  insider_title        TEXT,
-  is_director          INTEGER NOT NULL DEFAULT 0,
-  is_officer           INTEGER NOT NULL DEFAULT 0,
-  is_ten_percent_owner INTEGER NOT NULL DEFAULT 0,
-  is_other             INTEGER NOT NULL DEFAULT 0,
-
-  transaction_date     DATE NOT NULL,
-  transaction_code     TEXT NOT NULL,
-  equity_swap          INTEGER NOT NULL DEFAULT 0,
-  table_type           TEXT NOT NULL,
-
-  shares               REAL NOT NULL DEFAULT 0,
-  price_per_share      REAL,
-  total_value          REAL,
-
-  shares_owned_after   REAL,
-  ownership_type       TEXT,
-
-  is_10b5_1            INTEGER NOT NULL DEFAULT 0,
-  footnote_text        TEXT,
-  raw_xml_url          TEXT NOT NULL,
-  ingested_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_filed_at   ON filings(filed_at);
-CREATE INDEX IF NOT EXISTS idx_accession  ON filings(accession_no);
-CREATE INDEX IF NOT EXISTS idx_ticker     ON filings(issuer_ticker);
-CREATE INDEX IF NOT EXISTS idx_insider    ON filings(insider_cik);
-CREATE INDEX IF NOT EXISTS idx_tx_code    ON filings(transaction_code);
-CREATE INDEX IF NOT EXISTS idx_issuer_cik ON filings(issuer_cik);
-CREATE INDEX IF NOT EXISTS idx_tx_date    ON filings(transaction_date);
-
-CREATE TABLE IF NOT EXISTS run_log (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at      TIMESTAMP NOT NULL,
-  finished_at     TIMESTAMP,
-  date_processed  TEXT NOT NULL,
-  filings_found   INTEGER DEFAULT 0,
-  rows_inserted   INTEGER DEFAULT 0,
-  errors          INTEGER DEFAULT 0,
-  error_detail    TEXT
-);
-
-CREATE TABLE IF NOT EXISTS alerts_sent (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  alert_key   TEXT NOT NULL UNIQUE,
-  alert_type  TEXT NOT NULL,
-  sent_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Idempotent schema migrations. Uses PRAGMA to check before ALTER TABLE."""
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(filings)")}
-    if "superseded_by" not in cols:
-        conn.execute("ALTER TABLE filings ADD COLUMN superseded_by TEXT")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_superseded ON filings(superseded_by)"
-        )
-    if "sector" not in cols:
-        conn.execute("ALTER TABLE filings ADD COLUMN sector TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_sector ON filings(sector)")
-    if "joint_filer_of" not in cols:
-        conn.execute("ALTER TABLE filings ADD COLUMN joint_filer_of TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_joint_filer ON filings(joint_filer_of)")
-    existing_indexes = {r[1] for r in conn.execute("SELECT type, name FROM sqlite_master WHERE type='index'")}
-    if "idx_filed_date" not in existing_indexes:
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_filed_date ON filings(DATE(filed_at))")
-    # sectors lookup table
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sectors (
-            issuer_cik  TEXT PRIMARY KEY,
-            sic_code    TEXT,
-            sic_desc    TEXT,
-            sector      TEXT,
-            fetched_at  TEXT
-        )
-    """)
-    # watchlist table
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS watchlist (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            type        TEXT NOT NULL CHECK(type IN ('ticker','insider')),
-            value       TEXT NOT NULL,
-            label       TEXT,
-            created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(type, value)
-        )
-    """)
-    # ticker_metadata table — options flag, market cap, fetch timestamp
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ticker_metadata (
-            ticker       TEXT PRIMARY KEY,
-            has_options  INTEGER,
-            market_cap   REAL,
-            fetched_at   TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_tm_market_cap ON ticker_metadata(market_cap)")
-    tm_cols = {r[1] for r in conn.execute("PRAGMA table_info(ticker_metadata)")}
-    if "last_close" not in tm_cols:
-        conn.execute("ALTER TABLE ticker_metadata ADD COLUMN last_close REAL")
-    if "last_close_at" not in tm_cols:
-        conn.execute("ALTER TABLE ticker_metadata ADD COLUMN last_close_at TEXT")
-    # index on sectors.sic_code for hide_funds filter performance
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_sectors_sic ON sectors(sic_code)")
-    # congress_trades table — HOUSE/SENATE financial disclosure trades
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS congress_trades (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            source            TEXT NOT NULL,
-            transaction_id    TEXT NOT NULL UNIQUE,
-            politician_name   TEXT NOT NULL,
-            chamber           TEXT NOT NULL,
-            party             TEXT,
-            state             TEXT,
-            ticker            TEXT,
-            asset_description TEXT,
-            transaction_type  TEXT,
-            transaction_date  TEXT,
-            disclosure_date   TEXT,
-            amount_min        REAL,
-            amount_max        REAL,
-            amount_label      TEXT,
-            raw_url           TEXT,
-            ingested_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_ticker ON congress_trades(ticker)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_disclosure_date ON congress_trades(disclosure_date)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_politician ON congress_trades(politician_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_source ON congress_trades(source)")
-    # run_kind: classify runs so health checks only alert on nightly failures
-    cur = conn.execute("PRAGMA table_info(run_log)")
-    run_log_cols = {row[1] for row in cur.fetchall()}
-    if "run_kind" not in run_log_cols:
-        conn.execute("ALTER TABLE run_log ADD COLUMN run_kind TEXT DEFAULT 'unknown'")
-    conn.commit()
-
-
-def get_db(path: str | None = None) -> sqlite3.Connection:
-    db_path = path or DB_PATH
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.executescript(SCHEMA)
-    conn.commit()
-    _migrate(conn)
-    return conn
+#
+# Schema is now managed by Alembic — see migrations/versions/0001_initial_schema.py.
+# The SQLite SCHEMA string and _migrate() that used to live here have been removed.
+# The legacy SQLite DDL is preserved below as a comment for historical reference
+# only — it is NOT used to create tables anymore.
+#
+# Legacy SQLite schema (do not use; superseded by Alembic):
+#
+#     CREATE TABLE IF NOT EXISTS filings (
+#       transaction_id TEXT PRIMARY KEY, ... )
+#     CREATE TABLE IF NOT EXISTS run_log (
+#       id INTEGER PRIMARY KEY AUTOINCREMENT, ... )
+#     -- etc.  See git history for full SQLite definition.
+#
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -376,10 +225,10 @@ def accession_from_filename(filename: str) -> str:
 # Core ingest logic
 # ---------------------------------------------------------------------------
 
-def ingest_date(conn: sqlite3.Connection, target_date: date) -> tuple[int, int, int]:
+def ingest_date(conn: psycopg.Connection, target_date: date) -> tuple[int, int, int, str]:
     """
     Ingest all Form 4 filings for target_date.
-    Returns (filings_found, rows_inserted, errors).
+    Returns (filings_found, rows_inserted, errors, error_detail).
     """
     client = _make_client()
     entries = fetch_index_for_date(client, target_date)
@@ -409,7 +258,7 @@ def ingest_date(conn: sqlite3.Connection, target_date: date) -> tuple[int, int, 
                     sec = sector_module.get_or_fetch_sector(conn, cik)
                     if sec:
                         conn.execute(
-                            "UPDATE filings SET sector=? WHERE issuer_cik=? AND sector IS NULL",
+                            "UPDATE filings SET sector=%s WHERE issuer_cik=%s AND sector IS NULL",
                             [sec, cik],
                         )
                         conn.commit()
@@ -422,7 +271,7 @@ def ingest_date(conn: sqlite3.Connection, target_date: date) -> tuple[int, int, 
     return filings_found, rows_inserted, errors, "; ".join(error_lines[-10:])
 
 
-def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> int:
+def _resolve_amendment(conn: psycopg.Connection, row: dict) -> int:
     """
     If a newly inserted row is a Form 4/A amendment, find and mark the original
     row(s) it supersedes. Returns 1 if a row was superseded, 0 otherwise.
@@ -441,8 +290,8 @@ def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> int:
     candidates = conn.execute(
         """
         SELECT transaction_id FROM filings
-        WHERE issuer_cik = ? AND insider_cik = ? AND transaction_date = ?
-          AND transaction_code = ? AND shares = ? AND form_type = '4'
+        WHERE issuer_cik = %s AND insider_cik = %s AND transaction_date = %s
+          AND transaction_code = %s AND shares = %s AND form_type = '4'
           AND superseded_by IS NULL
         """,
         [*base_params, row["shares"]],
@@ -453,8 +302,8 @@ def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> int:
         candidates = conn.execute(
             """
             SELECT transaction_id FROM filings
-            WHERE issuer_cik = ? AND insider_cik = ? AND transaction_date = ?
-              AND transaction_code = ? AND form_type = '4'
+            WHERE issuer_cik = %s AND insider_cik = %s AND transaction_date = %s
+              AND transaction_code = %s AND form_type = '4'
               AND superseded_by IS NULL
             """,
             base_params,
@@ -462,47 +311,67 @@ def _resolve_amendment(conn: sqlite3.Connection, row: dict) -> int:
 
     if len(candidates) == 1:
         cur = conn.execute(
-            "UPDATE filings SET superseded_by = ? WHERE transaction_id = ?",
-            [row["accession_no"], candidates[0][0]],
+            "UPDATE filings SET superseded_by = %s WHERE transaction_id = %s",
+            [row["accession_no"], candidates[0]["transaction_id"]],
         )
         return cur.rowcount
     return 0
 
 
-def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
-    """Insert rows, skipping duplicates. Returns count of new rows inserted."""
+def _upsert_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
+    """Insert rows, skipping duplicates. Returns count of new rows inserted.
+
+    psycopg3 named-parameter placeholders use `%(name)s`, not SQLite's `:name`.
+
+    Each row is wrapped in its own `conn.transaction()` block so a DB error
+    on one row does not abort the whole batch — PG aborts the entire
+    transaction on any error, unlike SQLite which keeps going. When called
+    at the top level this is a per-row BEGIN/COMMIT; when called inside an
+    existing transaction it becomes a SAVEPOINT. Either way, a failing row
+    rolls back only that row.
+
+    `ON CONFLICT DO NOTHING` already handles duplicate-key cases without
+    raising, so this guard mostly protects against genuinely malformed
+    rows (e.g. NULL violations from a schema drift).
+    """
     inserted = 0
     for row in rows:
         try:
-            cur = conn.execute(
-                """
-                INSERT OR IGNORE INTO filings (
-                  transaction_id, accession_no, filed_at, form_type,
-                  issuer_cik, issuer_name, issuer_ticker,
-                  insider_cik, insider_name, insider_title,
-                  is_director, is_officer, is_ten_percent_owner, is_other,
-                  transaction_date, transaction_code, equity_swap, table_type,
-                  shares, price_per_share, total_value,
-                  shares_owned_after, ownership_type,
-                  is_10b5_1, footnote_text, raw_xml_url
-                ) VALUES (
-                  :transaction_id, :accession_no, :filed_at, :form_type,
-                  :issuer_cik, :issuer_name, :issuer_ticker,
-                  :insider_cik, :insider_name, :insider_title,
-                  :is_director, :is_officer, :is_ten_percent_owner, :is_other,
-                  :transaction_date, :transaction_code, :equity_swap, :table_type,
-                  :shares, :price_per_share, :total_value,
-                  :shares_owned_after, :ownership_type,
-                  :is_10b5_1, :footnote_text, :raw_xml_url
+            with conn.transaction():  # per-row tx — failures don't cascade across the batch
+                cur = conn.execute(
+                    """
+                    INSERT INTO filings (
+                      transaction_id, accession_no, filed_at, form_type,
+                      issuer_cik, issuer_name, issuer_ticker,
+                      insider_cik, insider_name, insider_title,
+                      is_director, is_officer, is_ten_percent_owner, is_other,
+                      transaction_date, transaction_code, equity_swap, table_type,
+                      shares, price_per_share, total_value,
+                      shares_owned_after, ownership_type,
+                      is_10b5_1, footnote_text, raw_xml_url
+                    ) VALUES (
+                      %(transaction_id)s, %(accession_no)s, %(filed_at)s, %(form_type)s,
+                      %(issuer_cik)s, %(issuer_name)s, %(issuer_ticker)s,
+                      %(insider_cik)s, %(insider_name)s, %(insider_title)s,
+                      %(is_director)s, %(is_officer)s, %(is_ten_percent_owner)s, %(is_other)s,
+                      %(transaction_date)s, %(transaction_code)s, %(equity_swap)s, %(table_type)s,
+                      %(shares)s, %(price_per_share)s, %(total_value)s,
+                      %(shares_owned_after)s, %(ownership_type)s,
+                      %(is_10b5_1)s, %(footnote_text)s, %(raw_xml_url)s
+                    )
+                    ON CONFLICT DO NOTHING
+                    """,
+                    row,
                 )
-                """,
-                row,
-            )
-            if cur.rowcount:
-                inserted += 1
-                _resolve_amendment(conn, row)
-        except sqlite3.Error:
+                if cur.rowcount:
+                    inserted += 1
+                    _resolve_amendment(conn, row)
+        except psycopg.Error:
+            # per-row transaction auto-rolled back; preserve already-inserted rows.
             pass
+    # `conn.transaction()` already committed each row; this commit is a
+    # belt-and-suspenders no-op for the case where psycopg's autocommit
+    # state has been left open by some caller.
     conn.commit()
     return inserted
 
@@ -511,7 +380,7 @@ def _upsert_rows(conn: sqlite3.Connection, rows: list[dict]) -> int:
 # Joint-filer deduplication
 # ---------------------------------------------------------------------------
 
-def mark_joint_filers(conn: sqlite3.Connection) -> int:
+def mark_joint_filers(conn: psycopg.Connection) -> int:
     """
     Detect joint-filer duplicate transactions and mark secondary rows.
 
@@ -524,11 +393,14 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
 
     Returns the number of rows newly marked.
     """
-    # char(31)/char(30) = ASCII unit/record separators — safe in EDGAR names
+    # CHR(31)/CHR(30) = ASCII unit/record separators — safe in EDGAR names.
+    # PG: STRING_AGG (vs SQLite GROUP_CONCAT); CHR() (vs SQLite char()).
+    # STRING_AGG ordering is not guaranteed without an ORDER BY clause, but
+    # Python re-sorts by filed_at after splitting, so source order doesn't matter.
     groups = conn.execute("""
-        SELECT GROUP_CONCAT(
-                   transaction_id || char(31) || insider_name || char(31) || filed_at,
-                   char(30)
+        SELECT STRING_AGG(
+                   transaction_id || CHR(31) || insider_name || CHR(31) || filed_at::text,
+                   CHR(30)
                ) AS row_data
         FROM filings
         WHERE superseded_by IS NULL
@@ -553,14 +425,14 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
 
         if combined != primary_name:
             conn.execute(
-                "UPDATE filings SET insider_name = ? WHERE transaction_id = ?",
+                "UPDATE filings SET insider_name = %s WHERE transaction_id = %s",
                 [combined, primary_id],
             )
 
         if secondary_ids:
-            placeholders = ",".join("?" * len(secondary_ids))
+            placeholders = ",".join(["%s"] * len(secondary_ids))
             cur = conn.execute(
-                f"UPDATE filings SET joint_filer_of = ? "
+                f"UPDATE filings SET joint_filer_of = %s "
                 f"WHERE transaction_id IN ({placeholders}) AND joint_filer_of IS NULL",
                 [primary_id, *secondary_ids],
             )
@@ -589,265 +461,275 @@ def mark_joint_filers(conn: sqlite3.Connection) -> int:
               help="Fetch latest close for tickers in ticker_metadata where last_close_at < today or NULL")
 def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices):
     conn = get_db()
-    config = load_config()
+    try:
+        config = load_config()
 
-    # Backfills suppress alerts — only real-time runs fire Slack
-    suppress_alerts = bool(backfill or backfill_days)
+        # Backfills suppress alerts — only real-time runs fire Slack
+        suppress_alerts = bool(backfill or backfill_days)
 
-    # Record run start for alert since_ts window
-    run_started_at = datetime.now(timezone.utc).isoformat()
+        # Record run start for alert since_ts window
+        run_started_at = datetime.now(timezone.utc).isoformat()
 
-    if do_joint_filers:
-        click.echo("Marking joint-filer duplicates ...", nl=False)
-        n = mark_joint_filers(conn)
-        click.echo(f" {n} rows marked")
-        _write_sentinel()
-        return
-
-    if do_backfill_metadata:
-        api_key = POLYGON_API_KEY
-        if not api_key:
-            click.echo("Error: POLYGON_API_KEY is not set. Export the environment variable and retry.")
+        if do_joint_filers:
+            click.echo("Marking joint-filer duplicates ...", nl=False)
+            n = mark_joint_filers(conn)
+            click.echo(f" {n} rows marked")
+            _write_sentinel()
             return
 
-        # All distinct tickers in the filings table
-        all_tickers: list[str] = [
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT issuer_ticker FROM filings"
-                " WHERE issuer_ticker IS NOT NULL AND issuer_ticker != ''"
-            ).fetchall()
-        ]
+        if do_backfill_metadata:
+            api_key = POLYGON_API_KEY
+            if not api_key:
+                click.echo("Error: POLYGON_API_KEY is not set. Export the environment variable and retry.")
+                return
 
-        # Skip tickers whose metadata is already fresh
-        fresh: set[str] = {
-            r[0] for r in conn.execute(
-                "SELECT ticker FROM ticker_metadata WHERE fetched_at > datetime('now', ?)",
-                [f"-{metadata_stale_days} days"],
-            ).fetchall()
-        }
-        work_list = [t for t in all_tickers if t not in fresh]
+            # All distinct tickers in the filings table
+            all_tickers: list[str] = [
+                r["issuer_ticker"] for r in conn.execute(
+                    "SELECT DISTINCT issuer_ticker FROM filings"
+                    " WHERE issuer_ticker IS NOT NULL AND issuer_ticker != ''"
+                ).fetchall()
+            ]
 
-        if metadata_limit is not None:
-            work_list = work_list[:metadata_limit]
+            # Skip tickers whose metadata is already fresh.
+            # PG: fetched_at is TEXT, so compare against an ISO timestamp string.
+            fresh_cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=metadata_stale_days)
+            ).isoformat()
+            fresh: set[str] = {
+                r["ticker"] for r in conn.execute(
+                    "SELECT ticker FROM ticker_metadata WHERE fetched_at > %s",
+                    [fresh_cutoff],
+                ).fetchall()
+            }
+            work_list = [t for t in all_tickers if t not in fresh]
 
-        total = len(work_list)
-        click.echo(
-            f"Fetching Polygon metadata for {total} tickers"
-            f" (stale_days={metadata_stale_days}, limit={metadata_limit}) ..."
-        )
+            if metadata_limit is not None:
+                work_list = work_list[:metadata_limit]
 
-        fetched = 0
-        skipped = 0
-        for i, ticker in enumerate(work_list, start=1):
-            result = polygon_client.fetch_ticker_metadata(ticker, api_key)
-            if result is not None:
-                queries.upsert_ticker_metadata(
-                    conn, ticker, result["market_cap"], result["has_options"]
-                )
-                fetched += 1
-                click.echo(
-                    f"[{i}/{total}] {ticker} → "
-                    f"market_cap={result['market_cap']}, "
-                    f"has_options={result['has_options']}"
-                )
-            else:
-                skipped += 1
-                click.echo(f"[{i}/{total}] {ticker} → no data (skipped)")
+            total = len(work_list)
+            click.echo(
+                f"Fetching Polygon metadata for {total} tickers"
+                f" (stale_days={metadata_stale_days}, limit={metadata_limit}) ..."
+            )
 
-            if fetched % 10 == 0 and fetched > 0:
-                conn.commit()
+            fetched = 0
+            skipped = 0
+            for i, ticker in enumerate(work_list, start=1):
+                result = polygon_client.fetch_ticker_metadata(ticker, api_key)
+                if result is not None:
+                    queries.upsert_ticker_metadata(
+                        conn, ticker, result["market_cap"], result["has_options"]
+                    )
+                    fetched += 1
+                    click.echo(
+                        f"[{i}/{total}] {ticker} → "
+                        f"market_cap={result['market_cap']}, "
+                        f"has_options={result['has_options']}"
+                    )
+                else:
+                    skipped += 1
+                    click.echo(f"[{i}/{total}] {ticker} → no data (skipped)")
 
-            if i < total:
-                time.sleep(12)  # Polygon free tier: 5 req/min per endpoint
+                if fetched % 10 == 0 and fetched > 0:
+                    conn.commit()
 
-        conn.commit()
-        click.echo(f"Done — {fetched} upserted, {skipped} skipped (no data)")
-        _write_sentinel()
-        return
+                if i < total:
+                    time.sleep(12)  # Polygon free tier: 5 req/min per endpoint
 
-    if do_update_prices:
-        if not POLYGON_API_KEY:
-            click.echo("Error: POLYGON_API_KEY is not set.", err=True)
+            conn.commit()
+            click.echo(f"Done — {fetched} upserted, {skipped} skipped (no data)")
+            _write_sentinel()
             return
-        today_iso = date.today().isoformat()
-        work = [
-            r[0] for r in conn.execute(
-                "SELECT ticker FROM ticker_metadata WHERE last_close_at IS NULL OR last_close_at < ?",
-                [today_iso],
+
+        if do_update_prices:
+            if not POLYGON_API_KEY:
+                click.echo("Error: POLYGON_API_KEY is not set.", err=True)
+                return
+            today_iso = date.today().isoformat()
+            work = [
+                r["ticker"] for r in conn.execute(
+                    "SELECT ticker FROM ticker_metadata WHERE last_close_at IS NULL OR last_close_at < %s",
+                    [today_iso],
+                ).fetchall()
+            ]
+            total = len(work)
+            click.echo(f"Updating last_close for {total} tickers ...")
+            updated = 0
+            for i, ticker in enumerate(work, start=1):
+                close = polygon_client.fetch_latest_close(ticker, POLYGON_API_KEY)
+                if close is not None:
+                    conn.execute(
+                        "UPDATE ticker_metadata SET last_close=%s, last_close_at=%s WHERE ticker=%s",
+                        [close, today_iso, ticker],
+                    )
+                    updated += 1
+                    click.echo(f"[{i}/{total}] {ticker} → {close}")
+                else:
+                    click.echo(f"[{i}/{total}] {ticker} → no data")
+                if i % 10 == 0:
+                    conn.commit()
+                if i < total:
+                    time.sleep(12)  # Polygon free tier: ~5 req/min
+            conn.commit()
+            click.echo(f"Done. Updated {updated}/{total} tickers.")
+            _write_sentinel()
+            return
+
+        if backfill_sectors:
+            ciks = [r["issuer_cik"] for r in conn.execute(
+                "SELECT DISTINCT issuer_cik FROM filings WHERE sector IS NULL"
+            ).fetchall()]
+            click.echo(f"Fetching sectors for {len(ciks)} issuers ...")
+            done = 0
+            for cik in ciks:
+                try:
+                    sector_module.get_or_fetch_sector(conn, cik)
+                    conn.execute(
+                        "UPDATE filings SET sector=(SELECT sector FROM sectors WHERE issuer_cik=%s)"
+                        " WHERE issuer_cik=%s AND sector IS NULL",
+                        [cik, cik],
+                    )
+                    conn.commit()
+                    done += 1
+                except Exception:
+                    pass
+            click.echo(f"Done — enriched {done}/{len(ciks)} issuers")
+            _write_sentinel()
+            return
+
+        if resolve_amendments:
+            click.echo("Resolving amendments in existing data ...", nl=False)
+            amendments = conn.execute(
+                "SELECT transaction_id, issuer_cik, insider_cik, transaction_date, "
+                "transaction_code, shares, accession_no, form_type "
+                "FROM filings WHERE form_type = '4/A'"
             ).fetchall()
-        ]
-        total = len(work)
-        click.echo(f"Updating last_close for {total} tickers ...")
-        updated = 0
-        for i, ticker in enumerate(work, start=1):
-            close = polygon_client.fetch_latest_close(ticker, POLYGON_API_KEY)
-            if close is not None:
-                conn.execute(
-                    "UPDATE ticker_metadata SET last_close=?, last_close_at=? WHERE ticker=?",
-                    [close, today_iso, ticker],
-                )
-                updated += 1
-                click.echo(f"[{i}/{total}] {ticker} → {close}")
+            resolved = sum(_resolve_amendment(conn, dict(row)) for row in amendments)
+            conn.commit()
+            click.echo(f" {len(amendments)} amendments processed, {resolved} rows superseded")
+            _write_sentinel()
+            return
+
+        dates: list[date] = []
+
+        if since_last_run:
+            row = conn.execute("SELECT MAX(filed_at::date) AS d FROM filings").fetchone()
+            last = row["d"] if row else None
+            if last:
+                start = last if isinstance(last, date) else date.fromisoformat(str(last))
+                end = date.today()
+                d = start
+                while d <= end:
+                    dates.append(d)
+                    d += timedelta(days=1)
             else:
-                click.echo(f"[{i}/{total}] {ticker} → no data")
-            if i % 10 == 0:
-                conn.commit()
-            if i < total:
-                time.sleep(12)  # Polygon free tier: ~5 req/min
-        conn.commit()
-        click.echo(f"Done. Updated {updated}/{total} tickers.")
-        _write_sentinel()
-        return
+                dates = [date.today()]
 
-    if backfill_sectors:
-        ciks = [r[0] for r in conn.execute(
-            "SELECT DISTINCT issuer_cik FROM filings WHERE sector IS NULL"
-        ).fetchall()]
-        click.echo(f"Fetching sectors for {len(ciks)} issuers ...")
-        done = 0
-        for cik in ciks:
-            try:
-                sector_module.get_or_fetch_sector(conn, cik)
-                conn.execute(
-                    "UPDATE filings SET sector=(SELECT sector FROM sectors WHERE issuer_cik=?) WHERE issuer_cik=? AND sector IS NULL",
-                    [cik, cik],
-                )
-                conn.commit()
-                done += 1
-            except Exception:
-                pass
-        click.echo(f"Done — enriched {done}/{len(ciks)} issuers")
-        _write_sentinel()
-        return
-
-    if resolve_amendments:
-        click.echo("Resolving amendments in existing data ...", nl=False)
-        amendments = conn.execute(
-            "SELECT transaction_id, issuer_cik, insider_cik, transaction_date, "
-            "transaction_code, shares, accession_no, form_type "
-            "FROM filings WHERE form_type = '4/A'"
-        ).fetchall()
-        resolved = sum(_resolve_amendment(conn, dict(row)) for row in amendments)
-        conn.commit()
-        click.echo(f" {len(amendments)} amendments processed, {resolved} rows superseded")
-        _write_sentinel()
-        return
-
-    dates: list[date] = []
-
-    if since_last_run:
-        row = conn.execute("SELECT MAX(DATE(filed_at)) FROM filings").fetchone()
-        last = row[0]
-        if last:
-            start = date.fromisoformat(last)
-            end = date.today()
+        elif backfill:
+            start = date.fromisoformat(backfill[0])
+            end = date.fromisoformat(backfill[1])
             d = start
             while d <= end:
                 dates.append(d)
                 d += timedelta(days=1)
+
+        elif backfill_days:
+            end = date.today()
+            start = end - timedelta(days=backfill_days)
+            d = start
+            while d <= end:
+                dates.append(d)
+                d += timedelta(days=1)
+
+        elif target_date:
+            if target_date.lower() == "today":
+                dates = [date.today()]
+            else:
+                dates = [date.fromisoformat(target_date)]
         else:
             dates = [date.today()]
 
-    elif backfill:
-        start = date.fromisoformat(backfill[0])
-        end = date.fromisoformat(backfill[1])
-        d = start
-        while d <= end:
-            dates.append(d)
-            d += timedelta(days=1)
-
-    elif backfill_days:
-        end = date.today()
-        start = end - timedelta(days=backfill_days)
-        d = start
-        while d <= end:
-            dates.append(d)
-            d += timedelta(days=1)
-
-    elif target_date:
-        if target_date.lower() == "today":
-            dates = [date.today()]
+        # Determine run_kind once for this invocation
+        if since_last_run:
+            _run_kind = "nightly"
+        elif backfill or backfill_days:
+            _run_kind = "backfill"
+        elif target_date:
+            _run_kind = "intraday"
         else:
-            dates = [date.fromisoformat(target_date)]
-    else:
-        dates = [date.today()]
+            _run_kind = "intraday"
 
-    # Determine run_kind once for this invocation
-    if since_last_run:
-        _run_kind = "nightly"
-    elif backfill or backfill_days:
-        _run_kind = "backfill"
-    elif target_date:
-        _run_kind = "intraday"
-    else:
-        _run_kind = "intraday"
+        for d in dates:
+            # Skip weekends — EDGAR has no filings
+            if d.weekday() >= 5:
+                continue
 
-    for d in dates:
-        # Skip weekends — EDGAR has no filings
-        if d.weekday() >= 5:
-            continue
+            started_at = datetime.now(timezone.utc).isoformat()
+            click.echo(f"Ingesting {d} ...", nl=False)
 
-        started_at = datetime.now(timezone.utc).isoformat()
-        click.echo(f"Ingesting {d} ...", nl=False)
-
-        try:
-            found, inserted, errors, error_detail = ingest_date(conn, d)
-            finished_at = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                """INSERT INTO run_log (started_at, finished_at, date_processed,
-                   filings_found, rows_inserted, errors, error_detail, run_kind)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (started_at, finished_at, d.isoformat(), found, inserted, errors, error_detail or None, _run_kind),
-            )
-            conn.commit()
-            click.echo(f" {found} filings, {inserted} rows inserted, {errors} errors")
-        except Exception as e:
-            finished_at = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                """INSERT INTO run_log (started_at, finished_at, date_processed,
-                   filings_found, rows_inserted, errors, error_detail, run_kind)
-                   VALUES (?, ?, ?, 0, 0, 1, ?, ?)""",
-                (started_at, finished_at, d.isoformat(), str(e), _run_kind),
-            )
-            conn.commit()
-            click.echo(f" ERROR: {e}")
-
-    # Mark joint-filer duplicates introduced by this ingest
-    mark_joint_filers(conn)
-    _write_sentinel()
-
-    # Heartbeat ping — only for nightly runs (since_last_run path)
-    if since_last_run:
-        _ping_heartbeat(os.getenv("INGEST_HEARTBEAT_URL"))
-
-    # Health check — only for nightly runs; backfills skip alerts anyway
-    if since_last_run:
-        try:
-            import health_check
-            n_health = health_check.send_health_alerts(conn, os.getenv("SLACK_WEBHOOK_URL"))
-            if n_health:
-                click.echo(f"Sent {n_health} health alert(s)")
-        except Exception as e:
-            click.echo(f"Health check error (non-fatal): {e}")
-
-    # Fire Slack alerts for newly ingested rows (real-time runs only)
-    if not suppress_alerts:
-        try:
-            n = alert_module.check_and_send(
-                conn, config, since_ts=run_started_at, suppress=False
-            )
-            if n:
-                click.echo(f"Sent {n} Slack alert(s)")
-        except Exception as e:
-            click.echo(f"Alert error (non-fatal): {e}")
-
-        if POLYGON_API_KEY:
             try:
-                n = alert_module.check_and_send_signals(conn, config, POLYGON_API_KEY)
-                if n:
-                    click.echo(f"Sent {n} signal alert(s)")
+                found, inserted, errors, error_detail = ingest_date(conn, d)
+                finished_at = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    """INSERT INTO run_log (started_at, finished_at, date_processed,
+                       filings_found, rows_inserted, errors, error_detail, run_kind)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (started_at, finished_at, d.isoformat(), found, inserted, errors, error_detail or None, _run_kind),
+                )
+                conn.commit()
+                click.echo(f" {found} filings, {inserted} rows inserted, {errors} errors")
             except Exception as e:
-                click.echo(f"Signal scan error (non-fatal): {e}")
+                # Aborted txns must be rolled back before the next statement.
+                conn.rollback()
+                finished_at = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    """INSERT INTO run_log (started_at, finished_at, date_processed,
+                       filings_found, rows_inserted, errors, error_detail, run_kind)
+                       VALUES (%s, %s, %s, 0, 0, 1, %s, %s)""",
+                    (started_at, finished_at, d.isoformat(), str(e), _run_kind),
+                )
+                conn.commit()
+                click.echo(f" ERROR: {e}")
+
+        # Mark joint-filer duplicates introduced by this ingest
+        mark_joint_filers(conn)
+        _write_sentinel()
+
+        # Heartbeat ping — only for nightly runs (since_last_run path)
+        if since_last_run:
+            _ping_heartbeat(os.getenv("INGEST_HEARTBEAT_URL"))
+
+        # Health check — only for nightly runs; backfills skip alerts anyway
+        if since_last_run:
+            try:
+                import health_check
+                n_health = health_check.send_health_alerts(conn, os.getenv("SLACK_WEBHOOK_URL"))
+                if n_health:
+                    click.echo(f"Sent {n_health} health alert(s)")
+            except Exception as e:
+                click.echo(f"Health check error (non-fatal): {e}")
+
+        # Fire Slack alerts for newly ingested rows (real-time runs only)
+        if not suppress_alerts:
+            try:
+                n = alert_module.check_and_send(
+                    conn, config, since_ts=run_started_at, suppress=False
+                )
+                if n:
+                    click.echo(f"Sent {n} Slack alert(s)")
+            except Exception as e:
+                click.echo(f"Alert error (non-fatal): {e}")
+
+            if POLYGON_API_KEY:
+                try:
+                    n = alert_module.check_and_send_signals(conn, config, POLYGON_API_KEY)
+                    if n:
+                        click.echo(f"Sent {n} signal alert(s)")
+                except Exception as e:
+                    click.echo(f"Signal scan error (non-fatal): {e}")
+    finally:
+        conn.close()  # returns to pool (psycopg_pool overrides close())
 
 
 if __name__ == "__main__":
