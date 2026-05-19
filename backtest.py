@@ -25,7 +25,7 @@ from pathlib import Path
 
 import httpx
 
-from db import get_db
+from db import get_cli_db
 
 # ---------------------------------------------------------------------------
 # Config — all fuzzy signal knobs in one place
@@ -338,7 +338,7 @@ def main() -> None:
     if not api_key:
         raise SystemExit("POLYGON_API_KEY not set")
 
-    conn = get_db()
+    conn = get_cli_db()
     rows = conn.execute("""
         SELECT issuer_ticker, issuer_name, insider_name, insider_title,
                transaction_date::text AS transaction_date,

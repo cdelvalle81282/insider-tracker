@@ -26,7 +26,7 @@ import polygon_client
 import queries
 import sector as sector_module
 from config import POLYGON_API_KEY, SEC_RATE_LIMIT, SEC_USER_AGENT, load_config
-from db import get_db
+from db import get_cli_db
 from parser import parse_form4
 from tickers import lookup_ticker
 
@@ -460,7 +460,7 @@ def mark_joint_filers(conn: psycopg.Connection) -> int:
 @click.option("--update-prices", "do_update_prices", is_flag=True, default=False,
               help="Fetch latest close for tickers in ticker_metadata where last_close_at < today or NULL")
 def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices):
-    conn = get_db()
+    conn = get_cli_db()
     try:
         config = load_config()
 

@@ -35,7 +35,7 @@ from backtest import (
     detect_hhl,
     detect_resistance_break,
 )
-from db import get_db
+from db import get_cli_db
 from queries import get_chart_buys
 
 _API_KEY = os.getenv("POLYGON_API_KEY", "")
@@ -128,7 +128,7 @@ def main():
     from_date = today - timedelta(days=args.days)
     full_from = from_date - timedelta(days=PRICE_WARMUP_DAYS)
 
-    conn = get_db()
+    conn = get_cli_db()
 
     charts = []
 

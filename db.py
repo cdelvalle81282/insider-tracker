@@ -1,15 +1,15 @@
 """
 PostgreSQL connection pool for Insider Tracker.
 
-Replaces the sqlite3 connection pattern from ingest.get_db().
 The pool is lazily initialized on first use.
 
 Usage:
-  - app.py uses get_request_db() as a FastAPI dependency (a plain generator
-    function — FastAPI handles teardown via the generator's try/finally).
-  - ingest.py and other scripts use get_db() directly and must close()
-    the connection when done (which returns it to the pool, thanks to
-    psycopg_pool's PoolConnection.close() override).
+  - app.py routes use get_request_db() as a FastAPI dependency, or get_db()
+    for the deferred HTMX endpoints (htmx_stats, htmx_clusters).
+  - CLI scripts (ingest.py, congress_ingest.py, etc.) use get_cli_db() —
+    a plain psycopg connection with no pool. CLI scripts are sequential and
+    don't need pooling; creating a pool in a CLI process competes with the
+    web app's pool under PG load.
 
 DATABASE_URL must be set in the environment, e.g.:
   postgresql://user:pass@localhost:5432/insider_tracker
@@ -50,6 +50,19 @@ def get_db() -> psycopg.Connection:
     `sqlite3.Connection.close()` pattern.
     """
     return _get_pool().getconn()
+
+
+def get_cli_db() -> psycopg.Connection:
+    """Direct connection (not pooled) for CLI scripts like ingest.py.
+
+    CLI scripts are sequential — they don't need a pool. Using a direct
+    connection avoids spinning up pool background threads that would compete
+    with the web app's pool under PostgreSQL load.
+    """
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError("DATABASE_URL environment variable not set")
+    return psycopg.connect(url, row_factory=dict_row, options="-c timezone=UTC")
 
 
 def get_request_db() -> Generator[psycopg.Connection, None, None]:

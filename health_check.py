@@ -134,8 +134,8 @@ def send_health_alerts(conn: psycopg.Connection, slack_webhook_url: str | None) 
 
 
 if __name__ == "__main__":
-    from db import get_db
-    conn = get_db()
+    from db import get_cli_db
+    conn = get_cli_db()
     findings = check_ingest_health(conn)
     if findings:
         print(f"Found {len(findings)} health issue(s):")

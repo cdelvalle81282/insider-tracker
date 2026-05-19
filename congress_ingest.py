@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from db import get_db
+from db import get_cli_db
 
 AINVEST_BASE = "https://openapi.ainvest.com/open/ownership/congress"
 PAGE_SIZE = 100
@@ -139,7 +139,7 @@ def ingest_ticker(conn, ticker: str, api_key: str) -> tuple[int, int]:
 def backfill(limit: int | None = None, stale_days: int = 7) -> None:
     """Fetch congressional trades for every distinct ticker in the filings DB."""
     api_key = _get_api_key()
-    conn = get_db()
+    conn = get_cli_db()
     try:
         # All distinct tickers from insider filings
         tickers = [
@@ -194,7 +194,7 @@ if __name__ == "__main__":
 
     if args.ticker:
         api_key = _get_api_key()
-        conn = get_db()
+        conn = get_cli_db()
         try:
             ins, skip = ingest_ticker(conn, args.ticker.upper(), api_key)
             conn.commit()
