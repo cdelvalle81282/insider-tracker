@@ -1,7 +1,7 @@
 """
 Alembic environment for Insider Tracker.
 
-Uses psycopg3 directly (no SQLAlchemy) — matches the rest of the codebase.
+Uses SQLAlchemy 2 with the psycopg3 dialect (postgresql+psycopg).
 Reads DATABASE_URL from the environment.
 """
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
-import psycopg
 from alembic import context
+from sqlalchemy import create_engine, pool
 
 config = context.config
 
@@ -23,25 +23,30 @@ if not _db_url:
         "DATABASE_URL environment variable not set — required for Alembic migrations"
     )
 
+# Alembic needs SQLAlchemy; swap scheme to psycopg3 dialect.
+# The app uses psycopg3 directly (no SQLAlchemy), so this only affects migrations.
+if _db_url.startswith("postgresql://"):
+    _sa_url = _db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+else:
+    _sa_url = _db_url
+
 target_metadata = None
 
 
 def run_migrations_offline() -> None:
-    """Emit SQL to stdout without a live connection."""
     context.configure(
-        url=_db_url,
+        url=_sa_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        dialect_name="postgresql",
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    """Run migrations against a live database via psycopg3."""
-    with psycopg.connect(_db_url) as connection:
+    engine = create_engine(_sa_url, poolclass=pool.NullPool)
+    with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
