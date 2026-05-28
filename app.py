@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -14,8 +15,8 @@ from pathlib import Path
 
 import psycopg
 from cachetools import TTLCache
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -970,6 +971,48 @@ async def congress_view(
         "summary": summary,
         "filters": filters,
     })
+
+
+# ---------------------------------------------------------------------------
+# Webhook — auto-diagnosis trigger from Healthchecks.io / BetterStack
+# ---------------------------------------------------------------------------
+
+@app.post("/webhook/alert")
+async def webhook_alert(request: Request, background_tasks: BackgroundTasks):
+    """
+    Receives POST from Healthchecks.io or BetterStack when a check fails.
+    Validates WEBHOOK_SECRET, then fires auto_diagnose in the background.
+    Intentionally exempt from Basic Auth and rate limiting (called by external services).
+    """
+    secret = os.getenv("WEBHOOK_SECRET", "")
+    if secret:
+        provided = request.headers.get("X-Webhook-Secret", "")
+        if not hmac.compare_digest(provided, secret):
+            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    check_name = (
+        body.get("check_name")
+        or body.get("monitor", {}).get("url")
+        or body.get("monitor_friendly_name")
+        or "unknown"
+    )
+    alert_info = {"check_name": check_name, "source": "webhook", "payload": body}
+    background_tasks.add_task(_run_diagnostic_bg, alert_info)
+    return JSONResponse({"ok": True})
+
+
+def _run_diagnostic_bg(alert_info: dict) -> None:
+    try:
+        import auto_diagnose
+        auto_diagnose.run_diagnostic(alert_info)
+    except Exception as e:
+        import logging
+        logging.getLogger("auto_diagnose").error("Diagnostic failed: %s", e)
 
 
 @app.get("/run-log", response_class=HTMLResponse)
