@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 import re
 import statistics
@@ -1011,7 +1012,6 @@ def _run_diagnostic_bg(alert_info: dict) -> None:
         import auto_diagnose
         auto_diagnose.run_diagnostic(alert_info)
     except Exception as e:
-        import logging
         logging.getLogger("auto_diagnose").error("Diagnostic failed: %s", e)
 
 

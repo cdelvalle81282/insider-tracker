@@ -9,22 +9,29 @@ Safe auto-fixes (no human approval needed):
   - service_restart: restart insider-tracker.service if it's dead/failed
   - cache_clear: touch the ingest sentinel to invalidate all in-process caches
 
-Everything else (code changes, DB ops, config edits) goes into the Slack
-report as "needs your attention" for a human to handle.
+Everything else goes into the Slack report as "needs your attention".
 
 Run manually: python auto_diagnose.py [alert_name]
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import subprocess
-import urllib.request
-from datetime import datetime
-from pathlib import Path
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 
-SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
+from alerts import _post_to_slack
+from ingest import INGEST_SENTINEL
+
 SERVICE = "insider-tracker.service"
+_LOG = logging.getLogger(__name__)
+
+# Seconds to wait after restarting the service before checking its status.
+_RESTART_SETTLE = 3
 
 
 # ---------------------------------------------------------------------------
@@ -43,8 +50,7 @@ def _cmd(cmd: str, timeout: int = 20) -> str:
 
 def _sentinel_age_hours() -> float | None:
     try:
-        mtime = SENTINEL.stat().st_mtime
-        return (datetime.now().timestamp() - mtime) / 3600
+        return (datetime.now().timestamp() - INGEST_SENTINEL.stat().st_mtime) / 3600
     except FileNotFoundError:
         return None
 
@@ -53,33 +59,48 @@ def _recent_run_log() -> str:
     try:
         from db import get_cli_db
         conn = get_cli_db()
-        rows = conn.execute(
-            """SELECT run_kind, date_processed, filings_found, errors,
-                      LEFT(error_detail, 200) AS error_detail, started_at::text
-               FROM run_log ORDER BY started_at DESC LIMIT 5"""
-        ).fetchall()
-        conn.close()
-        return json.dumps([dict(r) for r in rows], default=str, indent=2)
+        try:
+            rows = conn.execute(
+                """SELECT run_kind, date_processed, filings_found, errors,
+                          LEFT(error_detail, 200) AS error_detail, started_at::text
+                   FROM run_log ORDER BY started_at DESC LIMIT 5"""
+            ).fetchall()
+            return json.dumps([dict(r) for r in rows], default=str, indent=2)
+        finally:
+            conn.close()
     except Exception as e:
         return f"[DB unavailable: {e}]"
 
 
 def collect_diagnostics() -> dict:
     db_url = os.getenv("DATABASE_URL", "")
-    pg_cmd = f'psql "{db_url}" -c "SELECT state, count(*) FROM pg_stat_activity WHERE datname=\'insider_tracker\' GROUP BY state;" 2>&1' if db_url else "DATABASE_URL not set"
+    pg_cmd = (
+        f'psql "{db_url}" -c '
+        f"\"SELECT state, count(*) FROM pg_stat_activity WHERE datname='insider_tracker' GROUP BY state;\" 2>&1"
+        if db_url else "DATABASE_URL not set"
+    )
 
-    age = _sentinel_age_hours()
+    # Run independent subprocess calls in parallel to cut worst-case from ~160s to ~20s
+    cmds = {
+        "service_status": f"sudo systemctl status {SERVICE} --no-pager -l",
+        "recent_logs":    f"sudo journalctl -u {SERVICE} -n 60 --no-pager",
+        "pg_connections": pg_cmd,
+        "disk":           "df -h / /home",
+        "memory":         "free -h",
+        "nightly_timer":  "sudo systemctl status insider-ingest-nightly.timer --no-pager",
+        "prices_timer":   "sudo systemctl status insider-prices.timer --no-pager",
+    }
+    results: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=len(cmds)) as pool:
+        futures = {pool.submit(_cmd, cmd): key for key, cmd in cmds.items()}
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+
     return {
-        "timestamp_utc": datetime.utcnow().isoformat(),
-        "service_status": _cmd(f"sudo systemctl status {SERVICE} --no-pager -l"),
-        "recent_logs": _cmd(f"sudo journalctl -u {SERVICE} -n 60 --no-pager"),
-        "pg_connections": _cmd(pg_cmd),
-        "disk": _cmd("df -h / /home"),
-        "memory": _cmd("free -h"),
-        "sentinel_age_hours": age,
-        "nightly_timer": _cmd("sudo systemctl status insider-ingest-nightly.timer --no-pager"),
-        "prices_timer": _cmd("sudo systemctl status insider-prices.timer --no-pager"),
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "sentinel_age_hours": _sentinel_age_hours(),
         "recent_run_log": _recent_run_log(),
+        **results,
     }
 
 
@@ -95,11 +116,11 @@ def analyze(diagnostics: dict, alert_info: dict) -> dict:
             "severity": "high",
             "safe_auto_fixes": [],
             "manual_actions": ["Set ANTHROPIC_API_KEY in /home/deploy/insider-tracker/.env and restart the service"],
-            "diagnosis_summary": "Auto-diagnosis was triggered but ANTHROPIC_API_KEY is missing from the environment. Manual investigation required.",
+            "diagnosis_summary": "Auto-diagnosis was triggered but ANTHROPIC_API_KEY is missing. Manual investigation required.",
         }
 
     import anthropic  # deferred — only installed on server
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
 
     prompt = f"""You are an autonomous ops agent for the Insider Tracker application.
 Stack: FastAPI + PostgreSQL 16 + uvicorn (2 workers) on a DigitalOcean droplet.
@@ -132,11 +153,9 @@ Be conservative: prefer doing nothing over taking risky auto-actions."""
         messages=[{"role": "user", "content": prompt}],
     )
     raw = msg.content[0].text.strip()
-    # Strip markdown fences if model wrapped it
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    # Strip markdown code fences if the model wrapped the JSON
+    raw = re.sub(r"^```\w*\n?", "", raw)
+    raw = re.sub(r"\n?```$", "", raw).strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -153,19 +172,29 @@ Be conservative: prefer doing nothing over taking risky auto-actions."""
 # Auto-fix execution
 # ---------------------------------------------------------------------------
 
+_VALID_FIXES = {"service_restart", "cache_clear"}
+
+
 def apply_fixes(fixes: list[str]) -> list[str]:
     done = []
+    for fix in fixes:
+        if fix not in _VALID_FIXES:
+            _LOG.warning("Ignoring unrecognised fix action: %r", fix)
+
     if "service_restart" in fixes:
         _cmd(f"sudo systemctl restart {SERVICE}")
-        import time; time.sleep(3)
+        # Allow systemd time to settle before checking active state
+        time.sleep(_RESTART_SETTLE)
         status = _cmd(f"systemctl is-active {SERVICE}")
         done.append(f"Restarted {SERVICE} → now: {status}")
+
     if "cache_clear" in fixes:
         try:
-            SENTINEL.touch()
+            INGEST_SENTINEL.touch()
             done.append("Touched ingest sentinel — all worker caches will invalidate on next request")
         except Exception as e:
             done.append(f"Cache clear failed: {e}")
+
     return done
 
 
@@ -190,11 +219,7 @@ def post_slack(analysis: dict, auto_fixed: list[str], alert_info: dict, webhook_
         f"*Auto-fixed:*\n{fixed_lines}\n\n"
         f"*Needs your attention:*\n{manual_lines}"
     )
-
-    payload = json.dumps({"text": text}).encode()
-    req = urllib.request.Request(webhook_url, data=payload,
-                                 headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=10)
+    _post_to_slack(webhook_url, {"text": text})
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +228,6 @@ def post_slack(analysis: dict, auto_fixed: list[str], alert_info: dict, webhook_
 
 def run_diagnostic(alert_info: dict) -> None:
     slack_url = os.getenv("SLACK_WEBHOOK_URL")
-
     diagnostics = collect_diagnostics()
     analysis = analyze(diagnostics, alert_info)
     auto_fixed = apply_fixes(analysis.get("safe_auto_fixes", []))
@@ -212,7 +236,7 @@ def run_diagnostic(alert_info: dict) -> None:
         try:
             post_slack(analysis, auto_fixed, alert_info, slack_url)
         except Exception as e:
-            print(f"Slack post failed: {e}")
+            _LOG.error("Slack post failed: %s", e)
     else:
         print("No SLACK_WEBHOOK_URL — printing report:")
         print(json.dumps({"analysis": analysis, "auto_fixed": auto_fixed}, indent=2))
