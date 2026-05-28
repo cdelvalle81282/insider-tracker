@@ -574,6 +574,7 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             conn.commit()
             click.echo(f"Done. Updated {updated}/{total} tickers.")
             _write_sentinel()
+            _ping_heartbeat(os.getenv("PRICES_HEARTBEAT_URL"))
             return
 
         if backfill_sectors:
