@@ -226,7 +226,7 @@ async def healthz():
         last_ingest = datetime.utcfromtimestamp(mtime).isoformat() + "Z" if mtime else None
     except Exception:
         last_ingest = None
-    return {"ok": True, "last_ingest": last_ingest}
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -615,7 +615,7 @@ _CSV_MAX_ROWS = 10000
 
 
 @app.get("/export.csv")
-@limiter.limit("10/minute")
+@limiter.limit("3/minute")
 async def export_csv(
     request: Request,
     db: psycopg.Connection = Depends(get_request_db),
@@ -647,6 +647,9 @@ async def export_csv(
     only_watched = watched_only == "1"
 
     range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
+    # Clamp CSV exports to 90 days max to prevent runaway queries
+    if (range_end - range_start).days > 90:
+        range_start = range_end - timedelta(days=90)
     target_date = range_end
 
     ctx = _make_ctx(db, active_config)
@@ -904,6 +907,13 @@ async def watchlist_add(
     label = label.strip()
     if not value or len(value) > 64 or len(label) > 128:
         raise HTTPException(status_code=400, detail="Invalid value or label")
+    if watch_type == "ticker":
+        value = value.upper()
+        if not _TICKER_RE.match(value):
+            raise HTTPException(status_code=400, detail="Invalid ticker format")
+    elif watch_type == "insider":
+        if not _CIK_RE.match(value):
+            raise HTTPException(status_code=400, detail="Invalid CIK format")
     queries.add_watch(db, watch_type, value, label or value)
     _query_cache.clear()
     return RedirectResponse(url="/watchlist", status_code=303)
@@ -963,6 +973,7 @@ async def congress_view(
 
 
 @app.get("/run-log", response_class=HTMLResponse)
+@limiter.limit("30/minute")
 async def run_log(
     request: Request,
     db: psycopg.Connection = Depends(get_request_db),
@@ -1120,27 +1131,27 @@ async def logic_page(
 async def logic_save(
     request: Request,
     # Alert rules
-    big_buy_threshold: float = Form(...),
-    insider_buy_threshold: float = Form(...),
+    big_buy_threshold: float = Form(..., ge=0, le=1_000_000_000),
+    insider_buy_threshold: float = Form(..., ge=0, le=1_000_000_000),
     insider_title_keywords: str = Form(...),
-    cluster_window_days: int = Form(...),
-    cluster_min_insiders: int = Form(...),
+    cluster_window_days: int = Form(..., ge=1, le=365),
+    cluster_min_insiders: int = Form(..., ge=2, le=50),
     # Filter defaults
-    min_value: float = Form(...),
+    min_value: float = Form(..., ge=0, le=1_000_000_000),
     hide_10b5_1: str = Form(default="off"),
     # Conviction flags (all optional — default None means "keep existing")
-    conviction_base_open_market_buy: int | None = Form(default=None),
-    conviction_ceo_cfo_bonus: int | None = Form(default=None),
-    conviction_director_bonus: int | None = Form(default=None),
-    conviction_ten_percent_owner_bonus: int | None = Form(default=None),
-    conviction_cluster_bonus: int | None = Form(default=None),
-    conviction_non_10b5_1_buy: int | None = Form(default=None),
+    conviction_base_open_market_buy: int | None = Form(default=None, ge=0, le=10),
+    conviction_ceo_cfo_bonus: int | None = Form(default=None, ge=0, le=10),
+    conviction_director_bonus: int | None = Form(default=None, ge=0, le=10),
+    conviction_ten_percent_owner_bonus: int | None = Form(default=None, ge=0, le=10),
+    conviction_cluster_bonus: int | None = Form(default=None, ge=0, le=10),
+    conviction_non_10b5_1_buy: int | None = Form(default=None, ge=0, le=10),
     # Conviction tier point values
-    conviction_value_250k_pts: int | None = Form(default=None),
-    conviction_value_1m_pts: int | None = Form(default=None),
-    conviction_value_5m_pts: int | None = Form(default=None),
-    conviction_pct_20_pts: int | None = Form(default=None),
-    conviction_pct_50_pts: int | None = Form(default=None),
+    conviction_value_250k_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_value_1m_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_value_5m_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_pct_20_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_pct_50_pts: int | None = Form(default=None, ge=0, le=10),
 ):
     alert_rules = {
         "big_buy_threshold": big_buy_threshold,
@@ -1185,8 +1196,8 @@ async def logic_save(
         for key, val in submitted_tier_pts.items():
             conviction_flags[f"tier_pts_{key}"] = val
 
-    _config_cache.clear()
     save_overrides(alert_rules, filter_defaults, conviction_flags=conviction_flags or None)
+    _config_cache.clear()
     return RedirectResponse(url="/logic?saved=1", status_code=303)
 
 

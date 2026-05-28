@@ -1029,6 +1029,7 @@ def get_insider_full_history(
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
         ORDER BY transaction_date DESC, filed_at DESC
+        LIMIT 500
         """,
         [insider_cik],
     ).fetchall()

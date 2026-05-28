@@ -168,7 +168,10 @@
   const el            = document.getElementById('chart');
 
   if (!bars.length) {
-    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3);font-size:.8rem;">No price data available for ${{ ticker }}</div>';
+    const noData = document.createElement('div');
+    noData.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3);font-size:.8rem;';
+    noData.textContent = 'No price data available for $' + {{ ticker | tojson }};
+    el.appendChild(noData);
     return;
   }
 
