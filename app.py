@@ -1063,8 +1063,9 @@ async def backtest(request: Request):
     float_fields = {
         "value", "trade_price",
         "gc_days", "rb_days", "hhl_days", "cb_days",
-        *(f"stacked_{w}d" for w in _bt_windows),
-        *(f"return_{w}d"  for w in _bt_windows),
+        *(f"stacked_{w}d"        for w in _bt_windows),
+        *(f"return_{w}d"         for w in _bt_windows),
+        *(f"{s}_fire_ret_{w}d"   for s in ("gc", "rb", "hhl", "cb") for w in _bt_windows),
     }
 
     rows: list[dict] = []

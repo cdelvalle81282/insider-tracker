@@ -330,6 +330,17 @@ def forward_return(bars: list[dict], trade_idx: int, days: int) -> float | None:
     return None
 
 
+def _fire_returns(bars: list[dict], trade_date: str, days_to_fire: int | None) -> dict:
+    """Returns from the signal fire date forward, keyed by window days. None if no fire."""
+    if days_to_fire is None:
+        return {w: None for w in WINDOWS}
+    fire_date = (date.fromisoformat(trade_date) + timedelta(days=days_to_fire)).isoformat()
+    fire_idx = next((i for i, b in enumerate(bars) if b["date"] >= fire_date), None)
+    if fire_idx is None or fire_idx >= len(bars) - 1:
+        return {w: None for w in WINDOWS}
+    return {w: forward_return(bars, fire_idx, w) for w in WINDOWS}
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -444,13 +455,22 @@ def main() -> None:
                 "cb_computable":  cb_ok,
                 "cb_days":        cb_days,
             }
+            gc_fire_rets  = _fire_returns(bars, td, gc_days)
+            rb_fire_rets  = _fire_returns(bars, td, rb_days)
+            hhl_fire_rets = _fire_returns(bars, td, hhl_days)
+            cb_fire_rets  = _fire_returns(bars, td, cb_days)
+
             for w in WINDOWS:
-                row[f"gc_{w}d"]      = gc_fired[w]
-                row[f"rb_{w}d"]      = rb_fired[w]
-                row[f"hhl_{w}d"]     = hhl_fired[w]
-                row[f"cb_{w}d"]      = cb_fired[w]
-                row[f"stacked_{w}d"] = _stacked(w)
-                row[f"return_{w}d"]  = forward_return(bars, trade_idx, w)
+                row[f"gc_{w}d"]          = gc_fired[w]
+                row[f"rb_{w}d"]          = rb_fired[w]
+                row[f"hhl_{w}d"]         = hhl_fired[w]
+                row[f"cb_{w}d"]          = cb_fired[w]
+                row[f"stacked_{w}d"]     = _stacked(w)
+                row[f"return_{w}d"]      = forward_return(bars, trade_idx, w)
+                row[f"gc_fire_ret_{w}d"] = gc_fire_rets[w]
+                row[f"rb_fire_ret_{w}d"] = rb_fire_rets[w]
+                row[f"hhl_fire_ret_{w}d"]= hhl_fire_rets[w]
+                row[f"cb_fire_ret_{w}d"] = cb_fire_rets[w]
             results.append(row)
 
         print(f"ok ({len(bars)} bars)")
@@ -476,18 +496,26 @@ def main() -> None:
     if no_data:
         print(f"  No-data tickers:  {', '.join(no_data[:20])}{'...' if len(no_data)>20 else ''}")
 
+    def _stats(rets: list[float]) -> str:
+        if not rets:
+            return "—"
+        wins = sum(1 for r in rets if r > 0)
+        avg  = sum(rets) / len(rets)
+        med  = sorted(rets)[len(rets) // 2]
+        return f"win={wins/len(rets)*100:.0f}%  avg={avg:+.1f}%  med={med:+.1f}%"
+
     for sig, label in [("gc","Golden Cross"), ("rb","Resistance Break"), ("hhl","HH+HL"), ("cb","Channel Break")]:
         print(f"\n  {label}:")
         comp = [r for r in results if r[f"{sig}_computable"]]
         print(f"    Computable trades: {len(comp)}/{len(results)}")
+        print(f"    {'Win':>3}  {'From trade date':^38}  {'From signal fire date':^38}")
         for w in WINDOWS:
             fired = [r for r in comp if r[f"{sig}_{w}d"] is True]
-            rets  = [r[f"return_{w}d"] for r in fired if r[f"return_{w}d"] is not None]
-            if fired:
-                avg = sum(rets) / len(rets) if rets else float("nan")
-                med = sorted(rets)[len(rets)//2] if rets else float("nan")
-                print(f"    {w:>2}d: {len(fired):>4}/{len(comp)} ({len(fired)/len(comp)*100:5.1f}%) "
-                      f"| avg ret {avg:+.1f}%  median {med:+.1f}%")
+            if not fired:
+                continue
+            trade_rets = [r[f"return_{w}d"]          for r in fired if r[f"return_{w}d"]          is not None]
+            fire_rets  = [r[f"{sig}_fire_ret_{w}d"]  for r in fired if r[f"{sig}_fire_ret_{w}d"] is not None]
+            print(f"    {w:>2}d  [{len(fired):>4}]  {_stats(trade_rets):<38}  {_stats(fire_rets)}")
 
     print(f"\n  Stacked signals (of {len(results)} trades):")
     for w in WINDOWS:
