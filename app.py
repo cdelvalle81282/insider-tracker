@@ -856,6 +856,8 @@ async def chart_view(
         tx_date = f.get("transaction_date") or ""
         if not tx_date:
             continue
+        if hasattr(tx_date, "isoformat"):
+            tx_date = tx_date.isoformat()
         is_buy = f.get("transaction_code") == "P"
         label_parts = [f.get("insider_name", "")]
         if f.get("total_value_fmt"):
