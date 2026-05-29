@@ -394,13 +394,10 @@ def _format_signal_message(
     }
 
 
-def _signal_alert_key(sig_code: str, row: dict) -> str:
-    return (
-        f"signal:{sig_code}:"
-        f"{row.get('issuer_cik','')}:"
-        f"{row.get('insider_cik','')}:"
-        f"{row.get('transaction_date','')}"
-    )
+def _signal_alert_key(sig_code: str, issuer_cik: str, fire_date: str) -> str:
+    # Keyed on (signal, issuer, fire date) — not per-insider — so a cluster buy
+    # on the same stock only fires one alert when the technical signal triggers.
+    return f"signal:{sig_code}:{issuer_cik}:{fire_date}"
 
 
 def check_and_send_signals(
@@ -462,24 +459,38 @@ def check_and_send_signals(
         bars = [{**b, "date": b["time"]} for b in raw_bars]
         bar_dates = [b["date"] for b in bars]
 
+        # Find all trades where GC fired within 15 days and is still fresh.
+        # GC is a stock-level event — alert once per (ticker, fire date)
+        # using the largest buy as the representative trade.
+        qualifying: list[tuple[date, int, dict]] = []
         for trade in trades:
             trade_date = trade["transaction_date"]
             trade_idx = next((i for i, d in enumerate(bar_dates) if d >= trade_date), None)
             if trade_idx is None or trade_idx >= len(bars) - 1:
                 continue
-
-            trade_date_obj = date.fromisoformat(trade["transaction_date"])
-            _, gc_days_to_fire = detect_golden_cross(bars, trade_idx)
-            if gc_days_to_fire is None or gc_days_to_fire > 15:
+            _, gc_days = detect_golden_cross(bars, trade_idx)
+            if gc_days is None or gc_days > 15:
                 continue
-            fire_date = trade_date_obj + timedelta(days=gc_days_to_fire)
+            fire_date = date.fromisoformat(trade_date) + timedelta(days=gc_days)
             if (today - fire_date).days > max_age:
-                continue  # signal fired too long ago — not actionable now
-            if not _try_claim_alert(conn, _signal_alert_key("gc", trade), "signal"):
                 continue
-            payload = _format_signal_message("gc", _SIGNAL_DETECTORS["gc"][0], trade, gc_days_to_fire, base_url)
-            if _post_to_slack(webhook_url, payload):
-                sent += 1
+            qualifying.append((fire_date, gc_days, trade))
+
+        if not qualifying:
+            continue
+
+        # One alert per fire date; pick the largest buy as the representative
+        fire_date = min(fd for fd, _, _ in qualifying)
+        largest = max(qualifying, key=lambda x: x[2].get("total_value") or 0)
+        gc_days_to_fire, best_trade = largest[1], largest[2]
+        issuer_cik = best_trade.get("issuer_cik", "")
+
+        alert_key = _signal_alert_key("gc", issuer_cik, fire_date.isoformat())
+        if not _try_claim_alert(conn, alert_key, "signal"):
+            continue
+        payload = _format_signal_message("gc", _SIGNAL_DETECTORS["gc"][0], best_trade, gc_days_to_fire, base_url)
+        if _post_to_slack(webhook_url, payload):
+            sent += 1
 
     return sent
 
