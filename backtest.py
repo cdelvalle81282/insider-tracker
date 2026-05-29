@@ -31,13 +31,13 @@ from db import get_cli_db
 # Config — all fuzzy signal knobs in one place
 # ---------------------------------------------------------------------------
 
+WINDOWS = [30, 60, 90]       # forward windows (calendar days)
+
 TRADE_START = "2024-08-01"   # earliest trade (90-day channel lookback feasible)
-TRADE_END   = (date.today() - timedelta(days=90)).isoformat()  # need 90d of forward data
+TRADE_END   = (date.today() - timedelta(days=max(WINDOWS))).isoformat()
 
 CACHE_DIR = Path("data/polygon_cache")
 RATE_LIMIT_SLEEP = 0.25      # seconds between live API calls (paid tier)
-
-WINDOWS = [30, 60, 90]       # forward windows (calendar days)
 
 # Golden cross
 GC_FAST  = 50
@@ -115,7 +115,7 @@ def _fetch_live(ticker: str, from_date: str, to_date: str, api_key: str) -> list
     return []
 
 
-CACHE_STALE_DAYS = 3  # re-fetch if last bar is older than this many calendar days
+CACHE_STALE_DAYS = 3  # weekend gap + 1-day API lag without forcing a re-fetch every run
 
 
 def fetch_bars(ticker: str, from_date: str, to_date: str, api_key: str) -> tuple[list[dict], bool]:
@@ -126,12 +126,12 @@ def fetch_bars(ticker: str, from_date: str, to_date: str, api_key: str) -> tuple
     if cache_file.exists():
         try:
             bars = json.loads(cache_file.read_text())
-            if bars:
-                last_bar_date = date.fromisoformat(bars[-1]["date"])
-                if (date.today() - last_bar_date).days <= CACHE_STALE_DAYS:
-                    return bars, True
-        except Exception:
-            pass
+            last_bar_date = date.fromisoformat(bars[-1]["date"]) if bars else None
+            need_to_date = last_bar_date is None or last_bar_date < date.fromisoformat(to_date) - timedelta(days=CACHE_STALE_DAYS)
+            if not need_to_date:
+                return bars, True
+        except Exception as e:
+            print(f"    [WARN] cache read failed for {ticker}: {e}")
 
     bars = _fetch_live(ticker, from_date, to_date, api_key)
     if bars:
