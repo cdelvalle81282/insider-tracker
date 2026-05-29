@@ -32,7 +32,7 @@ from db import get_cli_db
 # ---------------------------------------------------------------------------
 
 TRADE_START = "2024-08-01"   # earliest trade (90-day channel lookback feasible)
-TRADE_END   = "2026-01-25"   # latest trade with 90d of forward price data
+TRADE_END   = (date.today() - timedelta(days=90)).isoformat()  # need 90d of forward data
 
 CACHE_DIR = Path("data/polygon_cache")
 RATE_LIMIT_SLEEP = 0.25      # seconds between live API calls (paid tier)
@@ -115,15 +115,21 @@ def _fetch_live(ticker: str, from_date: str, to_date: str, api_key: str) -> list
     return []
 
 
+CACHE_STALE_DAYS = 3  # re-fetch if last bar is older than this many calendar days
+
+
 def fetch_bars(ticker: str, from_date: str, to_date: str, api_key: str) -> tuple[list[dict], bool]:
-    """Return (bars, was_cached). Caches to CACHE_DIR/{ticker}.json."""
+    """Return (bars, was_cached). Caches to CACHE_DIR/{ticker}.json; refreshes if stale."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = CACHE_DIR / f"{ticker}.json"
 
     if cache_file.exists():
         try:
             bars = json.loads(cache_file.read_text())
-            return bars, True
+            if bars:
+                last_bar_date = date.fromisoformat(bars[-1]["date"])
+                if (date.today() - last_bar_date).days <= CACHE_STALE_DAYS:
+                    return bars, True
         except Exception:
             pass
 
