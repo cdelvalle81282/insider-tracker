@@ -15,6 +15,7 @@ ALERT_RULES = {
     "cluster_min_insiders": 3,
     "signal_scan_min_value": 500_000,
     "signal_scan_lookback_days": 90,
+    "signal_scan_max_signal_age_days": 5,
 }
 
 # Tiered bonuses: within each tier only the highest matching threshold applies.

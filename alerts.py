@@ -328,40 +328,56 @@ def check_and_send(
 
 
 _SIGNAL_DETECTORS = {
-    "gc":  ("Golden Cross",     detect_golden_cross),
-    "rb":  ("Resistance Break", detect_resistance_break),
-    "hhl": ("HH+HL",            detect_hhl),
-    "cb":  ("Channel Break",    detect_channel_break),
+    "gc":  ("Golden Cross (50MA > 200MA)", detect_golden_cross),
+    "rb":  ("Resistance Break",            detect_resistance_break),
+    "hhl": ("Higher Highs + Higher Lows",  detect_hhl),
+    "cb":  ("Channel Break",               detect_channel_break),
+}
+
+# Win rate and avg return from backtest at the most informative window per signal.
+# Format: sig_code → (window_days, win_rate_pct, avg_return_pct, n_fired)
+_SIGNAL_STATS = {
+    "gc":  (30, 85.6, 24.3, 125),
+    "rb":  (15, 85.4, 17.9, 219),
+    "hhl": (30, 85.7, 14.8, 105),
+    "cb":  (90, 80.6,  7.1,  31),
 }
 
 
 def _format_signal_message(
+    sig_code: str,
     signal_label: str,
     trade: dict,
     days_to_fire: int,
     base_url: str,
 ) -> dict:
-    ticker  = trade.get("issuer_ticker") or "?"
-    company = trade.get("issuer_name") or ""
-    insider = trade.get("insider_name") or "Unknown"
-    title   = trade.get("insider_title") or "Insider"
-    value   = _fmt(trade.get("total_value"))
+    ticker     = trade.get("issuer_ticker") or "?"
+    company    = trade.get("issuer_name") or ""
+    insider    = trade.get("insider_name") or "Unknown"
+    title      = trade.get("insider_title") or "Insider"
+    value      = _fmt(trade.get("total_value"))
     trade_date = trade.get("transaction_date", "")
     chart_url  = f"{base_url}/chart/{ticker}"
+
+    win_win, win_rate, avg_ret, n = _SIGNAL_STATS.get(sig_code, (90, None, None, 0))
+    stat_line = (
+        f"Historical ({n} trades): *{win_rate:.0f}% win rate* · avg *+{avg_ret:.1f}%* at {win_win}d from buy"
+        if win_rate is not None else ""
+    )
 
     return {
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": f"📡 Signal: {signal_label} — ${ticker}"},
+                "text": {"type": "plain_text", "text": f"📡 Signal Fire — ${ticker}"},
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"Fired *{days_to_fire}d* after insider buy on {trade_date}\n"
-                        f"*{insider}* ({title}) · {value}"
+                        f"*{signal_label}* fired *{days_to_fire}d* after insider buy\n"
+                        f"*{insider}* ({title}) bought {value} on {trade_date}"
                     ),
                 },
                 "accessory": {
@@ -372,7 +388,7 @@ def _format_signal_message(
             },
             {
                 "type": "context",
-                "elements": [{"type": "mrkdwn", "text": f"_{company}_"}],
+                "elements": [{"type": "mrkdwn", "text": f"{stat_line}  ·  _{company}_"}],
             },
         ]
     }
@@ -405,6 +421,7 @@ def check_and_send_signals(
     base_url   = config.get("alert_base_url", "https://opi-insider.duckdns.org")
     min_value  = rules.get("signal_scan_min_value", 500_000)
     lookback   = rules.get("signal_scan_lookback_days", 90)
+    max_age    = rules.get("signal_scan_max_signal_age_days", 5)
 
     today  = datetime.now(timezone.utc).date()
     cutoff = (today - timedelta(days=lookback)).isoformat()
@@ -451,13 +468,18 @@ def check_and_send_signals(
             if trade_idx is None or trade_idx >= len(bars) - 1:
                 continue
 
+            trade_date_obj = date.fromisoformat(trade["transaction_date"])
             for sig_code, (sig_label, detect_fn) in _SIGNAL_DETECTORS.items():
                 _, days_to_fire = detect_fn(bars, trade_idx)
                 if days_to_fire is None:
                     continue
+                fire_date = trade_date_obj + timedelta(days=days_to_fire)
+                if (today - fire_date).days > max_age:
+                    continue  # signal fired too long ago — not actionable now
                 if not _try_claim_alert(conn, _signal_alert_key(sig_code, trade), "signal"):
                     continue
-                if _post_to_slack(webhook_url, _format_signal_message(sig_label, trade, days_to_fire, base_url)):
+                payload = _format_signal_message(sig_code, sig_label, trade, days_to_fire, base_url)
+                if _post_to_slack(webhook_url, payload):
                     sent += 1
 
     return sent
