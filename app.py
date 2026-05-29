@@ -825,6 +825,8 @@ async def chart_view(
         seen_signals: set[tuple[str, str]] = set()
         for f in nd_buys:
             trade_date = f["transaction_date"]
+            if hasattr(trade_date, "isoformat"):
+                trade_date = trade_date.isoformat()
             trade_idx = next((i for i, d in enumerate(sig_bar_dates) if d >= trade_date), None)
             if trade_idx is None or trade_idx >= len(sig_bars) - 1:
                 continue
