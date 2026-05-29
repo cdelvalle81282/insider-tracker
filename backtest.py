@@ -31,7 +31,7 @@ from db import get_cli_db
 # Config — all fuzzy signal knobs in one place
 # ---------------------------------------------------------------------------
 
-WINDOWS = [30, 60, 90]       # forward windows (calendar days)
+WINDOWS = [15, 30, 45, 60, 90]  # forward windows (calendar days)
 
 TRADE_START = "2024-08-01"   # earliest trade (90-day channel lookback feasible)
 TRADE_END   = (date.today() - timedelta(days=max(WINDOWS))).isoformat()
@@ -424,7 +424,7 @@ def main() -> None:
             def _stacked(w):
                 return sum(1 for v in [gc_fired[w], rb_fired[w], hhl_fired[w], cb_fired[w]] if v is True)
 
-            results.append({
+            row = {
                 "ticker":         ticker,
                 "issuer_name":    trade["issuer_name"],
                 "trade_date":     td,
@@ -435,31 +435,23 @@ def main() -> None:
                 "is_10b5_1":      trade["is_10b5_1"],
                 "is_director":    trade["is_director"],
                 "is_officer":     trade["is_officer"],
-                # Golden cross
                 "gc_computable":  gc_ok,
-                "gc_30d": gc_fired[30], "gc_60d": gc_fired[60], "gc_90d": gc_fired[90],
-                "gc_days": gc_days,
-                # Resistance break
+                "gc_days":        gc_days,
                 "rb_computable":  rb_ok,
-                "rb_30d": rb_fired[30], "rb_60d": rb_fired[60], "rb_90d": rb_fired[90],
-                "rb_days": rb_days,
-                # Higher highs / lows
+                "rb_days":        rb_days,
                 "hhl_computable": hhl_ok,
-                "hhl_30d": hhl_fired[30], "hhl_60d": hhl_fired[60], "hhl_90d": hhl_fired[90],
-                "hhl_days": hhl_days,
-                # Channel break
+                "hhl_days":       hhl_days,
                 "cb_computable":  cb_ok,
-                "cb_30d": cb_fired[30], "cb_60d": cb_fired[60], "cb_90d": cb_fired[90],
-                "cb_days": cb_days,
-                # Stacked signal count
-                "stacked_30d": _stacked(30),
-                "stacked_60d": _stacked(60),
-                "stacked_90d": _stacked(90),
-                # Forward returns
-                "return_30d": forward_return(bars, trade_idx, 30),
-                "return_60d": forward_return(bars, trade_idx, 60),
-                "return_90d": forward_return(bars, trade_idx, 90),
-            })
+                "cb_days":        cb_days,
+            }
+            for w in WINDOWS:
+                row[f"gc_{w}d"]      = gc_fired[w]
+                row[f"rb_{w}d"]      = rb_fired[w]
+                row[f"hhl_{w}d"]     = hhl_fired[w]
+                row[f"cb_{w}d"]      = cb_fired[w]
+                row[f"stacked_{w}d"] = _stacked(w)
+                row[f"return_{w}d"]  = forward_return(bars, trade_idx, w)
+            results.append(row)
 
         print(f"ok ({len(bars)} bars)")
         if not was_cached:

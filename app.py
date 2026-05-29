@@ -1054,18 +1054,17 @@ async def backtest(request: Request):
         except ValueError:
             return None
 
+    _bt_windows = (15, 30, 45, 60, 90)
     bool_fields = {
         "is_10b5_1", "is_director", "is_officer",
-        "gc_computable", "gc_30d", "gc_60d", "gc_90d",
-        "rb_computable", "rb_30d", "rb_60d", "rb_90d",
-        "hhl_computable", "hhl_30d", "hhl_60d", "hhl_90d",
-        "cb_computable", "cb_30d", "cb_60d", "cb_90d",
+        *(f"{s}_computable" for s in ("gc", "rb", "hhl", "cb")),
+        *(f"{s}_{w}d" for s in ("gc", "rb", "hhl", "cb") for w in _bt_windows),
     }
     float_fields = {
         "value", "trade_price",
         "gc_days", "rb_days", "hhl_days", "cb_days",
-        "stacked_30d", "stacked_60d", "stacked_90d",
-        "return_30d", "return_60d", "return_90d",
+        *(f"stacked_{w}d" for w in _bt_windows),
+        *(f"return_{w}d"  for w in _bt_windows),
     }
 
     rows: list[dict] = []
@@ -1089,7 +1088,7 @@ async def backtest(request: Request):
         ("hhl", "HH + HL"),
         ("cb",  "Channel Break"),
     )
-    WINDOWS = (30, 60, 90)
+    WINDOWS = _bt_windows
 
     signals_summary: dict = {}
     for sig, label in SIGNALS:

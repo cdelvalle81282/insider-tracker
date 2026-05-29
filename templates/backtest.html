@@ -11,7 +11,7 @@
   </h1>
   <p style="font-size:.78rem; color:var(--text-2); margin-top:4px;">
     {% if not running %}
-      {{ summary.total | default(0) }} trades scored &mdash; returns measured at 30d / 60d / 90d post-trade
+      {{ summary.total | default(0) }} trades scored &mdash; returns measured at 15d / 30d / 45d / 60d / 90d post-trade
     {% else %}
       Analysis in progress
     {% endif %}
@@ -36,7 +36,9 @@
     Window
   </span>
   <div class="seg-wrap" id="window-tabs">
+    <button class="seg" data-win="15" onclick="setWindow(15)">15d</button>
     <button class="seg" data-win="30" onclick="setWindow(30)">30d</button>
+    <button class="seg" data-win="45" onclick="setWindow(45)">45d</button>
     <button class="seg active-both" data-win="60" onclick="setWindow(60)">60d</button>
     <button class="seg" data-win="90" onclick="setWindow(90)">90d</button>
   </div>
@@ -55,7 +57,7 @@
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--sky);opacity:.6;border-radius:0;"></div>
     <div class="kpi-label" style="padding-left:8px;">{{ sig_label }}</div>
     <div style="padding-left:8px;">
-      {% for win in [30, 60, 90] %}
+      {% for win in [15, 30, 45, 60, 90] %}
       {% set wdata = summary.signals[sig_key].windows[win] if summary.signals and sig_key in summary.signals and win in summary.signals[sig_key].windows else {} %}
       <div class="win-stat" data-win="{{ win }}" style="{% if win != 60 %}display:none;{% endif %}">
         {% if wdata.get('computable', 0) > 0 %}
@@ -102,7 +104,7 @@
     Stacked Signals
   </div>
   <div class="flex flex-wrap gap-4">
-    {% for win in [30, 60, 90] %}
+    {% for win in [15, 30, 45, 60, 90] %}
     {% set sdata = summary.stacked[win] if summary.stacked and win in summary.stacked else {} %}
     <div class="win-stat" data-win="{{ win }}" style="display:{% if win == 60 %}flex{% else %}none{% endif %}; flex-wrap:wrap; gap:10px;">
       {% for n in [2, 3, 4] %}
@@ -220,8 +222,14 @@
         <th class="th sort text-center" data-col="stacked" onclick="sortBy('stacked')" title="Stacked signal count">
           Stack <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
         </th>
+        <th class="th sort text-right" data-col="ret15" onclick="sortBy('ret15')">
+          Ret 15d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
         <th class="th sort text-right" data-col="ret30" onclick="sortBy('ret30')">
           Ret 30d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+        </th>
+        <th class="th sort text-right" data-col="ret45" onclick="sortBy('ret45')">
+          Ret 45d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-right" data-col="ret60" onclick="sortBy('ret60')">
           Ret 60d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
@@ -256,13 +264,15 @@
         <td class="td text-center sig-cell" data-sig="hhl"></td>
         <td class="td text-center sig-cell" data-sig="cb"></td>
         <td class="td text-center num" style="font-size:.75rem; font-weight:700;" data-cell="stack"></td>
+        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret15"></td>
         <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret30"></td>
+        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret45"></td>
         <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret60"></td>
         <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret90"></td>
       </tr>
       {% else %}
       <tr id="empty-row">
-        <td colspan="13" class="td text-center" style="padding:40px; color:var(--text-3);">No data available.</td>
+        <td colspan="15" class="td text-center" style="padding:40px; color:var(--text-3);">No data available.</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -374,7 +384,9 @@
       cell.textContent = r.text;
       cell.style.color = r.color;
     }
+    setRet(el.querySelector('[data-cell="ret15"]'), row.return_15d);
     setRet(el.querySelector('[data-cell="ret30"]'), row.return_30d);
+    setRet(el.querySelector('[data-cell="ret45"]'), row.return_45d);
     setRet(el.querySelector('[data-cell="ret60"]'), row.return_60d);
     setRet(el.querySelector('[data-cell="ret90"]'), row.return_90d);
   }
@@ -421,7 +433,9 @@
       case 'insider_name':return (row.insider_name || '').toLowerCase();
       case 'value':       return row.value || 0;
       case 'stacked':     return getStacked(row, currentWindow);
+      case 'ret15':       return row.return_15d != null ? row.return_15d : -9999;
       case 'ret30':       return row.return_30d != null ? row.return_30d : -9999;
+      case 'ret45':       return row.return_45d != null ? row.return_45d : -9999;
       case 'ret60':       return row.return_60d != null ? row.return_60d : -9999;
       case 'ret90':       return row.return_90d != null ? row.return_90d : -9999;
       default:            return 0;
