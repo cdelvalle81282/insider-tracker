@@ -337,7 +337,7 @@ _SIGNAL_DETECTORS = {
 # Win rate and avg return from backtest at the most informative window per signal.
 # Format: sig_code → (window_days, win_rate_pct, avg_return_pct, n_fired)
 _SIGNAL_STATS = {
-    "gc":  (30, 85.6, 24.3, 125),
+    "gc":  (90, 87.0, 22.6, 75),
     "rb":  (15, 85.4, 17.9, 219),
     "hhl": (30, 85.7, 14.8, 105),
     "cb":  (90, 80.6,  7.1,  31),
@@ -469,18 +469,17 @@ def check_and_send_signals(
                 continue
 
             trade_date_obj = date.fromisoformat(trade["transaction_date"])
-            for sig_code, (sig_label, detect_fn) in _SIGNAL_DETECTORS.items():
-                _, days_to_fire = detect_fn(bars, trade_idx)
-                if days_to_fire is None:
-                    continue
-                fire_date = trade_date_obj + timedelta(days=days_to_fire)
-                if (today - fire_date).days > max_age:
-                    continue  # signal fired too long ago — not actionable now
-                if not _try_claim_alert(conn, _signal_alert_key(sig_code, trade), "signal"):
-                    continue
-                payload = _format_signal_message(sig_code, sig_label, trade, days_to_fire, base_url)
-                if _post_to_slack(webhook_url, payload):
-                    sent += 1
+            _, gc_days_to_fire = detect_golden_cross(bars, trade_idx)
+            if gc_days_to_fire is None or gc_days_to_fire > 15:
+                continue
+            fire_date = trade_date_obj + timedelta(days=gc_days_to_fire)
+            if (today - fire_date).days > max_age:
+                continue  # signal fired too long ago — not actionable now
+            if not _try_claim_alert(conn, _signal_alert_key("gc", trade), "signal"):
+                continue
+            payload = _format_signal_message("gc", _SIGNAL_DETECTORS["gc"][0], trade, gc_days_to_fire, base_url)
+            if _post_to_slack(webhook_url, payload):
+                sent += 1
 
     return sent
 
