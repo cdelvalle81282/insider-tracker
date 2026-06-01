@@ -378,12 +378,12 @@ def add_watch(conn: psycopg.Connection, watch_type: str, value: str, label: str)
         " ON CONFLICT DO NOTHING",
         [watch_type, value.strip(), label.strip()],
     )
-    conn.commit()
+    # No explicit commit — pool connections use autocommit=True.
 
 
 def remove_watch(conn: psycopg.Connection, watch_id: int) -> None:
     conn.execute("DELETE FROM watchlist WHERE id = %s", [watch_id])
-    conn.commit()
+    # No explicit commit — pool connections use autocommit=True.
 
 
 def watched_tickers(conn: psycopg.Connection) -> set[str]:

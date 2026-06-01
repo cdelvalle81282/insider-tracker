@@ -6,13 +6,16 @@ The pool is lazily initialized on first use.
 Usage:
   - app.py routes use get_request_db() as a FastAPI dependency, or get_db()
     for the deferred HTMX endpoints (htmx_stats, htmx_clusters).
-  - CLI scripts (ingest.py, congress_ingest.py, etc.) use get_cli_db() —
+  - CLI scripts (ingest.py, congress_ingest.py, etc.) use get_cli_db() --
     a plain psycopg connection with no pool. CLI scripts are sequential and
     don't need pooling; creating a pool in a CLI process competes with the
-    web app's pool under PG load.
+    web app's pool under PostgreSQL load.
 
-DATABASE_URL must be set in the environment, e.g.:
-  postgresql://user:pass@localhost:5432/insider_tracker
+DATABASE_URL   -- direct PostgreSQL connection (used by get_cli_db and as
+                  fallback when PGBOUNCER_URL is not set).
+PGBOUNCER_URL  -- PgBouncer connection (transaction mode, port 6432).
+                  When set, the pool connects here instead of directly to PG.
+                  CLI scripts always use DATABASE_URL (direct PG).
 """
 from __future__ import annotations
 
@@ -26,17 +29,32 @@ from psycopg_pool import ConnectionPool
 _pool: ConnectionPool | None = None
 
 
+def _configure_connection(conn: psycopg.Connection) -> None:
+    """Called once per new backend connection.
+
+    Sets session state that persists for the lifetime of the backend
+    connection. With PgBouncer transaction mode and
+    server_reset_query_always=0 these survive across transaction boundaries.
+    """
+    conn.prepare_threshold = 0  # disable prepared statements (required for PgBouncer transaction pooling)
+    conn.execute("SET timezone = 'UTC'")
+    conn.execute("SET statement_timeout = 8000")
+
+
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        url = os.environ.get("DATABASE_URL")
+        # PGBOUNCER_URL routes through PgBouncer (transaction mode, port 6432).
+        # Falls back to DATABASE_URL for local dev without PgBouncer.
+        url = os.environ.get("PGBOUNCER_URL") or os.environ.get("DATABASE_URL")
         if not url:
             raise RuntimeError("DATABASE_URL environment variable not set")
         _pool = ConnectionPool(
             url,
             min_size=2,
             max_size=16,
-            kwargs={"row_factory": dict_row, "options": "-c timezone=UTC -c statement_timeout=8000"},
+            kwargs={"row_factory": dict_row, "autocommit": True},
+            configure=_configure_connection,
             open=True,
         )
     return _pool
@@ -46,7 +64,7 @@ def get_db() -> psycopg.Connection:
     """
     Get a connection from the pool. Caller must close() it when done.
     psycopg_pool's PoolConnection.close() returns the connection to the pool
-    rather than tearing it down — drop-in replacement for the old
+    rather than tearing it down -- drop-in replacement for the old
     `sqlite3.Connection.close()` pattern.
     """
     return _get_pool().getconn()
@@ -55,9 +73,8 @@ def get_db() -> psycopg.Connection:
 def get_cli_db() -> psycopg.Connection:
     """Direct connection (not pooled) for CLI scripts like ingest.py.
 
-    CLI scripts are sequential — they don't need a pool. Using a direct
-    connection avoids spinning up pool background threads that would compete
-    with the web app's pool under PostgreSQL load.
+    Always connects to DATABASE_URL (direct PG, not PgBouncer) so ingest
+    scripts can use explicit transactions and conn.commit()/rollback().
     """
     url = os.environ.get("DATABASE_URL")
     if not url:
