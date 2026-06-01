@@ -10,13 +10,13 @@ logger = logging.getLogger(__name__)
 
 _SENTINEL = os.path.join(os.path.dirname(__file__), "data", ".last_ingest")
 
-_pool: redis.ConnectionPool | None = None
+_redis: redis.Redis | None = None
 
 
-def _get_pool() -> redis.ConnectionPool:
-    global _pool
-    if _pool is None:
-        _pool = redis.ConnectionPool(
+def _client() -> redis.Redis:
+    global _redis
+    if _redis is None:
+        _redis = redis.Redis(
             host="localhost",
             port=6379,
             db=3,
@@ -25,11 +25,7 @@ def _get_pool() -> redis.ConnectionPool:
             socket_connect_timeout=0.5,
             socket_timeout=0.5,
         )
-    return _pool
-
-
-def _client() -> redis.Redis:
-    return redis.Redis(connection_pool=_get_pool())
+    return _redis
 
 
 def _sentinel_mtime() -> float:
@@ -51,7 +47,7 @@ def cache_get(key: str):
     try:
         stored_mtime, value = pickle.loads(raw)
     except Exception as exc:
-        logger.debug("Redis unpickle %r failed for key %r: %s", key, key, exc)
+        logger.debug("Redis unpickle failed for key %r: %s", key, exc)
         return None
     if stored_mtime < _sentinel_mtime():
         return None  # stale since last ingest
@@ -71,7 +67,6 @@ def invalidate_query_cache() -> None:
     try:
         cl = _client()
         keys = list(cl.scan_iter("it:query:*"))
-        if keys:
-            cl.delete(*keys)
+        cl.delete(*keys)
     except redis.RedisError as exc:
         logger.debug("Redis invalidate_query_cache failed: %s", exc)

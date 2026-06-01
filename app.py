@@ -65,13 +65,6 @@ _sectors_cache:  TTLCache = TTLCache(maxsize=1,   ttl=3600)
 _config_cache:   TTLCache = TTLCache(maxsize=1,   ttl=60)
 
 
-def _sentinel_mtime() -> float:
-    try:
-        return os.path.getmtime(INGEST_SENTINEL)
-    except FileNotFoundError:
-        return 0.0
-
-
 def _sentinel_get(cache: TTLCache, key: str):
     entry = cache.get(key)
     if entry is None:
