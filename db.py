@@ -32,7 +32,8 @@ _pool: ConnectionPool | None = None
 def _configure_connection(conn: psycopg.Connection) -> None:
     """Set backend session state once; persists across PgBouncer transaction boundaries."""
     conn.prepare_threshold = None  # None = never prepare; 0 = prepare immediately (wrong)
-    conn.execute("SET timezone = 'UTC', statement_timeout = 8000")
+    conn.execute("SET timezone = 'UTC'")
+    conn.execute("SET statement_timeout = 8000")
 
 
 def _get_pool() -> ConnectionPool:
