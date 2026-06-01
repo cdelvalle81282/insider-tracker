@@ -25,6 +25,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 import alerts as alert_module
+import cache as cache_module
 import config as cfg
 import polygon_client
 import queries
@@ -58,10 +59,8 @@ limiter = Limiter(key_func=get_remote_address)
 
 INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
 
-# Long-lived caches — sentinel mtime invalidates them on ingest, 24h TTL is a safety net.
-_query_cache:    TTLCache = TTLCache(maxsize=256, ttl=86400)
-_stats_cache:    TTLCache = TTLCache(maxsize=64,  ttl=86400)
-_clusters_cache: TTLCache = TTLCache(maxsize=64,  ttl=86400)
+# Redis-backed caches (query results, stats, clusters HTML) live in cache_module.
+# In-process caches for small, hot, non-shared lookups:
 _sectors_cache:  TTLCache = TTLCache(maxsize=1,   ttl=3600)
 _config_cache:   TTLCache = TTLCache(maxsize=1,   ttl=60)
 
@@ -290,7 +289,7 @@ async def index(
     )
 
     ckey = _cache_key(filters)
-    cached_result = _sentinel_get(_query_cache, ckey)
+    cached_result = cache_module.cache_get(f"it:query:{ckey}")
     cached_sectors = _sentinel_get(_sectors_cache, "sectors")
 
     # Acquire a DB connection only when something is missing from cache.
@@ -298,7 +297,7 @@ async def index(
     need_db = (cached_result is None) or summary_mode or (cached_sectors is None)
 
     if need_db:
-        pre_mtime = _sentinel_mtime()
+        pre_mtime = cache_module._sentinel_mtime()
         db = get_db()
         try:
             if cached_result is None:
@@ -345,7 +344,7 @@ async def index(
                     has_options_only=effective_has_options_only,
                     market_cap_tiers=effective_mktcap_tiers or None,
                 )
-                _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
+                cache_module.cache_set(f"it:query:{ckey}", pre_mtime, (buys, sells, buy_count, sell_count))
             else:
                 buys, sells, buy_count, sell_count = cached_result
 
@@ -452,12 +451,12 @@ async def htmx_filings(
     )
 
     ckey = _cache_key(filters)
-    cached_result = _sentinel_get(_query_cache, ckey)
+    cached_result = cache_module.cache_get(f"it:query:{ckey}")
 
     need_db = (cached_result is None) or summary_mode
 
     if need_db:
-        pre_mtime = _sentinel_mtime()
+        pre_mtime = cache_module._sentinel_mtime()
         db = get_db()
         try:
             if cached_result is None:
@@ -504,7 +503,7 @@ async def htmx_filings(
                     has_options_only=effective_has_options_only,
                     market_cap_tiers=effective_mktcap_tiers or None,
                 )
-                _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
+                cache_module.cache_set(f"it:query:{ckey}", pre_mtime, (buys, sells, buy_count, sell_count))
             else:
                 buys, sells, buy_count, sell_count = cached_result
 
@@ -569,9 +568,9 @@ async def htmx_stats(
         "hide_equity_swap": "1" if effective_hide_swap else "0",
         "codes": sorted(effective_codes),
     })
-    html = _sentinel_get(_stats_cache, skey)
+    html = cache_module.cache_get(f"it:stats:{skey}")
     if html is None:
-        pre_mtime = _sentinel_mtime()
+        pre_mtime = cache_module._sentinel_mtime()
         db = get_db()
         try:
             stats = await asyncio.to_thread(
@@ -583,7 +582,7 @@ async def htmx_stats(
         finally:
             db.close()
         html = templates.env.get_template("_stats_partial.html").render({"stats": stats})
-        _sentinel_set(_stats_cache, skey, pre_mtime, html)
+        cache_module.cache_set(f"it:stats:{skey}", pre_mtime, html)
 
     return HTMLResponse(html)
 
@@ -614,9 +613,9 @@ async def htmx_clusters(
         "hide_equity_swap": "1" if effective_hide_swap else "0",
         "codes": sorted(effective_codes),
     })
-    html = _sentinel_get(_clusters_cache, ckey)
+    html = cache_module.cache_get(f"it:clusters:{ckey}")
     if html is None:
-        pre_mtime = _sentinel_mtime()
+        pre_mtime = cache_module._sentinel_mtime()
         db = get_db()
         try:
             clusters = await asyncio.to_thread(
@@ -629,7 +628,7 @@ async def htmx_clusters(
         finally:
             db.close()
         html = templates.env.get_template("_clusters_partial.html").render({"clusters": clusters})
-        _sentinel_set(_clusters_cache, ckey, pre_mtime, html)
+        cache_module.cache_set(f"it:clusters:{ckey}", pre_mtime, html)
 
     return HTMLResponse(html)
 
@@ -953,7 +952,7 @@ async def watchlist_add(
         if not _CIK_RE.match(value):
             raise HTTPException(status_code=400, detail="Invalid CIK format")
     queries.add_watch(db, watch_type, value, label or value)
-    _query_cache.clear()
+    cache_module.invalidate_query_cache()
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
@@ -964,7 +963,7 @@ async def watchlist_remove(
     watch_id: int = Form(...),
 ):
     queries.remove_watch(db, watch_id)
-    _query_cache.clear()
+    cache_module.invalidate_query_cache()
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
