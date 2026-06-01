@@ -30,25 +30,17 @@ _pool: ConnectionPool | None = None
 
 
 def _configure_connection(conn: psycopg.Connection) -> None:
-    """Called once per new backend connection.
-
-    Sets session state that persists for the lifetime of the backend
-    connection. With PgBouncer transaction mode and
-    server_reset_query_always=0 these survive across transaction boundaries.
-    """
-    conn.prepare_threshold = None  # disable prepared statements — 0 means "prepare immediately", None means "never"
-    conn.execute("SET timezone = 'UTC'")
-    conn.execute("SET statement_timeout = 8000")
+    """Set backend session state once; persists across PgBouncer transaction boundaries."""
+    conn.prepare_threshold = None  # None = never prepare; 0 = prepare immediately (wrong)
+    conn.execute("SET timezone = 'UTC', statement_timeout = 8000")
 
 
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
-        # PGBOUNCER_URL routes through PgBouncer (transaction mode, port 6432).
-        # Falls back to DATABASE_URL for local dev without PgBouncer.
         url = os.environ.get("PGBOUNCER_URL") or os.environ.get("DATABASE_URL")
         if not url:
-            raise RuntimeError("DATABASE_URL environment variable not set")
+            raise RuntimeError("PGBOUNCER_URL or DATABASE_URL environment variable not set")
         _pool = ConnectionPool(
             url,
             min_size=2,

@@ -373,17 +373,17 @@ def list_watchlist(conn: psycopg.Connection) -> dict[str, list[dict]]:
 
 
 def add_watch(conn: psycopg.Connection, watch_type: str, value: str, label: str) -> None:
+    assert conn.autocommit, "add_watch requires an autocommit connection"
     conn.execute(
         "INSERT INTO watchlist (type, value, label) VALUES (%s, %s, %s)"
         " ON CONFLICT DO NOTHING",
         [watch_type, value.strip(), label.strip()],
     )
-    # No explicit commit — pool connections use autocommit=True.
 
 
 def remove_watch(conn: psycopg.Connection, watch_id: int) -> None:
+    assert conn.autocommit, "remove_watch requires an autocommit connection"
     conn.execute("DELETE FROM watchlist WHERE id = %s", [watch_id])
-    # No explicit commit — pool connections use autocommit=True.
 
 
 def watched_tickers(conn: psycopg.Connection) -> set[str]:
