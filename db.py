@@ -36,7 +36,7 @@ def _get_pool() -> ConnectionPool:
             url,
             min_size=2,
             max_size=16,
-            kwargs={"row_factory": dict_row, "options": "-c timezone=UTC -c statement_timeout=25000"},
+            kwargs={"row_factory": dict_row, "options": "-c timezone=UTC -c statement_timeout=8000"},
             open=True,
         )
     return _pool

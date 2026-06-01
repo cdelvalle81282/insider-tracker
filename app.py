@@ -239,7 +239,6 @@ async def healthz():
 @limiter.limit("60/minute")
 async def index(
     request: Request,
-    db: psycopg.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -292,64 +291,83 @@ async def index(
 
     ckey = _cache_key(filters)
     cached_result = _sentinel_get(_query_cache, ckey)
-    if cached_result is not None:
-        buys, sells, buy_count, sell_count = cached_result
-    else:
-        pre_mtime = _sentinel_mtime()
-        ctx = _make_ctx(db, active_config)
-        buys, sells = await asyncio.to_thread(
-            queries.get_filings_for_date,
-            db, target_date,
-            min_value=effective_min,
-            transaction_codes=effective_codes,
-            hide_10b5_1=effective_hide,
-            hide_equity_swap=effective_hide_swap,
-            roles=roles,
-            search=search,
-            ceo_cfo_only=ceo_cfo_only,
-            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-            sort_by=sort_by,
-            sort_order=sort_order,
-            sector=sector or None,
-            watched_only=only_watched,
-            date_range=date_range_arg,
-            ctx=ctx,
-            hide_funds=effective_hide_funds,
-            has_options_only=effective_has_options_only,
-            market_cap_tiers=effective_mktcap_tiers or None,
-            buys_page=buys_page,
-            sells_page=sells_page,
-            page_size=PAGE_SIZE,
-        )
-        buy_count, sell_count = await asyncio.to_thread(
-            queries.get_filings_count,
-            db, target_date,
-            min_value=effective_min,
-            transaction_codes=effective_codes,
-            hide_10b5_1=effective_hide,
-            hide_equity_swap=effective_hide_swap,
-            roles=roles,
-            search=search,
-            ceo_cfo_only=ceo_cfo_only,
-            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-            sector=sector or None,
-            watched_only=only_watched,
-            date_range=date_range_arg,
-            hide_funds=effective_hide_funds,
-            has_options_only=effective_has_options_only,
-            market_cap_tiers=effective_mktcap_tiers or None,
-        )
-        _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
+    cached_sectors = _sentinel_get(_sectors_cache, "sectors")
 
-    daily_summary = (
-        queries.get_daily_summary(
-            db, range_start, range_end, effective_hide, effective_min,
-            transaction_codes=effective_codes,
-            hide_equity_swap=effective_hide_swap,
-        )
-        if summary_mode else []
-    )
-    all_sectors = _get_all_sectors_cached(db)
+    # Acquire a DB connection only when something is missing from cache.
+    # Hot path (cache hit, no summary_mode, sectors warm): zero connections held.
+    need_db = (cached_result is None) or summary_mode or (cached_sectors is None)
+
+    if need_db:
+        pre_mtime = _sentinel_mtime()
+        db = get_db()
+        try:
+            if cached_result is None:
+                ctx = _make_ctx(db, active_config)
+                buys, sells = await asyncio.to_thread(
+                    queries.get_filings_for_date,
+                    db, target_date,
+                    min_value=effective_min,
+                    transaction_codes=effective_codes,
+                    hide_10b5_1=effective_hide,
+                    hide_equity_swap=effective_hide_swap,
+                    roles=roles,
+                    search=search,
+                    ceo_cfo_only=ceo_cfo_only,
+                    ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                    sector=sector or None,
+                    watched_only=only_watched,
+                    date_range=date_range_arg,
+                    ctx=ctx,
+                    hide_funds=effective_hide_funds,
+                    has_options_only=effective_has_options_only,
+                    market_cap_tiers=effective_mktcap_tiers or None,
+                    buys_page=buys_page,
+                    sells_page=sells_page,
+                    page_size=PAGE_SIZE,
+                )
+                buy_count, sell_count = await asyncio.to_thread(
+                    queries.get_filings_count,
+                    db, target_date,
+                    min_value=effective_min,
+                    transaction_codes=effective_codes,
+                    hide_10b5_1=effective_hide,
+                    hide_equity_swap=effective_hide_swap,
+                    roles=roles,
+                    search=search,
+                    ceo_cfo_only=ceo_cfo_only,
+                    ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+                    sector=sector or None,
+                    watched_only=only_watched,
+                    date_range=date_range_arg,
+                    hide_funds=effective_hide_funds,
+                    has_options_only=effective_has_options_only,
+                    market_cap_tiers=effective_mktcap_tiers or None,
+                )
+                _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
+            else:
+                buys, sells, buy_count, sell_count = cached_result
+
+            daily_summary = (
+                await asyncio.to_thread(
+                    queries.get_daily_summary,
+                    db, range_start, range_end, effective_hide, effective_min,
+                    transaction_codes=effective_codes,
+                    hide_equity_swap=effective_hide_swap,
+                )
+                if summary_mode else []
+            )
+
+            if cached_sectors is None:
+                cached_sectors = _get_all_sectors_cached(db)
+            all_sectors = cached_sectors
+        finally:
+            db.close()
+    else:
+        buys, sells, buy_count, sell_count = cached_result
+        daily_summary = []
+        all_sectors = cached_sectors
 
     return templates.TemplateResponse(request, "index.html", {
         "buys": buys,
@@ -383,7 +401,6 @@ async def index(
 @limiter.limit("60/minute")
 async def htmx_filings(
     request: Request,
-    db: psycopg.Connection = Depends(get_request_db),
     d: str | None = Query(default=None),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
@@ -436,63 +453,76 @@ async def htmx_filings(
 
     ckey = _cache_key(filters)
     cached_result = _sentinel_get(_query_cache, ckey)
-    if cached_result is not None:
-        buys, sells, buy_count, sell_count = cached_result
-    else:
-        pre_mtime = _sentinel_mtime()
-        ctx = _make_ctx(db, active_config)
-        buys, sells = await asyncio.to_thread(
-            queries.get_filings_for_date,
-            db, target_date,
-            min_value=effective_min,
-            transaction_codes=effective_codes,
-            hide_10b5_1=effective_hide,
-            hide_equity_swap=effective_hide_swap,
-            roles=roles,
-            search=search,
-            ceo_cfo_only=ceo_cfo_only,
-            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-            sort_by=sort_by,
-            sort_order=sort_order,
-            sector=sector or None,
-            watched_only=only_watched,
-            date_range=date_range_arg,
-            ctx=ctx,
-            hide_funds=effective_hide_funds,
-            has_options_only=effective_has_options_only,
-            market_cap_tiers=effective_mktcap_tiers or None,
-            buys_page=buys_page,
-            sells_page=sells_page,
-            page_size=PAGE_SIZE,
-        )
-        buy_count, sell_count = await asyncio.to_thread(
-            queries.get_filings_count,
-            db, target_date,
-            min_value=effective_min,
-            transaction_codes=effective_codes,
-            hide_10b5_1=effective_hide,
-            hide_equity_swap=effective_hide_swap,
-            roles=roles,
-            search=search,
-            ceo_cfo_only=ceo_cfo_only,
-            ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
-            sector=sector or None,
-            watched_only=only_watched,
-            date_range=date_range_arg,
-            hide_funds=effective_hide_funds,
-            has_options_only=effective_has_options_only,
-            market_cap_tiers=effective_mktcap_tiers or None,
-        )
-        _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
 
-    daily_summary = (
-        queries.get_daily_summary(
-            db, range_start, range_end, effective_hide, effective_min,
-            transaction_codes=effective_codes,
-            hide_equity_swap=effective_hide_swap,
-        )
-        if summary_mode else []
-    )
+    need_db = (cached_result is None) or summary_mode
+
+    if need_db:
+        pre_mtime = _sentinel_mtime()
+        db = get_db()
+        try:
+            if cached_result is None:
+                ctx = _make_ctx(db, active_config)
+                buys, sells = await asyncio.to_thread(
+                    queries.get_filings_for_date,
+                    db, target_date,
+                    min_value=effective_min,
+                    transaction_codes=effective_codes,
+                    hide_10b5_1=effective_hide,
+                    hide_equity_swap=effective_hide_swap,
+                    roles=roles,
+                    search=search,
+                    ceo_cfo_only=ceo_cfo_only,
+                    ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                    sector=sector or None,
+                    watched_only=only_watched,
+                    date_range=date_range_arg,
+                    ctx=ctx,
+                    hide_funds=effective_hide_funds,
+                    has_options_only=effective_has_options_only,
+                    market_cap_tiers=effective_mktcap_tiers or None,
+                    buys_page=buys_page,
+                    sells_page=sells_page,
+                    page_size=PAGE_SIZE,
+                )
+                buy_count, sell_count = await asyncio.to_thread(
+                    queries.get_filings_count,
+                    db, target_date,
+                    min_value=effective_min,
+                    transaction_codes=effective_codes,
+                    hide_10b5_1=effective_hide,
+                    hide_equity_swap=effective_hide_swap,
+                    roles=roles,
+                    search=search,
+                    ceo_cfo_only=ceo_cfo_only,
+                    ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
+                    sector=sector or None,
+                    watched_only=only_watched,
+                    date_range=date_range_arg,
+                    hide_funds=effective_hide_funds,
+                    has_options_only=effective_has_options_only,
+                    market_cap_tiers=effective_mktcap_tiers or None,
+                )
+                _sentinel_set(_query_cache, ckey, pre_mtime, (buys, sells, buy_count, sell_count))
+            else:
+                buys, sells, buy_count, sell_count = cached_result
+
+            daily_summary = (
+                await asyncio.to_thread(
+                    queries.get_daily_summary,
+                    db, range_start, range_end, effective_hide, effective_min,
+                    transaction_codes=effective_codes,
+                    hide_equity_swap=effective_hide_swap,
+                )
+                if summary_mode else []
+            )
+        finally:
+            db.close()
+    else:
+        buys, sells, buy_count, sell_count = cached_result
+        daily_summary = []
+
     return templates.TemplateResponse(request, "_tables_partial.html", {
         "buys": buys,
         "sells": sells,
@@ -539,8 +569,8 @@ async def htmx_stats(
         "hide_equity_swap": "1" if effective_hide_swap else "0",
         "codes": sorted(effective_codes),
     })
-    stats = _sentinel_get(_stats_cache, skey)
-    if stats is None:
+    html = _sentinel_get(_stats_cache, skey)
+    if html is None:
         pre_mtime = _sentinel_mtime()
         db = get_db()
         try:
@@ -552,9 +582,10 @@ async def htmx_stats(
             )
         finally:
             db.close()
-        _sentinel_set(_stats_cache, skey, pre_mtime, stats)
+        html = templates.env.get_template("_stats_partial.html").render({"stats": stats})
+        _sentinel_set(_stats_cache, skey, pre_mtime, html)
 
-    return templates.TemplateResponse(request, "_stats_partial.html", {"stats": stats})
+    return HTMLResponse(html)
 
 
 @app.get("/htmx/clusters", response_class=HTMLResponse)
@@ -583,8 +614,8 @@ async def htmx_clusters(
         "hide_equity_swap": "1" if effective_hide_swap else "0",
         "codes": sorted(effective_codes),
     })
-    clusters = _sentinel_get(_clusters_cache, ckey)
-    if clusters is None:
+    html = _sentinel_get(_clusters_cache, ckey)
+    if html is None:
         pre_mtime = _sentinel_mtime()
         db = get_db()
         try:
@@ -597,9 +628,10 @@ async def htmx_clusters(
             )
         finally:
             db.close()
-        _sentinel_set(_clusters_cache, ckey, pre_mtime, clusters)
+        html = templates.env.get_template("_clusters_partial.html").render({"clusters": clusters})
+        _sentinel_set(_clusters_cache, ckey, pre_mtime, html)
 
-    return templates.TemplateResponse(request, "_clusters_partial.html", {"clusters": clusters})
+    return HTMLResponse(html)
 
 
 # ---------------------------------------------------------------------------
