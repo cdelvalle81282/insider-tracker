@@ -70,7 +70,7 @@ def _sentinel_get(cache: TTLCache, key: str):
     if entry is None:
         return None
     stored_mtime, value = entry
-    return value if stored_mtime >= _sentinel_mtime() else None
+    return value if stored_mtime >= cache_module._sentinel_mtime() else None
 
 
 def _sentinel_set(cache: TTLCache, key: str, pre_mtime: float, value) -> None:
@@ -96,7 +96,7 @@ def _get_all_sectors_cached(db: psycopg.Connection) -> list[str]:
     cached = _sentinel_get(_sectors_cache, "sectors")
     if cached is not None:
         return cached
-    pre_mtime = _sentinel_mtime()
+    pre_mtime = cache_module._sentinel_mtime()
     result = queries.get_all_sectors(db)
     _sentinel_set(_sectors_cache, "sectors", pre_mtime, result)
     return result
@@ -216,7 +216,7 @@ def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
 async def healthz():
     from datetime import datetime
     try:
-        mtime = _sentinel_mtime()
+        mtime = cache_module._sentinel_mtime()
         last_ingest = datetime.utcfromtimestamp(mtime).isoformat() + "Z" if mtime else None
     except Exception:
         last_ingest = None
