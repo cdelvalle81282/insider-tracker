@@ -36,7 +36,7 @@ def _configure_connection(conn: psycopg.Connection) -> None:
     connection. With PgBouncer transaction mode and
     server_reset_query_always=0 these survive across transaction boundaries.
     """
-    conn.prepare_threshold = 0  # disable prepared statements (required for PgBouncer transaction pooling)
+    conn.prepare_threshold = None  # disable prepared statements — 0 means "prepare immediately", None means "never"
     conn.execute("SET timezone = 'UTC'")
     conn.execute("SET statement_timeout = 8000")
 
