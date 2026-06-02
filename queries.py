@@ -780,6 +780,7 @@ def get_summary_stats(
             COUNT(DISTINCT issuer_cik) AS issuer_count
         FROM filings
         WHERE {date_filter} AND transaction_code IN ({codes_ph})
+          AND table_type = 'ND'
           AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
     """, [*date_params, *codes_list]).fetchone()
 
@@ -790,6 +791,7 @@ def get_summary_stats(
         SELECT COUNT(*) AS n FROM (
           SELECT issuer_cik FROM filings
           WHERE {date_filter} AND transaction_code = 'P'
+            AND table_type = 'ND'
             AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
         ) AS sub
