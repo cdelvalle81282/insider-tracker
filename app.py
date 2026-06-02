@@ -927,8 +927,8 @@ async def watchlist_page(
 async def watchlist_add(
     request: Request,
     db: psycopg.Connection = Depends(get_request_db),
-    watch_type: str = Form(...),
-    value: str = Form(...),
+    watch_type: str = Form(default=""),
+    value: str = Form(default=""),
     label: str = Form(default=""),
 ):
     if watch_type not in ("ticker", "insider"):

@@ -4,7 +4,7 @@ SEC Form 4 insider trading dashboard for Option Pit Research editorial use.
 
 ## What this is
 
-Pulls Form 4 filings (insider buys/sells) from SEC EDGAR, stores them in SQLite, and serves a web dashboard at https://opi-insider.duckdns.org. Built for daily editorial research — "what happened today, ranked by dollar value and conviction score."
+Pulls Form 4 filings (insider buys/sells) from SEC EDGAR, stores them in PostgreSQL, and serves a web dashboard at https://opi-insider.duckdns.org. Built for daily editorial research — "what happened today, ranked by dollar value and conviction score."
 
 ## Self-Improvement Protocol
 
@@ -24,8 +24,9 @@ This file is the institutional memory for this codebase. If you had to investiga
 ## Stack
 
 - Python 3.12, FastAPI, Jinja2, HTMX 1.9.12, Tailwind CSS (CDN)
-- SQLite at `data/insider_tracker.db`
-- No ORM — raw sqlite3, all queries in `queries.py`
+- PostgreSQL 16 via psycopg3 (connection pool via psycopg_pool + PgBouncer on port 6432)
+- Redis (cache layer — query/stats/cluster HTML results; db=3)
+- Schema managed by Alembic; no ORM — raw psycopg3, all queries in `queries.py`
 - Linting: `ruff` (`pip install ruff`, run `ruff check .`)
 
 ## Key files
@@ -33,13 +34,17 @@ This file is the institutional memory for this codebase. If you had to investiga
 | File | Purpose |
 |------|---------|
 | `config.py` | All rules, thresholds, conviction weights — single source of truth |
-| `ingest.py` | CLI ingester: pulls EDGAR, parses XML, writes to SQLite. Also houses `get_db()` and `_migrate()`. |
+| `db.py` | PostgreSQL connection pool (`get_db`, `get_request_db`, `get_cli_db`) and PgBouncer wiring |
+| `cache.py` | Redis cache layer (`cache_get`/`cache_set`), sentinel mtime, `invalidate_query_cache()` |
+| `ingest.py` | CLI ingester: pulls EDGAR, parses XML, writes to PostgreSQL via `get_cli_db()` |
 | `parser.py` | Form 4 XML → transaction row dicts |
 | `tickers.py` | CIK → ticker cache (EDGAR company_tickers.json, refreshes weekly) |
 | `sector.py` | SIC code → sector enrichment, EDGAR fetch + 90-day DB cache |
 | `alerts.py` | Slack push alerts — big buy, C-suite buy, cluster detection |
 | `queries.py` | All SQL queries + EnrichContext dataclass — no SQL in app.py. Also `MARKET_CAP_TIERS` constant. |
-| `app.py` | FastAPI routes. Uses `Depends(get_request_db)` for per-request DB connections. |
+| `app.py` | FastAPI routes. Main routes use acquire-late DB pattern; secondary routes use `Depends(get_request_db)`. |
+| `auto_diagnose.py` | Autonomous Claude API diagnostic agent — triggered by `/webhook/alert` on uptime alerts |
+| `health_check.py` | Nightly health check — queries `run_log` and posts Slack alert if nightly ingest missed |
 | `polygon_client.py` | Polygon.io: daily OHLCV bars, earnings, and `fetch_ticker_metadata()` (market cap + options) |
 | `congress_ingest.py` | Congressional trades ingester — AInvest API, ticker-by-ticker, run manually or on schedule |
 | `templates/chart.html` | Candlestick chart page with insider markers (TradingView Lightweight Charts) |
@@ -56,10 +61,16 @@ python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt   # Windows
 .venv/bin/pip install -r requirements.txt        # Linux
 
-# Ingest today's filings
+# Set required env vars (copy from server .env or create locally)
+# Minimum: DATABASE_URL=postgresql://user:pass@localhost:5432/insider_tracker
+# Create schema on a fresh DB:
+alembic upgrade head
+
+# Ingest today's filings (DATABASE_URL must be exported — ingest.py doesn't call load_dotenv)
+export DATABASE_URL=postgresql://...
 python ingest.py --date today
 
-# Start dashboard
+# Start dashboard (.env is loaded at startup via python-dotenv)
 uvicorn app:app --reload
 # → http://localhost:8000
 ```
@@ -77,6 +88,7 @@ python ingest.py --backfill-sectors        # fetch missing SIC/sector for all is
 python ingest.py --backfill-metadata       # fetch Polygon market_cap + has_options for all tickers
                                            # (free tier: ~5 req/min → hours for full DB)
 python ingest.py --update-prices           # fetch latest close prices for all tickers in ticker_metadata
+python ingest.py --mark-joint-filers       # detect and deduplicate joint-filer Form 4 pairs
 ```
 
 ## Congressional trades ingester
@@ -103,6 +115,9 @@ ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull && sudo s
 - `insider-ingest.service` — oneshot triggered by timer
 - `insider-ingest-nightly.timer` — runs `--since-last-run` at 03:00 UTC Mon–Sat (11 PM ET) — catches EDGAR's end-of-day index update
 - `insider-ingest-nightly.service` — oneshot triggered by nightly timer
+- `insider-prices.timer` — runs `--update-prices` at 01:00 UTC Mon–Fri (9 PM ET) — refreshes close prices in `ticker_metadata`
+- `insider-prices.service` — oneshot triggered by prices timer
+- `insider-backup.timer` — runs at 05:30 UTC daily — PG backup to S3 (staggered 30 min after `sync_job` cron)
 
 ```bash
 sudo systemctl status insider-tracker.service
@@ -116,7 +131,7 @@ sudo systemctl status insider-ingest-nightly.timer
 Primary table: `filings` — one row per transaction (not per filing).
 `transaction_id` = `{accession_no}-{ND|D}-{row_index}` is the true PK.
 
-Additional columns added via `_migrate()` (idempotent, runs at every `get_db()` call):
+Schema is managed by Alembic (`alembic upgrade head`). Notable columns:
 - `superseded_by TEXT` — set when a 4/A amendment supersedes this row
 - `sector TEXT` — enriched from EDGAR SIC codes via `sector.py`
 - `joint_filer_of TEXT` — for deduplicated joint-filer filings
@@ -176,17 +191,26 @@ ctx = EnrichContext(
 ## Environment variables (on server)
 
 Set in `/home/deploy/insider-tracker/.env`, loaded by systemd `EnvironmentFile`:
+- `DATABASE_URL` — direct PostgreSQL DSN (e.g. `postgresql://insider_app:pass@localhost:5432/insider_tracker`); required by all scripts
+- `PGBOUNCER_URL` — PgBouncer DSN (port 6432, transaction mode); used by the web app pool when set
 - `SLACK_WEBHOOK_URL` — Slack incoming webhook for alerts
 - `POLYGON_API_KEY` — Polygon.io API key for chart price data and `--backfill-metadata`
 - `AINVEST_API_KEY` — AInvest API key for congressional trades (`congress_ingest.py`)
+- `ANTHROPIC_API_KEY` — Claude API key for `auto_diagnose.py` (autonomous alert diagnosis)
+- `WEBHOOK_SECRET` — HMAC secret for `/webhook/alert` endpoint (validates Healthchecks.io/BetterStack payloads)
+- `INGEST_HEARTBEAT_URL` — uptime heartbeat pinged after each successful nightly ingest (optional)
+- `PRICES_HEARTBEAT_URL` — uptime heartbeat pinged after each successful `--update-prices` run (optional)
 
 ## Concurrency model
 
-- **Per-request DB connections** via `Depends(get_request_db)` in `app.py`. Each request opens its own `sqlite3.Connection` and closes it on response.
-- **WAL mode** — multiple simultaneous readers, one writer, no reader-writer blocking.
-- **`busy_timeout=5000`** — writes wait up to 5 seconds before raising `OperationalError: database is locked`.
-- **`check_same_thread=False`** — required because FastAPI's dependency injection can create the connection in a different thread than the route handler runs in.
-- **External ingesters** (`ingest.py`, `congress_ingest.py`) open their own connection — WAL keeps them from blocking web reads, `busy_timeout` handles write contention gracefully.
+- **Connection pool** via `psycopg_pool.ConnectionPool` (min_size=2, max_size=16). Connects through PgBouncer (`PGBOUNCER_URL`, port 6432) when set, else direct PG (`DATABASE_URL`).
+- **`autocommit=True`** on pool connections — each `execute()` auto-commits. Do NOT call `conn.commit()` from web routes; it raises `ProgrammingError`.
+- **`prepare_threshold=None`** — prepared statements disabled; required for PgBouncer transaction pool mode.
+- **`statement_timeout=8000ms`** set per connection via `_configure_connection()` in `db.py`.
+- **Acquire-late pattern** in `index()` and `htmx_filings()` — these routes call `get_db()` manually only when a cache miss requires a DB query. Hot path (cache hit) holds zero connections.
+- **`get_request_db()`** as FastAPI `Depends()` in secondary routes (`/filing/{id}`, `/issuer/…`, `/congress`, etc.) — connection held for request duration.
+- **CLI scripts** (`ingest.py`, `congress_ingest.py`, etc.) use `get_cli_db()` — a plain `psycopg.connect()` directly to PG (not pooled, not PgBouncer). Supports explicit `conn.commit()`/`rollback()` and `with conn.transaction():`.
+- **Redis** (`cache.py`) stores rendered HTML for query/stats/cluster results (TTL 24h, db=3). Cache miss falls through to DB silently — Redis is a perf dep, not availability.
 - **Rate limits** — `@limiter.limit("60/minute")` on `/`, `/htmx/filings`, `/htmx/stats`, `/htmx/clusters`, `/congress`, `/export.csv`, `/chart/{ticker}`, `/logic/test-alert`.
 
 ## Adding new filters — checklist
@@ -212,7 +236,7 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Starlette API:** Use `TemplateResponse(request, "name.html", context)` — not the old `(name, context)` form
 - **static/ dir:** Empty → not tracked by git. Run `mkdir -p static` after fresh clone on server
 - **10b5-1 detection:** Checks `<rule10b5-1Indicator>` XML element first, falls back to footnote scan
-- **Sparkline week keys:** Use Monday-date strings (not `%Y-%W`) — `%G/%V` requires SQLite 3.38+; server ships 3.37
+- **Sparkline week keys:** SQL uses `date_trunc('week', filed_at)::date` (returns Monday). Python dict keys that group by week must also use Monday dates — `%G-W%V` gives the ISO week string if needed
 - **`_batch_cluster_counts`:** One SQL query for all (issuer_cik, transaction_date) pairs — not N+1
 - **Alert dedup:** `INSERT OR IGNORE` + `cursor.rowcount` before commit (not `changes()` after)
 - **Buy alert keys:** Unified `buy:` prefix — prevents double-firing when a trade matches both big_buy and insider_buy thresholds
@@ -221,7 +245,6 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Duplicate form inputs:** Never have two `<input>` elements with the same `name` in the HTMX filter form — FastAPI receives them as a list and may 422 or silently mishandle.
 - **EDGAR daily-index vs quarterly:** `full-index/YYYY/QTRn/form.idx` is updated with a multi-day lag. For recent dates use `daily-index/YYYY/QTRn/form.YYYYMMDD.idx` (same-day). Fall back to quarterly on any non-200 (not just 404 — SEC also returns 403 for missing dates).
 - **Daily-index date format:** Daily index embeds dates as `YYYYMMDD` (no dashes); quarterly uses `YYYY-MM-DD`. Normalize to ISO before storing as `filed_at` or `DATE(filed_at)` queries return 0 results.
-- **SQLite `check_same_thread`:** Must pass `check_same_thread=False` to `sqlite3.connect()`. FastAPI's `Depends()` dependency runs in a different thread than the route, so without this flag every request raises `ProgrammingError: SQLite objects created in a thread can only be used in that same thread`.
 - **`urlencode` with multi-value params:** Always use `urlencode(..., doseq=True)` when the dict may contain lists (e.g. `market_cap_tiers`, `roles`, `codes`). Without `doseq=True`, a list value is stringified as `"['micro', 'small']"` instead of repeated `?market_cap_tiers=micro&market_cap_tiers=small`.
 - **Jinja2 custom filters:** Register via `templates.env.filters["filter_name"] = fn` immediately after `Jinja2Templates(...)` init. Cannot be defined inside templates.
 - **AInvest congress API:** Ticker-based only — no bulk endpoint. Paginate with `size=100` until `len(data) < 100`. The `data.data` field is `null` (not `[]`) when the ticker has no records — always use `outer.get("data") or []`, not just `.get("data", [])`.
@@ -230,22 +253,22 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **`_replace_filter` Jinja2 filter:** Used in congress.html sort links to build query strings. Registered in `app.py` after `Jinja2Templates` init. Requires `doseq=True` for multi-value params.
 - **`_build_filings_where()` is the WHERE-clause source of truth:** Both `get_filings_for_date()` and `get_filings_count()` call this helper. New filters MUST go here first, then appear in both callers. Checklist items 9–10 in "Adding new filters" now reference this.
 - **Pagination conviction sort:** SQL `LIMIT/OFFSET` cannot be applied when `sort_by="conviction"` because Python must sort ALL results first. The refactored `get_filings_for_date()` skips SQL pagination for conviction sort and Python-slices after enrichment. Do not add `LIMIT/OFFSET` to the conviction SQL path.
-- **Sentinel-aware cache (24h TTL) is per-worker:** With `--workers 2`, each process has its own in-process caches (`_query_cache`, `_stats_cache`, `_clusters_cache`, `_sectors_cache`, `_config_cache`). Invalidated by `data/.last_ingest` sentinel mtime — `ingest.py` touches this file after each run. Cache entries store `(pre_mtime, value)`; on read, if `pre_mtime < _sentinel_mtime()`, entry is stale. Capture `pre_mtime` BEFORE the DB query — not after — or a concurrent ingest during the query will be silently missed.
+- **Sentinel-aware cache pattern:** Redis keys for query/stats/clusters store `(pre_mtime, value)` via `pickle`. In-process TTLCache entries (`_sectors_cache`, `_config_cache`) use the same pattern. On read, if `stored_mtime < _sentinel_mtime()`, entry is stale. Capture `pre_mtime` BEFORE the DB query — not after — or a concurrent ingest during the query will be silently missed. `ingest.py` touches `data/.last_ingest` after each run to invalidate all caches.
 - **Pager buttons must use `hx-include="false"`:** Pager buttons build a complete query string via `replace_filter` on the full `filters` dict. Adding `hx-include="#filter-form"` would double-send all filter params (422 errors for typed Query params). Always use `hx-include="false"` on any button that carries a full URL via `hx-get`.
 - **`_filters_dict()` canonical contract:** Both `/` and `/htmx/filings` routes must call `_filters_dict()` to build the `filters` context. Boolean checkbox values are stored as `'1'`/`'0'` strings (not Python booleans) so they round-trip correctly through URLs and Jinja `== '1'` checks. Never pass raw Python booleans in the filters dict.
-- **`asyncio.to_thread` sequential — one DB connection:** Multiple `asyncio.to_thread` calls in one route are sequential (`await` waits for each). Same `db` connection used for all. Do NOT use `asyncio.gather` with the same connection (concurrent thread access to one sqlite3 connection is unsafe even with `check_same_thread=False`).
+- **`asyncio.to_thread` calls in one route are sequential:** Multiple `await asyncio.to_thread(...)` calls share the same `db` connection and execute one at a time. Do NOT use `asyncio.gather` with the same connection — psycopg connections are not thread-safe for concurrent use.
 - **`price_perf_pct` requires `--update-prices` to be meaningful:** The field is silently `None` until `insider-prices.timer` runs (weekdays 21:00 ET). Monitor staleness with `SELECT MAX(last_close_at) FROM ticker_metadata WHERE last_close IS NOT NULL`.
 - **Alert matchers must filter `joint_filer_of IS NULL`:** All three matchers in `alerts.py` (`_match_big_buy`, `_match_insider_buy`, `_match_cluster`) must include `AND joint_filer_of IS NULL` alongside `superseded_by IS NULL`. Without it, joint-filer secondary rows inflate `COUNT(DISTINCT insider_cik)` causing false-positive cluster alerts and duplicate buy alerts.
 - **`get_summary_stats` must filter both superseded and joint-filer rows:** The KPI bar query (`queries.py`) is a raw `SELECT FROM filings` that bypasses `_build_filings_where()`. It needs explicit `AND superseded_by IS NULL AND joint_filer_of IS NULL` or KPI counts will diverge from the table rows below them.
-- **Use `cur.rowcount` after INSERT OR IGNORE, not `SELECT changes()`:** Assign the cursor (`cur = conn.execute(...)`) and check `cur.rowcount` immediately. `changes()` can reflect a subsequent write if any intervening statement runs between the INSERT and the SELECT, causing under-counting of `inserted`.
+- **Use `cur.rowcount` after INSERT ... ON CONFLICT DO NOTHING:** Assign the cursor (`cur = conn.execute(...)`) and check `cur.rowcount` immediately — `1` means inserted, `0` means skipped. Do NOT query `changes()` (SQLite-only) or add a separate SELECT after the INSERT, as an intervening statement can cause under-counting.
 - **`polygon_api_key` must not enter template context:** `cfg.load_config()` includes `polygon_api_key`. Strip it before passing to any template: `view_config = {k: v for k, v in active_config.items() if k != "polygon_api_key"}`. The `/logic` page is unauthenticated — leaking the key via a Jinja typo is a one-line mistake away.
 - **Raw SQL outside `_build_filings_where()` drifts:** Every `SELECT FROM filings` that isn't routed through `_build_filings_where()` must manually add `superseded_by IS NULL` and `joint_filer_of IS NULL`. Audit any new direct query against this checklist.
 - **`_resolve_amendment` uses two-pass share matching:** Pass 1 matches on shares (handles unchanged rows in a multi-row 4/A). Pass 2 drops shares (handles share-count corrections). If 2+ candidates in either pass, skips to avoid mis-attribution. Do not collapse back to a single pass.
-- **`mark_joint_filers` must GROUP BY `issuer_cik` not `issuer_ticker`:** `issuer_ticker` is nullable — SQLite treats `NULL = NULL` in GROUP BY, which can merge unrelated issuers with missing tickers into false joint-filer groups. `issuer_cik` is `NOT NULL`. After changing this, re-run `--mark-joint-filers` on the server.
+- **`mark_joint_filers` must GROUP BY `issuer_cik` not `issuer_ticker`:** `issuer_ticker` is nullable — SQL treats all NULLs as equal in GROUP BY, merging unrelated issuers with missing tickers into false joint-filer groups. `issuer_cik` is `NOT NULL` and is the correct grouping key.
 - **`get_summary_stats` and `get_cluster_activity` accept `codes`:** Both functions take `codes: list[str] | None` so the KPI bar and cluster section respect the Buy/Sell toggle. Both call sites in `/` and `/htmx/filings` must pass `codes=effective_codes`. Both SQL queries inside `get_cluster_activity` (main cluster aggregation AND secondary transaction fetch) must use the codes filter.
-- **`%G-W%V` for ISO week in Python, not `%Y-W%W`:** `%W` produces week `00` in early January, causing duplicate cross-year keys in `alerts_sent`. Use `%G` (ISO week-based year) and `%V` (ISO week 01–53, never 00) in Python `datetime.strftime`. This is Python only — SQLite `strftime` on server 3.37 does not support `%G`/`%V`.
+- **`%G-W%V` for ISO week in Python, not `%Y-W%W`:** `%W` produces week `00` in early January, causing duplicate cross-year keys in `alerts_sent`. Use `%G` (ISO week-based year) and `%V` (ISO week 01–53, never 00) in Python `datetime.strftime`.
 - **KPI stats and cluster activity are deferred HTMX loads:** `GET /` and `/htmx/filings` no longer return stats or clusters. They're fetched async by `#stats-container` and `#clusters-container` in `index.html` via `/htmx/stats` and `/htmx/clusters`. These endpoints accept only the narrow filter subset their queries use (date, hide_10b5_1, hide_equity_swap, codes) — extra params from `hx-include="#filter-form"` are silently ignored by FastAPI.
-- **Watchlist changes must clear `_query_cache`:** Cached `(buys, sells)` have watchlist flags baked in by `_enrich()`. `/watchlist/add` and `/watchlist/remove` call `_query_cache.clear()` so the next load reflects the new star immediately. Without this, cached results show stale watchlist stars for up to 24h.
+- **Watchlist changes must invalidate the Redis query cache:** Cached `(buys, sells)` have watchlist flags baked in by `_enrich()`. `/watchlist/add` and `/watchlist/remove` call `cache_module.invalidate_query_cache()` which scans and deletes all `it:query:*` keys. Without this, both workers keep serving stale watchlist stars for up to 24h.
 - **SEC rate-limit returns 200 + HTML:** When the server IP exceeds SEC's request rate, EDGAR returns `200 OK` with an HTML "Request Rate Threshold Exceeded" page instead of the plain-text index. `resp.raise_for_status()` does not catch this. Detection: check `resp.text.lstrip().startswith("<")` and raise. Without this guard, the ingester parses the HTML silently, finds no entries, records `filings_found=0, errors=0` — a silent false-negative that's hard to diagnose from run_log.
 - **`_load_config_cached()` wraps `cfg.load_config()`:** 60s TTL in-process cache. Call `_config_cache.clear()` before `save_overrides()` in `/logic/save` so config changes are visible immediately. The internal call inside `_load_config_cached()` itself must stay as `cfg.load_config()` — replacing it causes infinite recursion.
 - **Congress `transaction_type` is mixed-case from AInvest:** The API returns `"Purchase"` / `"Sale"` (capitalized). The summary query must use `LOWER(transaction_type) IN ('purchase', 'buy')` — a simple `= 'purchase'` match silently returns 0. Same applies to any future filter on this column.
@@ -253,9 +276,8 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Ticker case from SEC XML is not normalized:** `issuerTradingSymbol` can arrive lowercase (e.g. "vicr"). Always `.upper().strip()` the value in `parser.py` when extracting it. Existing rows with lowercase tickers in the DB won't be fixed retroactively by a re-ingest without a targeted UPDATE.
 - **`NONE` / `N/A` appear as real tickers from SEC XML:** Some filers (funds, BDCs) have no exchange symbol. The XML emits the literal string `"NONE"` or leaves the field blank. Template ticker checks must guard `row.issuer_ticker not in ('NONE', 'N/A')` or users see a chart link to `/chart/NONE`.
 - **Derivative table `price_per_share` is exercise/conversion price, not market price:** `table_type = 'D'` rows store the derivative's exercise/strike/conversion price in `transactionPricePerShare`, not what was paid. This makes `total_value` (shares × that price) meaningless for derivatives (e.g. VELO showed $31T). Always add `AND table_type = 'ND'` to any query that relies on `total_value` for value-based filtering — alerts, signal scanners, and any rank/sort by dollar value.
-- **`alerts_sent.alert_type` is NOT NULL:** The `alerts_sent` table has `alert_type TEXT NOT NULL`. Any `INSERT OR IGNORE INTO alerts_sent` must supply both `alert_key` AND `alert_type` or it will raise `IntegrityError: NOT NULL constraint failed`. Pattern: `conn.execute("INSERT OR IGNORE INTO alerts_sent (alert_key, alert_type) VALUES (?, ?)", (key, "my_type"))`. The SCHEMA constant defines this — check it before writing new alert dedup code.
-- **`run_log.run_kind` pre-migration rows get `'unknown'`:** The `run_kind` column was added via `_migrate()` with `DEFAULT 'unknown'`. Existing rows from before the migration are stamped `'unknown'`. The health checker filters `WHERE run_kind = 'nightly'`, so it correctly ignores pre-migration rows and daytime runs. The earliest possible health alert is after the first 2 nightly (`--since-last-run`) runs post-deploy.
-- **`ingest.py` did not import `os` originally:** `os.getenv()` was not used in the original file. The module-level `import os` was added when heartbeat and health-check wire-up were added. If adding new code that reads env vars directly in `ingest.py`, verify `import os` is present — it was missing for the entire early lifespan of the file.
+- **`alerts_sent.alert_type` is NOT NULL:** The `alerts_sent` table has `alert_type TEXT NOT NULL`. Any dedup insert must supply both `alert_key` AND `alert_type` or it will raise a NOT NULL constraint error. Pattern: `conn.execute("INSERT INTO alerts_sent (alert_key, alert_type) VALUES (%s, %s) ON CONFLICT DO NOTHING", (key, "my_type"))`. Check the schema before writing new alert dedup code.
+- **`run_log.run_kind` pre-migration rows are `'unknown'`:** Rows ingested before the `run_kind` column was introduced were migrated to PG with value `'unknown'`. The health checker filters `WHERE run_kind = 'nightly'`, so it correctly ignores those old rows and daytime runs.
 - **`/healthz` is intentionally exempt from rate limiting:** The endpoint reads only the sentinel file mtime — no DB query. Do not add `@limiter.limit()` to it; uptime monitors poll it every 30–60 seconds and must not be throttled.
 - **EDGAR daily index not available until ~03:00 UTC (11 PM ET):** `form.YYYYMMDD.idx` is published ~22:00 ET each business day. The three scheduled daytime runs (10:30/14:00/19:00 UTC = 6:30 AM/10 AM/3 PM ET) consistently return 0 filings for that day's date because the index file either doesn't exist yet or is empty. The `insider-ingest-nightly.timer` at 03:00 UTC uses `--since-last-run` to catch the previous business day's filings after EDGAR publishes them. Do NOT rely on the daytime runs to capture same-day filings reliably.
 - **Concurrent ingest processes multiply the EDGAR request rate:** `ingest.py` makes 2 HTTP requests per filing (index.htm + XML) at 0.12 sec/request (~8.3 req/sec per process). Running 2+ ingest processes simultaneously exceeds SEC's 10 req/sec cap, causing 429 errors and potentially triggering a temporary IP ban on the quarterly index (403). Never run a manual backfill while a scheduled ingest or `--update-prices` is running against EDGAR. `--update-prices` uses Polygon only — it is safe to run concurrently.
@@ -277,17 +299,16 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **`dict_row` row factory means rows ARE dicts, not Row objects:** `row[0]` index access no longer works — must use `row["column_name"]`. Every `COUNT(*)` must be aliased: `SELECT COUNT(*) AS n FROM ... fetchone()["n"]`. Every aggregate must have an explicit alias (`AS buy_count`, `AS total_value`) or it'll be keyed as the literal SQL expression string like `"COUNT(*)"` — fragile.
 - **`transaction_date` is a `date` object in PG, was a string in SQLite:** Any code that compares `transaction_date` lexicographically to a string (e.g. `td >= "2025-01-01"`) needs explicit `.isoformat()` first. `_batch_cluster_counts` and `alerts.check_and_send_signals` both have explicit normalization to ISO strings. Routes using `SELECT *` (e.g. `get_issuer_filings`) don't cast `::text` so callers must normalize: `if hasattr(td, "isoformat"): td = td.isoformat()`. The `/chart/{ticker}` route 500'd on this when comparing PG `date` objects against Polygon's `"YYYY-MM-DD"` strings.
 - **All files now use psycopg — no sqlite3 remains:** `health_check.py`, `backtest.py`, `generate_lc_chart.py`, `generate_signals_chart.py` are fully ported. `transaction_date::text` cast in SELECT keeps downstream string comparisons working without touching callers.
-- **PostgreSQL cutover is LIVE (2026-05-19):** PG 16 runs on the same droplet (`localhost:5432`, DB `insider_tracker`, user `insider_app`). 411,546 filings migrated. `DATABASE_URL` is in `.env`. SQLite file at `data/insider_tracker.db` is now historical — do not delete until a full backup is confirmed.
+- **PostgreSQL is the live database:** PG 16 on the same droplet (`localhost:5432`, DB `insider_tracker`, user `insider_app`). `DATABASE_URL` is in `.env`. SQLite file at `data/insider_tracker.db` is historical only — safe to delete once backup is confirmed.
 - **Alembic uses SQLAlchemy 2 + psycopg3 dialect:** `migrations/env.py` swaps `postgresql://` → `postgresql+psycopg://` for SQLAlchemy but the app itself uses raw psycopg3. Run `alembic upgrade head` for new schema changes.
 - **TIMESTAMP columns from PG are datetime objects — cast to text in queries:** `run_log.started_at`, `run_log.finished_at`, `alerts_sent.sent_at` are `datetime` in PG (text in SQLite). Queries use `::text` cast so existing `[:19].replace('T',' ')` template patterns work unchanged. Any new `TIMESTAMP` column exposed to templates must do the same or the template will 500.
 - **SQLite `transaction_date != ''` guard removed:** `filings.transaction_date` is `DATE NOT NULL` in PG — the empty-string guard is invalid SQL and unnecessary. Removed from `generate_lc_chart.py` and `generate_signals_chart.py` during PG port.
 - **Migration script date-cleaning:** Some SQLite `transaction_date` values had timezone offsets appended (e.g. `2026-03-23-05:00`). The migration script stripped to `[:10]` before inserting into PG's `DATE` column. No data was lost — all 411,546 rows inserted with 0 errors.
-- **CLI scripts must use `get_cli_db()`, not `get_db()`:** `get_db()` creates a psycopg_pool `ConnectionPool` (min_size=2, max_size=8). Running any CLI script (ingest.py, congress_ingest.py, etc.) concurrently with the web app creates a second pool. Long-running operations like `mark_joint_filers` then compete for PG resources, causing the web app's pool to exhaust its 30-second `getconn()` timeout and return 500s. `get_cli_db()` is a plain `psycopg.connect()` — no pool, no background threads. Use it in all CLI/offline scripts.
+- **CLI scripts must use `get_cli_db()`, not `get_db()`:** `get_db()` creates a psycopg_pool `ConnectionPool` (min_size=2, max_size=16). Running any CLI script (ingest.py, congress_ingest.py, etc.) concurrently with the web app creates a second pool. Long-running operations like `mark_joint_filers` then compete for PG resources, causing the web app's pool to exhaust its `getconn()` timeout and return 500s. `get_cli_db()` is a plain `psycopg.connect()` — no pool, no background threads. Use it in all CLI/offline scripts.
 - **Manual ingest produces no output if `DATABASE_URL` is not set:** `ingest.py` does not call `load_dotenv()`. It relies on the environment having `DATABASE_URL` pre-exported. When running manually over SSH, extract it first: `export DATABASE_URL=$(grep "^DATABASE_URL=" .env | head -1 | cut -d= -f2-)` — then run `PYTHONUNBUFFERED=1 .venv/bin/python ingest.py --date YYYY-MM-DD`.
-- **`date.weekday()` — May 19, 2026 is Tuesday (weekday=1):** Double-check calendar math before diagnosing "missing" ingest dates. May 16 is Saturday (weekday=5) and is correctly skipped by the ingest. The actual missing business days after May 15 were May 18 (Monday) and May 19 (Tuesday).
-- **GPTBot HTTP/2 multiplexing exhausts the PG connection pool:** GPTBot uses HTTP/2 and multiplexes 8+ concurrent `/filing/{id}` requests over one TCP connection, draining the entire pool (`max_size=8` per worker). Every subsequent request then fails with `PoolTimeout` for as long as the slow requests are in-flight. Fix: block AI crawlers in nginx with `if ($http_user_agent ~* "GPTBot|...")` INSIDE each `location` block — unreliable at the `server` level. Serve `/robots.txt` from a location block WITHOUT the `if` guard so crawlers can read the disallow rules. Robots.txt file lives at `/var/www/insider/robots.txt` (www-data can't traverse `/home/deploy/`).
+- **GPTBot HTTP/2 multiplexing exhausts the PG connection pool:** GPTBot uses HTTP/2 and multiplexes 8+ concurrent `/filing/{id}` requests over one TCP connection, draining the entire pool. Every subsequent request then fails with `PoolTimeout` for as long as the slow requests are in-flight. Fix: block AI crawlers in nginx with `if ($http_user_agent ~* "GPTBot|...")` INSIDE each `location` block — unreliable at the `server` level. Serve `/robots.txt` from a location block WITHOUT the `if` guard so crawlers can read the disallow rules. Robots.txt file lives at `/var/www/insider/robots.txt` (www-data can't traverse `/home/deploy/`).
 - **nginx `sites-enabled` is NOT a symlink on this server:** Editing `/etc/nginx/sites-available/insider-tracker` does NOT update the live config — the `sites-enabled` copy is a separate file (`cp`, not `ln -s`). Always write changes directly to `/etc/nginx/sites-enabled/insider-tracker` then run `nginx -t && systemctl reload nginx`.
-- **`rolling back returned connection` in pool logs is normal:** psycopg3 starts an implicit transaction on every statement (including SELECT). If the handler doesn't call `conn.commit()`, the pool sees an open transaction on return and rolls it back. Safe — not a sign of a bug.
+- **`rolling back returned connection` in pool logs:** With `autocommit=True`, each execute auto-commits so this should be rare. If it appears, it indicates a connection was used without autocommit (e.g., a CLI connection leaked into pool logic) — investigate the caller rather than dismissing it.
 - **Co-located cron jobs can OOM-kill uvicorn workers:** This server runs 8+ Python apps. `samcart-analytics/sync_job.py` (cron 05:00 UTC) consumed 3.6 GB RAM due to a top-level `import streamlit as st` in `cache.py` loading streamlit's full dependency tree even in headless mode. The OOM killer executed it, leaving the server memory-starved long enough for all uvicorn workers to fail to fork. Fix applied: lazy streamlit import in `cache.py` + `systemd-run --scope -p MemoryMax=1536M` wrapper on the cron. "No headers received" incident at 05:44–05:49 UTC 2026-05-29.
 - **PgBouncer runs on 127.0.0.1:6432 in transaction pool mode:** Pool connections go through PgBouncer (`PGBOUNCER_URL` env var, port 6432). `get_cli_db()` always uses `DATABASE_URL` (port 5432, direct PG) — ingest scripts need explicit transaction semantics. Config: `/etc/pgbouncer/pgbouncer.ini`, userlist: `/etc/pgbouncer/userlist.txt` (plain-text password required when PG uses SCRAM-SHA-256). Restart: `sudo systemctl restart pgbouncer`. Pool stats: `sudo -u postgres psql -h 127.0.0.1 -p 6432 -d pgbouncer -c 'SHOW POOLS;'`.
 - **`prepare_threshold=None` (not 0) disables psycopg3 prepared statements:** In psycopg3, `0` means "prepare on first execute" (immediate) — the exact opposite of what PgBouncer transaction mode needs. `None` disables automatic preparation entirely. Set in `_configure_connection()` in `db.py`. Getting this wrong causes `prepared statement "_pg3_0" already exists` errors as PgBouncer reuses backend connections across clients.
@@ -295,10 +316,11 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **`cache_module._sentinel_mtime()` is the single source of truth for sentinel mtime:** `app.py` no longer defines its own `_sentinel_mtime()`. All callers (`_sentinel_get`, `_get_all_sectors_cached`, `healthz`) use `cache_module._sentinel_mtime()`. Do not add a local copy.
 - **Redis cache lives in `cache.py` — `cache_module.cache_get/cache_set` replace `_sentinel_get/_sentinel_set` for the 3 main caches:** Keys `it:query:<hash>`, `it:stats:<hash>`, `it:clusters:<hash>` in Redis db=3. `_sectors_cache` and `_config_cache` stay in-process (too small/fast to warrant Redis RTT). Serialization is `pickle((pre_mtime, value))`; TTL 24h. Any `RedisError` silently falls through to a cache miss — Redis is a perf dep, not availability. `invalidate_query_cache()` scans `it:query:*` and deletes — used on watchlist add/remove to flush stale watchlist star flags across both workers.
 - **`index()` and `htmx_filings()` use acquire-late pattern — no `Depends(get_request_db)`:** Both routes call `get_db()` manually, guarded by `need_db = (cached_result is None) or summary_mode or (cached_sectors is None)`. Hot path (cache hit, no date range, sectors warm) holds zero DB connections. Do NOT add `Depends(get_request_db)` back — it holds a connection for the full request duration including template render.
-- **`htmx_stats()` and `htmx_clusters()` cache rendered HTML strings:** `_stats_cache` and `_clusters_cache` store HTML fragments rendered via `templates.env.get_template(name).render(context)`, not raw data dicts. On cache hit, return `HTMLResponse(html)` directly — no Jinja render, no DB access. Only safe because `_stats_partial.html` and `_clusters_partial.html` have no `request.*` calls.
-- **`PoolTimeout` on data-heavy dates = rapid navigation exhausts pool:** `asyncio.to_thread()` SQL threads are non-cancellable. When the browser navigates away (RST_STREAM), the HTTP request is cancelled but the SQL thread keeps running and holds its pool connection. On dates with many filings (e.g. busy Fridays), queries are slow enough that 8+ cancelled threads can pile up, exhausting `max_size`. Fix applied: `max_size=16` and `statement_timeout=25000ms` in `db.py`'s `_get_pool()`. If this recurs, check for slow queries with `SELECT pid, now()-query_start, query FROM pg_stat_activity WHERE datname='insider_tracker'`.
+- **`htmx_stats()` and `htmx_clusters()` cache rendered HTML strings in Redis:** Keys `it:stats:<hash>` and `it:clusters:<hash>` store rendered HTML fragments (not raw data dicts). On cache hit, return `HTMLResponse(html)` directly — no Jinja render, no DB access. Only safe because `_stats_partial.html` and `_clusters_partial.html` have no `request.*` calls.
+- **`PoolTimeout` on data-heavy dates = rapid navigation exhausts pool:** `asyncio.to_thread()` SQL threads are non-cancellable. When the browser navigates away (RST_STREAM), the HTTP request is cancelled but the SQL thread keeps running and holds its pool connection. On dates with many filings (e.g. busy Fridays), queries are slow enough that 8+ cancelled threads can pile up, exhausting `max_size`. Fix applied: `max_size=16` and `statement_timeout=8000ms` in `db.py`. If this recurs, check for slow queries with `SELECT pid, now()-query_start, query FROM pg_stat_activity WHERE datname='insider_tracker'`.
 - **`insider-tracker.service` has `MemoryMax=512M` / `MemoryHigh=400M`:** Workers currently use ~65 MB each (130 MB total). The hard limit is 512 MB — if the process exceeds this systemd kills it. Raise the limit in `/etc/systemd/system/insider-tracker.service` if adding workers or the cache grows significantly (then `sudo systemctl daemon-reload`).
 - **`insider-backup.timer` runs at 05:30 UTC, not 05:00:** Staggered 30 minutes after the `sync_job` cron to avoid simultaneous AWS CLI + Python sync competing for memory at the same minute.
+- **Pydantic v2 treats empty form strings as null for `Form(...)` required fields:** FastAPI ≥ 0.111 uses Pydantic v2, which returns a 422 `"input":null` error when a required `Form(...)` str field is submitted as an empty string. Use `Form(default="")` for any string form param and let route-level `if not value:` validation return a 400. Also add `required` to the HTML input to block empty browser submissions early.
 
 ## SEC compliance
 
