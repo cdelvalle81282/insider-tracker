@@ -105,7 +105,7 @@
 
           <td class="td">
             {% if row.issuer_ticker %}
-            <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400" style="color:var(--text-1);">{{ row.issuer_ticker }}</a>
+            <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400">{{ row.issuer_ticker }}</a>
             {% if row.is_watched %}<span class="watched-star">★</span>{% endif %}
             {% else %}
             <span style="color:var(--text-3);">—</span>

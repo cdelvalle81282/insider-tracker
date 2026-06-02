@@ -755,25 +755,21 @@ def get_filings_count(
 def get_summary_stats(
     conn: psycopg.Connection,
     target_date: date,
-    start_date: date | None = None,
+    date_range: tuple[date, date] | None = None,
     hide_10b5_1: bool = True,
     hide_equity_swap: bool = True,
     codes: list[str] | None = None,
 ) -> dict:
-    end_d  = target_date.isoformat()
-    start_d = (start_date or target_date).isoformat()
     ten_b  = "AND is_10b5_1 = 0"   if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0"  if hide_equity_swap else ""
     codes_list, codes_ph = _sanitize_codes(codes)
 
-    if start_d == end_d:
-        date_filter = "filed_at::date = %s"
-        date_params = [end_d]
-        cluster_date_params = [end_d]
-    else:
+    if date_range:
         date_filter = "filed_at::date BETWEEN %s AND %s"
-        date_params = [start_d, end_d]
-        cluster_date_params = [start_d, end_d]
+        date_params = [date_range[0].isoformat(), date_range[1].isoformat()]
+    else:
+        date_filter = "filed_at::date = %s"
+        date_params = [target_date.isoformat()]
 
     row = conn.execute(f"""
         SELECT
@@ -797,7 +793,7 @@ def get_summary_stats(
             AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
         ) AS sub
-    """, cluster_date_params).fetchone()
+    """, date_params).fetchone()
 
     buy_total = row["buy_total"] or 0
     sell_total = row["sell_total"] or 0
