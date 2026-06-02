@@ -35,7 +35,7 @@
   <!-- Range presets -->
   <div class="fg" style="padding:0 6px; gap:2px;">
     <button type="button" onclick="setRange(0)"  data-days="0"  class="chip range-chip {% if not is_range %}active{% endif %}">Today</button>
-    <button type="button" onclick="setRange(6)"  data-days="6"  class="chip range-chip {% if is_range and filters.start_date is defined %}{% endif %}">7d</button>
+    <button type="button" onclick="setRange(6)"  data-days="6"  class="chip range-chip">7d</button>
     <button type="button" onclick="setRange(29)" data-days="29" class="chip range-chip">30d</button>
   </div>
 
@@ -296,6 +296,20 @@
       window.location.href = '/chart/' + val.toUpperCase();
     }
   }
+
+  // Highlight the matching chip based on current start/end inputs on load
+  (function() {
+    const start = document.getElementById('start_date').value;
+    const end   = document.getElementById('end_date').value;
+    if (start && end && start !== end) {
+      const diff = Math.round((new Date(end) - new Date(start)) / 86400000);
+      const btn = document.querySelector(`.range-chip[data-days="${diff}"]`);
+      if (btn) {
+        document.querySelectorAll('.range-chip').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }
+    }
+  })();
 
   function setRange(daysBack) {
     const today = new Date();

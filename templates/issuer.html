@@ -5,7 +5,7 @@
 
 <div class="mb-5 flex items-center justify-between flex-wrap gap-3">
   <div class="flex items-center gap-3">
-    <h1 class="text-2xl font-bold text-white">${{ ticker }}</h1>
+    <h1 class="text-2xl font-bold" style="color:var(--text-1);">${{ ticker }}</h1>
     <a href="/chart/{{ ticker }}"
        class="text-xs bg-gray-900 border border-gray-800 text-gray-400 hover:text-white px-3 py-1 rounded transition-colors">
       📈 Chart
@@ -91,7 +91,7 @@
         </span>
         {% endif %}
         {% if day_other %}
-        <span class="text-xs text-gray-500 bg-gray-800/50 border border-gray-700/60 px-2 py-0.5 rounded-full">
+        <span class="text-xs text-gray-400 bg-gray-800/50 border border-gray-700/60 px-2 py-0.5 rounded-full">
           {{ day_other | length }} other
         </span>
         {% endif %}

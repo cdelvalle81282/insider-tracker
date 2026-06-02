@@ -552,10 +552,12 @@ async def htmx_stats(
     effective_hide_swap = hide_equity_swap != "0"
     effective_codes = codes or ["P", "S"]
 
-    _, range_end, _ = _resolve_date_range(d, start_date, end_date)
+    range_start, range_end, is_range = _resolve_date_range(d, start_date, end_date)
     target_date = range_end
+    effective_start = range_start if is_range else None
 
     skey = _cache_key({
+        "start_date": range_start.isoformat(),
         "target_date": target_date.isoformat(),
         "hide_10b5_1": "1" if effective_hide else "0",
         "hide_equity_swap": "1" if effective_hide_swap else "0",
@@ -568,6 +570,7 @@ async def htmx_stats(
         try:
             stats = await asyncio.to_thread(
                 queries.get_summary_stats, db, target_date,
+                start_date=effective_start,
                 hide_10b5_1=effective_hide,
                 hide_equity_swap=effective_hide_swap,
                 codes=effective_codes,

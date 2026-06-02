@@ -10,6 +10,7 @@
     <p class="text-gray-500 text-sm mt-1">
       Stock disclosures from U.S. House and Senate members.
       Data via <a href="https://www.ainvest.com" target="_blank" rel="noopener noreferrer" class="underline hover:text-sky-400 transition-colors">AInvest</a>.
+      Senate (*) data not yet available from this source.
     </p>
   </div>
 </div>
@@ -73,7 +74,7 @@
     <select name="chamber" class="fg-in" style="width:90px;">
       <option value=""      {% if not filters.chamber %}selected{% endif %}>All</option>
       <option value="house" {% if filters.chamber == 'house' %}selected{% endif %}>House</option>
-      <option value="senate"{% if filters.chamber == 'senate' %}selected{% endif %}>Senate</option>
+      <option value="senate"{% if filters.chamber == 'senate' %}selected{% endif %}>Senate *</option>
     </select>
   </div>
 
@@ -161,7 +162,7 @@
 
         <!-- Politician -->
         <td class="td" style="white-space:nowrap;">
-          <span class="text-white font-medium text-sm">{{ trade.politician_name }}</span>
+          <span class="font-medium text-sm" style="color:var(--text-1);">{{ trade.politician_name }}</span>
           <span style="font-size:.6rem; color:var(--text-3); margin-left:4px; text-transform:uppercase; letter-spacing:.06em;">
             {{ trade.chamber }}
           </span>

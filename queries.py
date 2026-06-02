@@ -755,14 +755,25 @@ def get_filings_count(
 def get_summary_stats(
     conn: psycopg.Connection,
     target_date: date,
+    start_date: date | None = None,
     hide_10b5_1: bool = True,
     hide_equity_swap: bool = True,
     codes: list[str] | None = None,
 ) -> dict:
-    d = target_date.isoformat()
+    end_d  = target_date.isoformat()
+    start_d = (start_date or target_date).isoformat()
     ten_b  = "AND is_10b5_1 = 0"   if hide_10b5_1    else ""
     swap_f = "AND equity_swap = 0"  if hide_equity_swap else ""
     codes_list, codes_ph = _sanitize_codes(codes)
+
+    if start_d == end_d:
+        date_filter = "filed_at::date = %s"
+        date_params = [end_d]
+        cluster_date_params = [end_d]
+    else:
+        date_filter = "filed_at::date BETWEEN %s AND %s"
+        date_params = [start_d, end_d]
+        cluster_date_params = [start_d, end_d]
 
     row = conn.execute(f"""
         SELECT
@@ -772,9 +783,9 @@ def get_summary_stats(
             COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total,
             COUNT(DISTINCT issuer_cik) AS issuer_count
         FROM filings
-        WHERE filed_at::date = %s AND transaction_code IN ({codes_ph})
+        WHERE {date_filter} AND transaction_code IN ({codes_ph})
           AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
-    """, [d, *codes_list]).fetchone()
+    """, [*date_params, *codes_list]).fetchone()
 
     # Clusters are always buy-only — a cluster is 2+ distinct insiders buying
     # the same stock. Sells are excluded regardless of the caller's codes filter.
@@ -782,11 +793,11 @@ def get_summary_stats(
     clusters = conn.execute(f"""
         SELECT COUNT(*) AS n FROM (
           SELECT issuer_cik FROM filings
-          WHERE filed_at::date = %s AND transaction_code = 'P'
+          WHERE {date_filter} AND transaction_code = 'P'
             AND superseded_by IS NULL AND joint_filer_of IS NULL {ten_b} {swap_f}
           GROUP BY issuer_cik HAVING COUNT(DISTINCT insider_cik) >= 2
         ) AS sub
-    """, [d]).fetchone()
+    """, cluster_date_params).fetchone()
 
     buy_total = row["buy_total"] or 0
     sell_total = row["sell_total"] or 0
