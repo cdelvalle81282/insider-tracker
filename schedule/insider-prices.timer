@@ -1,9 +1,15 @@
 [Unit]
 Description=Update insider tracker last_close daily after market close
+Requires=insider-prices.service
 
 [Timer]
-OnCalendar=Mon..Fri 21:00 America/New_York
+# 01:00 UTC Mon-Fri = ~9 PM ET, after market close once Polygon has the day's bar.
+# Use a bare UTC time (matching the other timers) — a named-timezone suffix like
+# "America/New_York" only parses on systemd >= 247 and silently yields
+# "Trigger: n/a" (no next elapse) on older releases, leaving the heartbeat stale.
+OnCalendar=Mon-Fri 01:00 UTC
 Persistent=true
+Unit=insider-prices.service
 
 [Install]
 WantedBy=timers.target

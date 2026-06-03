@@ -33,13 +33,20 @@ if [ ! -f .env ]; then
   echo "  !! Edit $APP_DIR/.env on the server and add your SLACK_WEBHOOK_URL"
 fi
 
-# Install systemd services
+# Install systemd services — keep this list in sync with schedule/ so units
+# never drift from the repo (a hand-installed timer is how "Trigger: n/a" creeps in).
 sudo cp schedule/insider-tracker.service /etc/systemd/system/
 sudo cp schedule/insider-ingest.service  /etc/systemd/system/
 sudo cp schedule/insider-ingest.timer    /etc/systemd/system/
+sudo cp schedule/insider-prices.service  /etc/systemd/system/
+sudo cp schedule/insider-prices.timer    /etc/systemd/system/
+sudo cp schedule/insider-backup.service  /etc/systemd/system/
+sudo cp schedule/insider-backup.timer    /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now insider-tracker.service
 sudo systemctl enable --now insider-ingest.timer
+sudo systemctl enable --now insider-prices.timer
+sudo systemctl enable --now insider-backup.timer
 
 # Nginx config — replace YOURDOMAIN placeholder
 sudo cp schedule/nginx-insider-tracker.conf /etc/nginx/sites-available/insider-tracker
