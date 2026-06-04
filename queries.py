@@ -361,6 +361,14 @@ _SORT_COLUMNS = {
     "filed":   "filed_at",
 }
 
+# Regex used by hide_entity_filers filter — drops entity-named filers (funds, institutions)
+# who are NOT officers. Keeps officers filing through personal LLCs/trusts (is_officer=1).
+_ENTITY_FILER_RE = (
+    r"\y(llc|lp|ltd|inc|corp|fund|trust|capital|partners|management|holdings|"
+    r"investment|investments|advisors|advisor|group|equity|ventures|associates|"
+    r"foundation|partnership|company|securities|financial|lending|realty|properties)\y"
+)
+
 
 def list_watchlist(conn: psycopg.Connection) -> dict[str, list[dict]]:
     """Return {'tickers': [...], 'insiders': [...], 'congress_members': [...]} for the watchlist page."""
@@ -480,6 +488,7 @@ def _build_filings_where(
     hide_funds: bool = False,
     has_options_only: bool = False,
     market_cap_tiers: list[str] | None = None,
+    hide_entity_filers: bool = False,
 ) -> tuple[str, list]:
     """Build WHERE clause and params for filings queries.
     Returns (where_sql, params) where where_sql starts with 'WHERE ...'."""
@@ -548,6 +557,12 @@ def _build_filings_where(
         "AND issuer_ticker IN (SELECT ticker FROM ticker_metadata WHERE has_options = 1)"
         if has_options_only else ""
     )
+    # Drop entity-named filers (funds, institutions) who aren't officers.
+    # Keeps executives who file through personal LLCs/trusts (is_officer=1).
+    _frag_entity   = (
+        "AND NOT (insider_name ~* %s AND is_officer = 0)"
+        if hide_entity_filers else ""
+    )
 
     where_sql = f"""
         WHERE {date_condition}
@@ -565,10 +580,11 @@ def _build_filings_where(
           {_frag_funds}
           {_frag_options}
           {mktcap_sql}
+          {_frag_entity}
     """.format(codes=",".join(["%s"] * len(transaction_codes)))
 
     # Param order must mirror placeholder order in the WHERE clause exactly:
-    # date -> codes -> min_value -> ceo_keywords -> search -> sector -> mktcap.
+    # date -> codes -> min_value -> ceo_keywords -> search -> sector -> mktcap -> entity_re.
     params += transaction_codes
     params.append(min_value)
     if ceo_cfo_only and ceo_cfo_keywords:
@@ -579,6 +595,8 @@ def _build_filings_where(
     if sector:
         params.append(sector)
     params += mktcap_params
+    if hide_entity_filers:
+        params.append(_ENTITY_FILER_RE)
 
     return where_sql, params
 
@@ -604,6 +622,7 @@ def get_filings_for_date(
     hide_funds: bool = False,
     has_options_only: bool = False,
     market_cap_tiers: list[str] | None = None,
+    hide_entity_filers: bool = False,
     buys_page: int = 1,
     sells_page: int = 1,
     page_size: int | None = None,
@@ -662,6 +681,7 @@ def get_filings_for_date(
             hide_funds=hide_funds,
             has_options_only=has_options_only,
             market_cap_tiers=market_cap_tiers,
+            hide_entity_filers=hide_entity_filers,
         )
 
         # Pagination vs legacy limit:
@@ -717,6 +737,7 @@ def get_filings_count(
     hide_funds: bool = False,
     has_options_only: bool = False,
     market_cap_tiers: list[str] | None = None,
+    hide_entity_filers: bool = False,
 ) -> tuple[int, int]:
     """Returns (buy_count, sell_count) using the same WHERE clauses as get_filings_for_date.
     Must accept the exact same filter kwargs (minus pagination/sort/ctx/limit)."""
@@ -736,6 +757,7 @@ def get_filings_count(
         hide_funds=hide_funds,
         has_options_only=has_options_only,
         market_cap_tiers=market_cap_tiers,
+        hide_entity_filers=hide_entity_filers,
     )
 
     if "P" in codes:

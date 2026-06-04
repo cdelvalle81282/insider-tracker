@@ -7,9 +7,46 @@ across the nonDerivativeTable and derivativeTable).
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from lxml import etree
+
+_EXCHANGE_PREFIXES = frozenset({"NYSE", "NASDAQ", "AMEX", "ASX", "LSE", "TSX", "OTC", "OTCBB", "CBOE"})
+_INVALID_TICKERS = frozenset({"NONE", "N/A", "NA", "N A", "-", "--", "TBD", "UNKNOWN", "N/A."})
+_VALID_TICKER_RE = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2})?$")
+
+
+def normalize_ticker(raw: str | None) -> str | None:
+    """Clean a raw issuerTradingSymbol value from SEC XML into a canonical ticker or None.
+
+    Handles exchange prefixes (NYSE: KRC), dual-class separators (WLY, WLYB),
+    parentheses ((CALX)), quotes ("OMEX"), spaces (N O G → NOG), and sentinels
+    (NONE, N/A).  Rejects anything that doesn't match the final [A-Z]{1-6}[.X]? pattern.
+    """
+    if not raw:
+        return None
+    t = raw.strip().strip('"').strip("'").strip("()")
+    if not t or t.upper() in _INVALID_TICKERS:
+        return None
+    # Strip exchange prefix: "NYSE: KRC" → "KRC", "ASX:LNW" → "LNW"
+    if ":" in t:
+        t = t.split(":", 1)[-1].strip()
+    # Slash: "NYSE/TRN" → "TRN" (exchange/ticker), "MOGA/MOGB" → "MOGA" (dual-class)
+    if "/" in t:
+        parts = [p.strip() for p in t.split("/", 1)]
+        t = parts[1] if parts[0].upper() in _EXCHANGE_PREFIXES else parts[0]
+    # Comma or AND-separated dual-class: take first
+    for sep in (", ", ",", " AND ", " and "):
+        if sep in t:
+            t = t.split(sep, 1)[0].strip()
+            break
+    # Space-separated: "N O G" → "NOG" (all single chars); otherwise take first token
+    if " " in t:
+        parts = t.split()
+        t = "".join(parts) if all(len(p) == 1 and p.isalpha() for p in parts) else parts[0]
+    t = t.upper()
+    return t if _VALID_TICKER_RE.match(t) else None
 
 
 def _text(el: etree._Element | None, tag: str, default: str | None = None) -> str | None:
@@ -84,7 +121,7 @@ def _parse_issuer(root: etree._Element) -> dict[str, Any]:
     return {
         "issuer_cik": (_text(issuer, "issuerCik") or "").zfill(10),
         "issuer_name": _text(issuer, "issuerName") or "",
-        "issuer_ticker": (_text(issuer, "issuerTradingSymbol") or "").upper().strip() or None,
+        "issuer_ticker": normalize_ticker(_text(issuer, "issuerTradingSymbol")),
     }
 
 

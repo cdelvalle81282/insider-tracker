@@ -61,8 +61,9 @@ INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
 
 # Redis-backed caches (query results, stats, clusters HTML) live in cache_module.
 # In-process caches for small, hot, non-shared lookups:
-_sectors_cache:  TTLCache = TTLCache(maxsize=1,   ttl=3600)
-_config_cache:   TTLCache = TTLCache(maxsize=1,   ttl=60)
+_sectors_cache:      TTLCache = TTLCache(maxsize=1, ttl=3600)
+_config_cache:       TTLCache = TTLCache(maxsize=1, ttl=60)
+_leaderboard_cache:  TTLCache = TTLCache(maxsize=1, ttl=3600)
 
 
 def _sentinel_get(cache: TTLCache, key: str):
@@ -106,7 +107,7 @@ def _filters_dict(
     *,
     d, start_date, end_date, min_value, codes, hide_10b5_1, hide_equity_swap,
     roles, search, ceo_cfo, sort_by, sort_order, sector, watched_only,
-    hide_funds, has_options_only, market_cap_tiers, buys_page, sells_page,
+    hide_funds, has_options_only, market_cap_tiers, hide_entity_filers, buys_page, sells_page,
 ) -> dict:
     """Canonical filters dict for templates. Stores checkboxes as '1'/'0' strings
     so pager URLs serialize correctly. All list values included as lists."""
@@ -125,6 +126,7 @@ def _filters_dict(
         "hide_funds": hide_funds,
         "has_options_only": has_options_only,
         "market_cap_tiers": market_cap_tiers or [],
+        "hide_entity_filers": hide_entity_filers,
         "buys_page": buys_page,
         "sells_page": sells_page,
     }
@@ -248,6 +250,7 @@ async def index(
     hide_funds: str = Query(default="0"),
     has_options_only: str = Query(default="0"),
     market_cap_tiers: list[str] = Query(default=[]),
+    hide_entity_filers: str = Query(default="0"),
     buys_page: int = Query(default=1, ge=1),
     sells_page: int = Query(default=1, ge=1),
 ):
@@ -267,6 +270,7 @@ async def index(
     effective_hide_funds = hide_funds == "1"
     effective_has_options_only = has_options_only == "1"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
+    effective_hide_entity = hide_entity_filers == "1"
     date_range_arg = (range_start, range_end) if is_range else None
 
     filters = _filters_dict(
@@ -278,6 +282,7 @@ async def index(
         sector=sector, watched_only=watched_only,
         hide_funds=hide_funds, has_options_only=has_options_only,
         market_cap_tiers=effective_mktcap_tiers,
+        hide_entity_filers=hide_entity_filers,
         buys_page=buys_page, sells_page=sells_page,
     )
 
@@ -315,6 +320,7 @@ async def index(
                     hide_funds=effective_hide_funds,
                     has_options_only=effective_has_options_only,
                     market_cap_tiers=effective_mktcap_tiers or None,
+                    hide_entity_filers=effective_hide_entity,
                     buys_page=buys_page,
                     sells_page=sells_page,
                     page_size=PAGE_SIZE,
@@ -336,6 +342,7 @@ async def index(
                     hide_funds=effective_hide_funds,
                     has_options_only=effective_has_options_only,
                     market_cap_tiers=effective_mktcap_tiers or None,
+                    hide_entity_filers=effective_hide_entity,
                 )
                 cache_module.cache_set(f"it:query:{ckey}", pre_mtime, (buys, sells, buy_count, sell_count))
             else:
@@ -410,6 +417,7 @@ async def htmx_filings(
     hide_funds: str = Query(default="0"),
     has_options_only: str = Query(default="0"),
     market_cap_tiers: list[str] = Query(default=[]),
+    hide_entity_filers: str = Query(default="0"),
     buys_page: int = Query(default=1, ge=1),
     sells_page: int = Query(default=1, ge=1),
 ):
@@ -419,6 +427,7 @@ async def htmx_filings(
     effective_hide_funds = hide_funds == "1"
     effective_has_options_only = has_options_only == "1"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
+    effective_hide_entity = hide_entity_filers == "1"
     effective_min = min_value
     effective_codes = codes
     ceo_cfo_only = ceo_cfo == "1"
@@ -440,6 +449,7 @@ async def htmx_filings(
         sector=sector, watched_only=watched_only,
         hide_funds=hide_funds, has_options_only=has_options_only,
         market_cap_tiers=effective_mktcap_tiers,
+        hide_entity_filers=hide_entity_filers,
         buys_page=buys_page, sells_page=sells_page,
     )
 
@@ -474,6 +484,7 @@ async def htmx_filings(
                     hide_funds=effective_hide_funds,
                     has_options_only=effective_has_options_only,
                     market_cap_tiers=effective_mktcap_tiers or None,
+                    hide_entity_filers=effective_hide_entity,
                     buys_page=buys_page,
                     sells_page=sells_page,
                     page_size=PAGE_SIZE,
@@ -495,6 +506,7 @@ async def htmx_filings(
                     hide_funds=effective_hide_funds,
                     has_options_only=effective_has_options_only,
                     market_cap_tiers=effective_mktcap_tiers or None,
+                    hide_entity_filers=effective_hide_entity,
                 )
                 cache_module.cache_set(f"it:query:{ckey}", pre_mtime, (buys, sells, buy_count, sell_count))
             else:
@@ -665,6 +677,7 @@ async def export_csv(
     hide_funds: str = Query(default="0"),
     has_options_only: str = Query(default="0"),
     market_cap_tiers: list[str] = Query(default=[]),
+    hide_entity_filers: str = Query(default="0"),
 ):
     active_config = _load_config_cached()
     effective_hide = hide_10b5_1 != "0"
@@ -672,6 +685,7 @@ async def export_csv(
     effective_hide_funds = hide_funds == "1"
     effective_has_options_only = has_options_only == "1"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
+    effective_hide_entity = hide_entity_filers == "1"
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
 
@@ -705,6 +719,7 @@ async def export_csv(
         hide_funds=effective_hide_funds,
         has_options_only=effective_has_options_only,
         market_cap_tiers=effective_mktcap_tiers or None,
+        hide_entity_filers=effective_hide_entity,
     )
     rows = buys + sells  # already capped by SQL LIMIT
 
@@ -971,7 +986,13 @@ async def watchlist_remove(
 
 
 def _load_congress_leaderboard(min_trades: int = 3) -> list[dict]:
-    """Read congress_backtest.csv and return per-politician performance stats."""
+    """Read congress_backtest.csv and return per-politician performance stats.
+    Result is cached for 1 hour — the CSV only changes when the backtest is re-run.
+    """
+    cached = _leaderboard_cache.get("leaderboard")
+    if cached is not None:
+        return cached
+
     csv_path = BASE_DIR / "data" / "congress_backtest.csv"
     if not csv_path.exists():
         return []
@@ -1018,6 +1039,7 @@ def _load_congress_leaderboard(min_trades: int = 3) -> list[dict]:
         })
 
     ranked.sort(key=lambda x: x["exc_90"] if x["exc_90"] is not None else -999, reverse=True)
+    _leaderboard_cache["leaderboard"] = ranked
     return ranked
 
 

@@ -90,6 +90,7 @@ python ingest.py --backfill-metadata       # fetch Polygon market_cap + has_opti
                                            # (free tier: ~5 req/min → hours for full DB)
 python ingest.py --update-prices           # fetch latest close prices for all tickers in ticker_metadata
 python ingest.py --mark-joint-filers       # detect and deduplicate joint-filer Form 4 pairs
+python ingest.py --normalize-tickers       # clean malformed issuer_ticker values (NONE→NULL, NYSE:X→X, etc.)
 ```
 
 ## Congressional trades ingester
@@ -334,6 +335,8 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **Executive trades use `chamber = 'executive'`, `party = NULL`:** The Source filter on `/congress` (values: `ainvest` / `open_cabinet`) is the correct way to separate congressional from executive data. The `chamber` dropdown also shows "Executive" but `source` is more reliable since AInvest mislabels some senators as `house`.
 - **`check_congress_cobuy_alerts()` is called from three places:** `congress_ingest.backfill()`, `exec_ingest.main()`, and `alerts.check_and_send()` (step 4, fires on every real-time Form 4 ingest). Dedup key is `cobuy:{congress_transaction_id}` — each political trade fires at most one co-buy alert regardless of how many corporate insiders overlapped.
 - **`backtest_congress.py` uses `disclosure_date` as entry, not `transaction_date`:** The trade is already done by transaction_date — only disclosure_date is replicable. Signal detectors are identical to `backtest.py`; price cache is shared (`data/polygon_cache/`). Extra columns: `chamber`, `party`, `state`, `disclosure_lag_days`, `amount_bucket`, `stacked_w_corporate` (corporate insider buy within ±14 days).
+- **`normalize_ticker()` in `parser.py` is the canonical ticker cleaner:** Used at parse time and in `--normalize-tickers` backfill. Handles: exchange prefixes (`NYSE: KRC` → `KRC`), dual-class separators (`WLY, WLYB` → `WLY`), parentheses (`(CALX)` → `CALX`), quotes (`"OMEX"` → `OMEX`), space-separated letters (`N O G` → `NOG`), sentinel strings (`NONE`/`N/A` → NULL), and anything not matching `[A-Z]{1-6}(\.[A-Z]{1-2})?` → NULL. Run `--normalize-tickers` to clean existing rows.
+- **`hide_entity_filers` drops funds/institutions, keeps personal LLCs:** SQL: `NOT (insider_name ~* entity_regex AND is_officer = 0)`. An entity-named filer who is `is_officer=1` is kept — that's a real executive filing through a personal holding company. Funds with board seats (`is_director=1, is_officer=0`) are correctly dropped. The regex constant is `_ENTITY_FILER_RE` in `queries.py`. Semantics: conservative for individuals (no entity keywords = always visible), restrictive only for entity-named non-officers.
 
 ## SEC compliance
 

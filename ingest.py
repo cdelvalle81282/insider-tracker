@@ -27,7 +27,7 @@ import queries
 import sector as sector_module
 from config import POLYGON_API_KEY, SEC_RATE_LIMIT, SEC_USER_AGENT, load_config
 from db import get_cli_db
-from parser import parse_form4
+from parser import normalize_ticker, parse_form4
 from tickers import lookup_ticker
 
 EDGAR_BASE = "https://www.sec.gov"
@@ -459,7 +459,9 @@ def mark_joint_filers(conn: psycopg.Connection) -> int:
 @click.option("--stale-days", "metadata_stale_days", default=30, type=int, show_default=True, help="Re-fetch metadata older than N days")
 @click.option("--update-prices", "do_update_prices", is_flag=True, default=False,
               help="Fetch latest close for tickers in ticker_metadata where last_close_at < today or NULL")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices):
+@click.option("--normalize-tickers", "do_normalize_tickers", is_flag=True, default=False,
+              help="Clean malformed issuer_ticker values in existing rows (NONE→NULL, NYSE:X→X, etc.)")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices, do_normalize_tickers):
     conn = get_cli_db()
     try:
         config = load_config()
@@ -576,6 +578,28 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             _write_sentinel()
             _ping_heartbeat(os.getenv("PRICES_HEARTBEAT_URL"))
             return
+
+        if do_normalize_tickers:
+            rows = conn.execute(
+                "SELECT DISTINCT issuer_cik, issuer_ticker FROM filings WHERE issuer_ticker IS NOT NULL"
+            ).fetchall()
+            click.echo(f"Checking {len(rows)} distinct (issuer_cik, ticker) pairs ...")
+            updated = 0
+            for row in rows:
+                original = row["issuer_ticker"]
+                normalized = normalize_ticker(original)
+                if normalized != original:
+                    conn.execute(
+                        "UPDATE filings SET issuer_ticker = %s WHERE issuer_cik = %s AND issuer_ticker = %s",
+                        [normalized, row["issuer_cik"], original],
+                    )
+                    conn.commit()
+                    updated += 1
+                    click.echo(f"  {original!r} → {normalized!r} (issuer_cik={row['issuer_cik']})")
+            click.echo(f"Done. Normalized {updated} distinct ticker values.")
+            _write_sentinel()
+            return
+
 
         if backfill_sectors:
             ciks = [r["issuer_cik"] for r in conn.execute(

@@ -24,6 +24,7 @@ from backtest import (
     detect_hhl,
     detect_resistance_break,
 )
+import queries
 from queries import _fmt_value as _fmt_money
 
 
@@ -499,7 +500,8 @@ def check_and_send_signals(
     return sent
 
 
-COBUY_WINDOW_DAYS = 14   # ±days around congressional disclosure to scan for corp buys
+COBUY_WINDOW_DAYS  = 14       # ±days around congressional disclosure to scan for corp buys
+COBUY_MIN_AMOUNT   = 100_000  # floor to exclude diversified portfolio rebalance noise
 
 
 def _format_cobuy_message(cong_row: dict, corp_buys: list[dict], base_url: str) -> dict:
@@ -588,21 +590,14 @@ def check_congress_cobuy_alerts(
           AND disclosure_date >= %s
           AND ticker IS NOT NULL AND ticker != ''
           AND transaction_id IS NOT NULL
+          AND (amount_min IS NULL OR amount_min >= %s)
         ORDER BY disclosure_date DESC
-    """, [cutoff]).fetchall()
+    """, [cutoff, COBUY_MIN_AMOUNT]).fetchall()
 
     sent = 0
     for cr in cong_rows:
         cong = dict(cr)
         alert_key = f"cobuy:{cong['transaction_id']}"
-
-        # Skip if already claimed — check cheaply before hitting filings table
-        existing = conn.execute(
-            "SELECT 1 FROM alerts_sent WHERE alert_key = %s", [alert_key]
-        ).fetchone()
-        if existing:
-            continue
-
         disc = cong.get("disclosure_date") or ""
         if not disc:
             continue
@@ -697,13 +692,10 @@ def check_congress_alerts(
     if not webhook_url:
         return 0
 
-    watched_rows = conn.execute(
-        "SELECT value FROM watchlist WHERE type = 'congress_member'"
-    ).fetchall()
-    if not watched_rows:
+    watched_lower = list(queries.watched_congress_members(conn))
+    if not watched_lower:
         return 0
 
-    watched_lower = [r["value"].lower() for r in watched_rows]
     base_url = os.getenv("ALERT_BASE_URL", "https://opi-insider.duckdns.org")
 
     # Look back 14 days so a weekend ingest gap doesn't miss anything

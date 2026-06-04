@@ -32,15 +32,20 @@ Requires POLYGON_API_KEY in environment (or .env file).
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
-import json
 import os
 import time
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
+from datetime import date, timedelta
 
-import httpx
+from backtest import (
+    CACHE_DIR, CB_MIN_BARS_PRE, GC_MIN_BARS, HHL_PIVOT_WINDOW,
+    PRICE_WARMUP_DAYS, RATE_LIMIT_SLEEP, RB_MIN_BARS, WINDOWS,
+    _fire_returns,
+    detect_channel_break, detect_golden_cross, detect_hhl,
+    detect_resistance_break, fetch_bars, forward_return,
+)
 
 from db import get_cli_db
 
@@ -48,36 +53,8 @@ from db import get_cli_db
 # Config
 # ---------------------------------------------------------------------------
 
-WINDOWS = [15, 30, 45, 60, 90]
-
 TRADE_START = "2021-01-01"
 TRADE_END   = (date.today() - timedelta(days=max(WINDOWS))).isoformat()
-
-CACHE_DIR         = Path("data/polygon_cache")
-RATE_LIMIT_SLEEP  = 0.25
-CACHE_STALE_DAYS  = 3
-PRICE_WARMUP_DAYS = 310
-
-# Signal knobs (identical to backtest.py — keep in sync)
-GC_FAST  = 50
-GC_SLOW  = 200
-
-RB_LOOKBACK_DAYS = 180
-RB_PEAK_WINDOW   = 3
-RB_CLUSTER_PCT   = 0.02
-RB_MIN_TOUCHES   = 2
-RB_BREAK_PCT     = 0.01
-
-HHL_PIVOT_WINDOW = 3
-
-CB_LOOKBACK_DAYS = 90
-CB_MAX_RANGE_PCT = 0.20
-CB_BREAK_PCT     = 0.01
-CB_MIN_BARS      = 20
-
-GC_MIN_BARS     = GC_SLOW
-RB_MIN_BARS     = 130
-CB_MIN_BARS_PRE = 65
 
 CORPORATE_STACK_WINDOW = 14  # ±calendar days around disclosure_date
 
@@ -124,256 +101,34 @@ def _is_leader(name: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Price data  (shared cache with backtest.py)
-# ---------------------------------------------------------------------------
-
-def _fetch_live(ticker: str, from_date: str, to_date: str, api_key: str) -> list[dict]:
-    url = (
-        f"https://api.polygon.io/v2/aggs/ticker/{ticker.upper()}"
-        f"/range/1/day/{from_date}/{to_date}"
-    )
-    for attempt in range(3):
-        try:
-            resp = httpx.get(
-                url,
-                params={"apiKey": api_key, "limit": 5000, "adjusted": "true", "sort": "asc"},
-                timeout=15.0,
-            )
-            if resp.status_code == 429:
-                print(f"    [429 rate-limit] waiting 60s (attempt {attempt+1}/3)...")
-                time.sleep(60)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            print(f"    [WARN] fetch error: {e}")
-            return []
-
-        bars = []
-        for bar in data.get("results") or []:
-            t = bar.get("t")
-            if t is None:
-                continue
-            day = datetime.fromtimestamp(t / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-            bars.append({
-                "date":   day,
-                "open":   bar.get("o", 0.0),
-                "high":   bar.get("h", 0.0),
-                "low":    bar.get("l", 0.0),
-                "close":  bar.get("c", 0.0),
-                "volume": bar.get("v", 0.0),
-            })
-        return bars
-    return []
-
-
-def fetch_bars(ticker: str, from_date: str, to_date: str, api_key: str) -> tuple[list[dict], bool]:
-    """Return (bars, was_cached). Caches to CACHE_DIR/{ticker}.json; refreshes if stale."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CACHE_DIR / f"{ticker}.json"
-
-    if cache_file.exists():
-        try:
-            bars = json.loads(cache_file.read_text())
-            last_bar_date = date.fromisoformat(bars[-1]["date"]) if bars else None
-            need_refresh  = last_bar_date is None or last_bar_date < date.fromisoformat(to_date) - timedelta(days=CACHE_STALE_DAYS)
-            if not need_refresh:
-                return bars, True
-        except Exception as e:
-            print(f"    [WARN] cache read failed for {ticker}: {e}")
-
-    bars = _fetch_live(ticker, from_date, to_date, api_key)
-    if bars:
-        cache_file.write_text(json.dumps(bars))
-    return bars, False
-
-
-# ---------------------------------------------------------------------------
-# Signal helpers  (identical to backtest.py)
-# ---------------------------------------------------------------------------
-
-def _sma(bars: list[dict], idx: int, window: int) -> float | None:
-    if idx < window - 1:
-        return None
-    return sum(b["close"] for b in bars[idx - window + 1: idx + 1]) / window
-
-
-def _local_peaks(bars: list[dict], start_i: int, end_i: int, window: int) -> list[tuple[int, float]]:
-    peaks = []
-    for i in range(start_i + window, min(end_i, len(bars)) - window):
-        h = bars[i]["high"]
-        if (all(h > bars[i - j]["high"] for j in range(1, window + 1)) and
-                all(h > bars[i + j]["high"] for j in range(1, window + 1))):
-            peaks.append((i, h))
-    return peaks
-
-
-def _local_troughs(bars: list[dict], start_i: int, end_i: int, window: int) -> list[tuple[int, float]]:
-    troughs = []
-    for i in range(start_i + window, min(end_i, len(bars)) - window):
-        lo = bars[i]["low"]
-        if (all(lo < bars[i - j]["low"] for j in range(1, window + 1)) and
-                all(lo < bars[i + j]["low"] for j in range(1, window + 1))):
-            troughs.append((i, lo))
-    return troughs
-
-
-# ---------------------------------------------------------------------------
-# Signal detectors  (identical to backtest.py)
-# ---------------------------------------------------------------------------
-
-def detect_golden_cross(bars: list[dict], trade_idx: int) -> tuple[dict, int | None]:
-    fired = {w: False for w in WINDOWS}
-    days_to_fire = None
-    ma50_t  = _sma(bars, trade_idx, GC_FAST)
-    ma200_t = _sma(bars, trade_idx, GC_SLOW)
-    if ma50_t is None or ma200_t is None or ma50_t >= ma200_t:
-        return fired, days_to_fire
-    trade_date = bars[trade_idx]["date"]
-    for i in range(trade_idx + 1, len(bars)):
-        ma50  = _sma(bars, i, GC_FAST)
-        ma200 = _sma(bars, i, GC_SLOW)
-        if ma50 is None or ma200 is None:
-            continue
-        if ma50 > ma200:
-            days = (date.fromisoformat(bars[i]["date"]) - date.fromisoformat(trade_date)).days
-            days_to_fire = days
-            for w in WINDOWS:
-                fired[w] = days <= w
-            break
-    return fired, days_to_fire
-
-
-def detect_resistance_break(bars: list[dict], trade_idx: int) -> tuple[dict, int | None]:
-    fired = {w: False for w in WINDOWS}
-    days_to_fire = None
-    trade_date_obj = date.fromisoformat(bars[trade_idx]["date"])
-    cutoff    = (trade_date_obj - timedelta(days=RB_LOOKBACK_DAYS)).isoformat()
-    start_i   = next((i for i, b in enumerate(bars) if b["date"] >= cutoff), 0)
-    raw_peaks = _local_peaks(bars, start_i, trade_idx, RB_PEAK_WINDOW)
-    if not raw_peaks:
-        return fired, days_to_fire
-    prices = sorted(p[1] for p in raw_peaks)
-    clusters: list[list[float]] = [[prices[0]]]
-    for p in prices[1:]:
-        if (p - clusters[-1][0]) / clusters[-1][0] <= RB_CLUSTER_PCT:
-            clusters[-1].append(p)
-        else:
-            clusters.append([p])
-    levels = [sum(c) / len(c) for c in clusters if len(c) >= RB_MIN_TOUCHES]
-    if not levels:
-        return fired, days_to_fire
-    trade_price = bars[trade_idx]["close"]
-    above = [lvl for lvl in levels if lvl > trade_price]
-    if not above:
-        return fired, days_to_fire
-    break_at   = min(above) * (1 + RB_BREAK_PCT)
-    trade_date = bars[trade_idx]["date"]
-    for i in range(trade_idx + 1, len(bars)):
-        if bars[i]["close"] >= break_at:
-            days = (date.fromisoformat(bars[i]["date"]) - date.fromisoformat(trade_date)).days
-            days_to_fire = days
-            for w in WINDOWS:
-                fired[w] = days <= w
-            break
-    return fired, days_to_fire
-
-
-def detect_hhl(bars: list[dict], trade_idx: int) -> tuple[dict, int | None]:
-    fired = {w: False for w in WINDOWS}
-    days_to_fire = None
-    trade_date = bars[trade_idx]["date"]
-    scan_end   = min(trade_idx + max(WINDOWS) + HHL_PIVOT_WINDOW * 4, len(bars))
-    highs   = _local_peaks(bars, trade_idx, scan_end, HHL_PIVOT_WINDOW)
-    troughs = _local_troughs(bars, trade_idx, scan_end, HHL_PIVOT_WINDOW)
-    hh_confirmed_bar = next(
-        (highs[k][0] + HHL_PIVOT_WINDOW for k in range(1, len(highs)) if highs[k][1] > highs[k-1][1]),
-        None,
-    )
-    hl_confirmed_bar = next(
-        (troughs[k][0] + HHL_PIVOT_WINDOW for k in range(1, len(troughs)) if troughs[k][1] > troughs[k-1][1]),
-        None,
-    )
-    if hh_confirmed_bar is None or hl_confirmed_bar is None:
-        return fired, days_to_fire
-    fire_bar = max(hh_confirmed_bar, hl_confirmed_bar)
-    if fire_bar >= len(bars):
-        return fired, days_to_fire
-    days = (date.fromisoformat(bars[fire_bar]["date"]) - date.fromisoformat(trade_date)).days
-    days_to_fire = days
-    for w in WINDOWS:
-        fired[w] = days <= w
-    return fired, days_to_fire
-
-
-def detect_channel_break(bars: list[dict], trade_idx: int) -> tuple[dict, int | None]:
-    fired = {w: False for w in WINDOWS}
-    days_to_fire = None
-    trade_date_obj = date.fromisoformat(bars[trade_idx]["date"])
-    cutoff = (trade_date_obj - timedelta(days=CB_LOOKBACK_DAYS)).isoformat()
-    pre    = [b for b in bars[:trade_idx] if b["date"] >= cutoff]
-    if len(pre) < CB_MIN_BARS:
-        return fired, days_to_fire
-    ch_high = max(b["high"] for b in pre)
-    ch_low  = min(b["low"]  for b in pre)
-    if ch_low == 0 or (ch_high - ch_low) / ch_low > CB_MAX_RANGE_PCT:
-        return fired, days_to_fire
-    break_at   = ch_high * (1 + CB_BREAK_PCT)
-    trade_date = bars[trade_idx]["date"]
-    for i in range(trade_idx + 1, len(bars)):
-        if bars[i]["close"] >= break_at:
-            days = (date.fromisoformat(bars[i]["date"]) - date.fromisoformat(trade_date)).days
-            days_to_fire = days
-            for w in WINDOWS:
-                fired[w] = days <= w
-            break
-    return fired, days_to_fire
-
-
-def forward_return(bars: list[dict], trade_idx: int, days: int) -> float | None:
-    trade_price = bars[trade_idx]["close"]
-    if not trade_price:
-        return None
-    target = date.fromisoformat(bars[trade_idx]["date"]) + timedelta(days=days)
-    for i in range(trade_idx + 1, len(bars)):
-        if date.fromisoformat(bars[i]["date"]) >= target:
-            return round((bars[i]["close"] - trade_price) / trade_price * 100, 2)
-    return None
-
-
-def _fire_returns(bars: list[dict], entry_date: str, days_to_fire: int | None) -> dict:
-    if days_to_fire is None:
-        return {w: None for w in WINDOWS}
-    fire_date = (date.fromisoformat(entry_date) + timedelta(days=days_to_fire)).isoformat()
-    fire_idx  = next((i for i, b in enumerate(bars) if b["date"] >= fire_date), None)
-    if fire_idx is None or fire_idx >= len(bars) - 1:
-        return {w: None for w in WINDOWS}
-    return {w: forward_return(bars, fire_idx, w) for w in WINDOWS}
-
-
-# ---------------------------------------------------------------------------
 # SPY benchmark
 # ---------------------------------------------------------------------------
 
-def build_spy_return_lookup(spy_bars: list[dict]) -> dict[str, dict[int, float | None]]:
+def build_spy_return_lookup(spy_bars: list[dict]) -> tuple[dict, list[str]]:
     """Pre-compute SPY forward returns for every bar date × every window.
-    Returns {date_str: {window_days: pct_return}}.
+    Returns (lookup, sorted_dates) — pass both to spy_return_on().
     """
     bar_by_date = {b["date"]: i for i, b in enumerate(spy_bars)}
     lookup: dict[str, dict[int, float | None]] = {}
     for entry_date, idx in bar_by_date.items():
         lookup[entry_date] = {w: forward_return(spy_bars, idx, w) for w in WINDOWS}
-    return lookup
+    return lookup, sorted(lookup)
 
 
-def spy_return_on(spy_lookup: dict, entry_date: str, window: int) -> float | None:
-    """SPY forward return from the first trading day on or after entry_date."""
+def spy_return_on(
+    spy_lookup: dict,
+    spy_dates: list[str],
+    entry_date: str,
+    window: int,
+) -> float | None:
+    """SPY forward return from the first trading day on or after entry_date.
+    spy_dates must be the sorted list returned by build_spy_return_lookup().
+    """
     if entry_date in spy_lookup:
         return spy_lookup[entry_date].get(window)
-    # Snap forward to nearest available date
-    for candidate in sorted(spy_lookup):
-        if candidate >= entry_date:
-            return spy_lookup[candidate].get(window)
+    idx = bisect.bisect_left(spy_dates, entry_date)
+    if idx < len(spy_dates):
+        return spy_lookup[spy_dates[idx]].get(window)
     return None
 
 
@@ -468,7 +223,7 @@ def main() -> None:
     spy_bars, spy_cached = fetch_bars("SPY", fetch_start, fetch_end, api_key)
     if not spy_bars:
         raise SystemExit("Could not fetch SPY bars — cannot compute excess returns.")
-    spy_lookup = build_spy_return_lookup(spy_bars)
+    spy_lookup, spy_dates = build_spy_return_lookup(spy_bars)
     print(f"ok ({len(spy_bars)} bars, {'cached' if spy_cached else 'live'})\n")
     if not spy_cached:
         time.sleep(RATE_LIMIT_SLEEP)
@@ -556,7 +311,7 @@ def main() -> None:
 
             for w in WINDOWS:
                 raw_ret = forward_return(bars, trade_idx, w)
-                spy_ret = spy_return_on(spy_lookup, entry_date, w)
+                spy_ret = spy_return_on(spy_lookup, spy_dates, entry_date, w)
                 excess  = (
                     round(raw_ret - spy_ret, 2)
                     if raw_ret is not None and spy_ret is not None
@@ -716,10 +471,12 @@ def main() -> None:
 
     ranked.sort(key=lambda x: x[6] if x[6] is not None else -999, reverse=True)
 
+    def _fmt_exc(v: float | None) -> str:
+        return f"{v:>+7.1f}%" if v is not None else f"{'—':>8}"
+
     for name, ch, pty, n, a30, a60, a90, w90 in ranked:
-        fmt = lambda v: f"{v:>+7.1f}%" if v is not None else f"{'—':>8}"
         wfmt = f"{w90*100:>7.0f}%" if w90 is not None else f"{'—':>8}"
-        print(f"  {name:<30} {ch:>2}  {pty:>3}  {n:>4}  {fmt(a30)}  {fmt(a60)}  {fmt(a90)}  {wfmt}")
+        print(f"  {name:<30} {ch:>2}  {pty:>3}  {n:>4}  {_fmt_exc(a30)}  {_fmt_exc(a60)}  {_fmt_exc(a90)}  {wfmt}")
 
     print(f"\n{'='*70}")
     print("  NOTE: 'vs SPY' = raw return minus SPY return over the same window from")
