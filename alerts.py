@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
@@ -324,6 +325,9 @@ def check_and_send(
             if _post_to_slack(webhook_url, payload):
                 sent += 1
 
+    # 4. Congress / executive co-buy stacking
+    sent += check_congress_cobuy_alerts(conn, base_url=base_url)
+
     return sent
 
 
@@ -489,6 +493,243 @@ def check_and_send_signals(
         if not _try_claim_alert(conn, alert_key, "signal"):
             continue
         payload = _format_signal_message("gc", _SIGNAL_DETECTORS["gc"][0], best_trade, gc_days_to_fire, base_url)
+        if _post_to_slack(webhook_url, payload):
+            sent += 1
+
+    return sent
+
+
+COBUY_WINDOW_DAYS = 14   # ±days around congressional disclosure to scan for corp buys
+
+
+def _format_cobuy_message(cong_row: dict, corp_buys: list[dict], base_url: str) -> dict:
+    ticker   = cong_row.get("ticker") or "?"
+    name     = cong_row.get("politician_name") or "Unknown"
+    amount   = cong_row.get("amount_label") or "?"
+    disc     = str(cong_row.get("disclosure_date") or "?")[:10]
+    source   = cong_row.get("source", "")
+    src_label = "Executive" if source == "open_cabinet" else "Congress"
+
+    corp_lines = []
+    for b in corp_buys[:3]:       # cap at 3 names to keep message readable
+        bname  = b.get("insider_name") or "Insider"
+        btitle = b.get("insider_title") or ""
+        bval   = _fmt(b.get("total_value"))
+        bdate  = str(b.get("transaction_date") or "?")[:10]
+        corp_lines.append(f"• *{bname}* ({btitle}) — {bval} on {bdate}")
+
+    overflow = len(corp_buys) - 3
+    if overflow > 0:
+        corp_lines.append(f"_…and {overflow} more corporate insider(s)_")
+
+    congress_url = f"{base_url}/congress?politician={urllib.parse.quote(name)}"
+    chart_url    = f"{base_url}/chart/{ticker}"
+
+    return {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"⚡ CO-BUY SIGNAL — ${ticker}"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*{src_label}: {name}* bought *{amount}* (disclosed {disc})\n"
+                        f"*Corporate insider(s) also bought within ±{COBUY_WINDOW_DAYS}d:*\n"
+                        + "\n".join(corp_lines)
+                    ),
+                },
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Chart"},
+                    "url": chart_url,
+                },
+            },
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"<{congress_url}|View {src_label} trades>"}],
+            },
+        ]
+    }
+
+
+def check_congress_cobuy_alerts(
+    conn: psycopg.Connection,
+    suppress: bool = False,
+    base_url: str = "https://opi-insider.duckdns.org",
+) -> int:
+    """
+    Fire alert when a congress/exec purchase and a corporate insider buy
+    occurred within ±COBUY_WINDOW_DAYS of each other on the same ticker.
+
+    Keyed per congress trade (cobuy:{transaction_id}) so each political trade
+    fires at most one alert regardless of how many corp insiders overlapped.
+    Called from check_and_send() (corp ingest direction) and directly from
+    congress_ingest / exec_ingest (political ingest direction).
+    """
+    if suppress:
+        return 0
+
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
+    if not webhook_url:
+        return 0
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
+
+    cong_rows = conn.execute("""
+        SELECT transaction_id, politician_name, source, chamber, party,
+               ticker, transaction_type,
+               transaction_date, disclosure_date,
+               amount_label, amount_min
+        FROM congress_trades
+        WHERE LOWER(transaction_type) IN ('purchase', 'buy')
+          AND disclosure_date >= %s
+          AND ticker IS NOT NULL AND ticker != ''
+          AND transaction_id IS NOT NULL
+        ORDER BY disclosure_date DESC
+    """, [cutoff]).fetchall()
+
+    sent = 0
+    for cr in cong_rows:
+        cong = dict(cr)
+        alert_key = f"cobuy:{cong['transaction_id']}"
+
+        # Skip if already claimed — check cheaply before hitting filings table
+        existing = conn.execute(
+            "SELECT 1 FROM alerts_sent WHERE alert_key = %s", [alert_key]
+        ).fetchone()
+        if existing:
+            continue
+
+        disc = cong.get("disclosure_date") or ""
+        if not disc:
+            continue
+        try:
+            disc_date = date.fromisoformat(disc[:10])
+        except ValueError:
+            continue
+
+        lo = (disc_date - timedelta(days=COBUY_WINDOW_DAYS)).isoformat()
+        hi = (disc_date + timedelta(days=COBUY_WINDOW_DAYS)).isoformat()
+
+        corp_buys = conn.execute("""
+            SELECT insider_name, insider_title, total_value,
+                   transaction_date::text AS transaction_date
+            FROM filings
+            WHERE issuer_ticker = %s
+              AND transaction_code = 'P'
+              AND table_type = 'ND'
+              AND superseded_by IS NULL
+              AND joint_filer_of IS NULL
+              AND transaction_date >= %s
+              AND transaction_date <= %s
+            ORDER BY total_value DESC NULLS LAST
+        """, [cong["ticker"], lo, hi]).fetchall()
+
+        if not corp_buys:
+            continue
+
+        if _try_claim_alert(conn, alert_key, "congress_cobuy"):
+            payload = _format_cobuy_message(cong, [dict(r) for r in corp_buys], base_url)
+            if _post_to_slack(webhook_url, payload):
+                sent += 1
+
+    return sent
+
+
+def _format_congress_message(row: dict, base_url: str) -> dict:
+    name      = row.get("politician_name") or "Unknown"
+    ticker    = row.get("ticker") or "?"
+    amount    = row.get("amount_label") or "?"
+    tx_date   = str(row.get("transaction_date") or "?")[:10]
+    disc_date = str(row.get("disclosure_date") or "?")[:10]
+    party     = row.get("party") or ""
+    lag_days  = row.get("lag_days")
+
+    party_emoji = "🔵" if "Democrat" in party else "🔴" if "Republican" in party else "⚪"
+    lag_note    = f" · disclosed {lag_days}d later" if lag_days is not None else ""
+    congress_url = f"{base_url}/congress?politician={urllib.parse.quote(name)}"
+
+    return {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"🏛️ WATCHED CONGRESS BUY — ${ticker}"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*{name}* {party_emoji} {party}\n"
+                        f"*{amount}* · Traded {tx_date}{lag_note}"
+                    ),
+                },
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Trades"},
+                    "url": congress_url,
+                },
+            },
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"Disclosed {disc_date}"}],
+            },
+        ]
+    }
+
+
+def check_congress_alerts(
+    conn: psycopg.Connection,
+    suppress: bool = False,
+) -> int:
+    """
+    Fire Slack alerts for new purchases by watched congress members.
+    Called at the end of each congress_ingest backfill that inserted new rows.
+    Returns count of alerts sent.
+    """
+    if suppress:
+        return 0
+
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
+    if not webhook_url:
+        return 0
+
+    watched_rows = conn.execute(
+        "SELECT value FROM watchlist WHERE type = 'congress_member'"
+    ).fetchall()
+    if not watched_rows:
+        return 0
+
+    watched_lower = [r["value"].lower() for r in watched_rows]
+    base_url = os.getenv("ALERT_BASE_URL", "https://opi-insider.duckdns.org")
+
+    # Look back 14 days so a weekend ingest gap doesn't miss anything
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).date().isoformat()
+
+    rows = conn.execute("""
+        SELECT transaction_id, politician_name, chamber, party,
+               ticker, transaction_type,
+               transaction_date, disclosure_date,
+               amount_label, amount_min,
+               (disclosure_date::date - transaction_date::date) AS lag_days
+        FROM congress_trades
+        WHERE LOWER(transaction_type) IN ('purchase', 'buy')
+          AND disclosure_date >= %s
+          AND LOWER(politician_name) = ANY(%s)
+          AND transaction_id IS NOT NULL
+        ORDER BY disclosure_date DESC
+    """, [cutoff, watched_lower]).fetchall()
+
+    sent = 0
+    for r in rows:
+        row      = dict(r)
+        alert_key = f"congress:{row['transaction_id']}"
+        if not _try_claim_alert(conn, alert_key, "congress_buy"):
+            continue
+        payload = _format_congress_message(row, base_url)
         if _post_to_slack(webhook_url, payload):
             sent += 1
 

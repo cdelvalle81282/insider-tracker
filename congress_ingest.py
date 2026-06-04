@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+import alerts as alert_module
 from db import get_cli_db
 
 AINVEST_BASE = "https://openapi.ainvest.com/open/ownership/congress"
@@ -179,6 +180,14 @@ def backfill(limit: int | None = None, stale_days: int = 7) -> None:
             time.sleep(RATE_SLEEP)
 
         print(f"[congress_ingest] Done. {all_inserted} inserted, {all_skipped} skipped total.")
+
+        if all_inserted > 0:
+            sent = alert_module.check_congress_alerts(conn)
+            if sent:
+                print(f"[congress_ingest] Sent {sent} congress watchlist alert(s).")
+            sent = alert_module.check_congress_cobuy_alerts(conn)
+            if sent:
+                print(f"[congress_ingest] Sent {sent} co-buy alert(s).")
     finally:
         conn.close()
 

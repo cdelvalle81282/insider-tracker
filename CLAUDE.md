@@ -47,6 +47,7 @@ This file is the institutional memory for this codebase. If you had to investiga
 | `health_check.py` | Nightly health check — queries `run_log` and posts Slack alert if nightly ingest missed |
 | `polygon_client.py` | Polygon.io: daily OHLCV bars, earnings, and `fetch_ticker_metadata()` (market cap + options) |
 | `congress_ingest.py` | Congressional trades ingester — AInvest API, ticker-by-ticker, run manually or on schedule |
+| `exec_ingest.py` | Executive branch trades ingester — Open Cabinet JSON download, weekly refresh, no API key needed |
 | `templates/chart.html` | Candlestick chart page with insider markers (TradingView Lightweight Charts) |
 | `templates/logic.html` | Logic & Config tab — editable thresholds, conviction weights, research basis |
 | `templates/watchlist.html` | Watchlist management page |
@@ -119,6 +120,8 @@ ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull && sudo s
 - `insider-prices.service` — oneshot triggered by prices timer
 - `insider-congress.timer` — runs `congress_ingest.py` at 13:00 UTC Mon–Fri (9 AM ET) — refreshes congressional trades from AInvest API
 - `insider-congress.service` — oneshot triggered by congress timer
+- `insider-exec.timer` — runs `exec_ingest.py` at 14:00 UTC every Monday — weekly refresh of executive branch trades from Open Cabinet
+- `insider-exec.service` — oneshot triggered by exec timer
 - `insider-backup.timer` — runs at 05:30 UTC daily — PG backup to S3 (staggered 30 min after `sync_job` cron)
 
 ```bash
@@ -324,6 +327,13 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **`insider-backup.timer` runs at 05:30 UTC, not 05:00:** Staggered 30 minutes after the `sync_job` cron to avoid simultaneous AWS CLI + Python sync competing for memory at the same minute.
 - **Pydantic v2 treats empty form strings as null for `Form(...)` required fields:** FastAPI ≥ 0.111 uses Pydantic v2, which returns a 422 `"input":null` error when a required `Form(...)` str field is submitted as an empty string. Use `Form(default="")` for any string form param and let route-level `if not value:` validation return a 400. Also add `required` to the HTML input to block empty browser submissions early.
 - **`congress_ingest.py` runs on `insider-congress.timer` (Mon–Fri 13:00 UTC = 9 AM ET):** Default `--stale-days 7` means each ticker is re-fetched at most once a week. `ON CONFLICT DO NOTHING` deduplicates by `transaction_id`. For a forced full refresh run `congress_ingest.py --stale-days 1` manually. The timer is at `/etc/systemd/system/insider-congress.{service,timer}`.
+- **`watchlist` supports `type='congress_member'`:** Value is the politician's name stored as-is (case-insensitive match via `.lower()` set in `watched_congress_members()`). Unlike corporate insiders (CIK) or tickers (regex), congress member names have no stable ID — name is the key. The `/watchlist/add` endpoint accepts this type with no format regex, but caps value length at 128 chars. Watch buttons on the congress tab POST `next=/congress` so users land back on the congress page, not `/watchlist`.
+- **`get_congress_trades()` `tx_type` filter uses `LOWER(transaction_type)`:** AInvest stores "Purchase"/"Sale" (capitalized). The filter form sends lowercase. Without `LOWER()`, the filter silently returns 0 results. Any future equality filter on `transaction_type` must use `LOWER()` or `ILIKE`.
+- **`exec_ingest.py` generates stable `transaction_id` via md5 hash:** Open Cabinet provides no per-transaction IDs. We hash `"{name}|{ticker_or_desc}|{date}|{type}"`. If Open Cabinet corrects a field (e.g. fixes a ticker), the hash changes and the corrected row re-inserts as a new row alongside the old one — acceptable for monthly-refresh data. Run `exec_ingest.py` again after any Open Cabinet data correction to pick up changes.
+- **`exec_ingest.py` uses `disclosure_date = mostRecentFilingDate` (official-level proxy):** Open Cabinet doesn't provide a per-transaction disclosure date. `mostRecentFilingDate` is the date of the official's most recent OGE 278-T batch filing — it approximates when the trade became public but may lag the actual transaction by weeks or months for older trades in the same filing.
+- **Executive trades use `chamber = 'executive'`, `party = NULL`:** The Source filter on `/congress` (values: `ainvest` / `open_cabinet`) is the correct way to separate congressional from executive data. The `chamber` dropdown also shows "Executive" but `source` is more reliable since AInvest mislabels some senators as `house`.
+- **`check_congress_cobuy_alerts()` is called from three places:** `congress_ingest.backfill()`, `exec_ingest.main()`, and `alerts.check_and_send()` (step 4, fires on every real-time Form 4 ingest). Dedup key is `cobuy:{congress_transaction_id}` — each political trade fires at most one co-buy alert regardless of how many corporate insiders overlapped.
+- **`backtest_congress.py` uses `disclosure_date` as entry, not `transaction_date`:** The trade is already done by transaction_date — only disclosure_date is replicable. Signal detectors are identical to `backtest.py`; price cache is shared (`data/polygon_cache/`). Extra columns: `chamber`, `party`, `state`, `disclosure_lag_days`, `amount_bucket`, `stacked_w_corporate` (corporate insider buy within ±14 days).
 
 ## SEC compliance
 

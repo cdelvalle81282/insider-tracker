@@ -11,7 +11,7 @@
   </p>
 </div>
 
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
   <!-- Watched Tickers -->
   <div class="space-y-4">
@@ -81,6 +81,45 @@
       </ul>
       {% else %}
       <p class="text-gray-600 text-sm">No insiders watched yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Watched Politicians -->
+  <div class="space-y-4">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <h2 class="text-white font-semibold mb-4">Watched Politicians</h2>
+      <p class="text-gray-500 text-xs mb-4">
+        Add politicians from the <a href="/congress" class="text-indigo-400 hover:text-indigo-300">Congressional Trades</a>
+        tab using the ★ button, or enter a name manually. Names are matched case-insensitively.
+      </p>
+
+      <form method="POST" action="/watchlist/add" class="flex gap-2 mb-4">
+        <input type="hidden" name="watch_type" value="congress_member" />
+        <input type="text" name="value" placeholder="e.g. Nancy Pelosi" maxlength="128" required
+               class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-indigo-500" />
+        <button type="submit"
+                class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm px-4 py-1.5 rounded-lg transition-colors shrink-0">
+          + Add
+        </button>
+      </form>
+
+      {% if watchlist.congress_members %}
+      <ul class="space-y-2">
+        {% for item in watchlist.congress_members %}
+        <li class="flex items-center gap-3 py-2 border-b border-gray-800/60 last:border-0">
+          <span class="text-yellow-400">★</span>
+          <a href="/congress?politician={{ item.value | urlencode }}"
+             class="text-white hover:text-indigo-400 flex-1 text-sm">{{ item.value }}</a>
+          <form method="POST" action="/watchlist/remove" class="shrink-0">
+            <input type="hidden" name="watch_id" value="{{ item.id }}" />
+            <button type="submit" class="text-gray-600 hover:text-red-400 text-xs transition-colors">✕</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-gray-600 text-sm">No politicians watched yet.</p>
       {% endif %}
     </div>
   </div>
