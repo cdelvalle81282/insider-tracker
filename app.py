@@ -157,11 +157,15 @@ def _resolve_date_range(
     start_date: str | None,
     end_date: str | None,
 ) -> tuple[date, date, bool]:
-    """Parse start/end date params; fall back to single date d. Returns (start, end, is_range)."""
+    """Parse start/end date params; fall back to single date d. Returns (start, end, is_range).
+    When no params are given (fresh load), defaults to the last 7 days."""
     if start_date and end_date:
         s, e = _parse_date(start_date), _parse_date(end_date)
-    else:
+    elif d:
         s = e = _parse_date(d)
+    else:
+        e = date.today()
+        s = e - timedelta(days=6)
     return s, e, s != e
 
 
