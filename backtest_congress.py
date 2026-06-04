@@ -163,7 +163,33 @@ def _is_stacked(disclosure_date: str, corp_buy_dates: list[str]) -> bool:
     d  = date.fromisoformat(disclosure_date)
     lo = (d - timedelta(days=CORPORATE_STACK_WINDOW)).isoformat()
     hi = (d + timedelta(days=CORPORATE_STACK_WINDOW)).isoformat()
-    return any(lo <= bd <= hi for bd in corp_buy_dates)
+    i = bisect.bisect_left(corp_buy_dates, lo)
+    return i < len(corp_buy_dates) and corp_buy_dates[i] <= hi
+
+
+# ---------------------------------------------------------------------------
+# Summary helpers
+# ---------------------------------------------------------------------------
+
+def _stats(vals: list[float], label: str = "") -> str:
+    if not vals:
+        return "—"
+    wins = sum(1 for v in vals if v > 0)
+    avg  = sum(vals) / len(vals)
+    med  = sorted(vals)[len(vals) // 2]
+    pfx  = f"{label} " if label else ""
+    return f"{pfx}win={wins/len(vals)*100:.0f}%  avg={avg:+.1f}%  med={med:+.1f}%"
+
+
+def _segment_row(label: str, sub: list[dict]) -> None:
+    if not sub:
+        return
+    print(f"\n    {label} [{len(sub):>4} trades]")
+    for w in [30, 60, 90]:
+        raw    = [r[f"return_{w}d"]  for r in sub if r[f"return_{w}d"]  is not None]
+        excess = [r[f"excess_{w}d"]  for r in sub if r[f"excess_{w}d"]  is not None]
+        spy    = [r[f"spy_return_{w}d"] for r in sub if r[f"spy_return_{w}d"] is not None]
+        print(f"      {w:>2}d  raw:{_stats(raw):<42}  vs SPY:{_stats(excess):<42}  SPY:{_stats(spy)}")
 
 
 # ---------------------------------------------------------------------------
@@ -357,25 +383,6 @@ def main() -> None:
     print(f"  Tickers w/ no data: {len(no_data)}")
     if no_data:
         print(f"  No-data tickers:    {', '.join(no_data[:20])}{'...' if len(no_data)>20 else ''}")
-
-    def _stats(vals: list[float], label: str = "") -> str:
-        if not vals:
-            return "—"
-        wins = sum(1 for v in vals if v > 0)
-        avg  = sum(vals) / len(vals)
-        med  = sorted(vals)[len(vals) // 2]
-        pfx  = f"{label} " if label else ""
-        return f"{pfx}win={wins/len(vals)*100:.0f}%  avg={avg:+.1f}%  med={med:+.1f}%"
-
-    def _segment_row(label: str, sub: list[dict]) -> None:
-        if not sub:
-            return
-        print(f"\n    {label} [{len(sub):>4} trades]")
-        for w in [30, 60, 90]:
-            raw    = [r[f"return_{w}d"]  for r in sub if r[f"return_{w}d"]  is not None]
-            excess = [r[f"excess_{w}d"]  for r in sub if r[f"excess_{w}d"]  is not None]
-            spy    = [r[f"spy_return_{w}d"] for r in sub if r[f"spy_return_{w}d"] is not None]
-            print(f"      {w:>2}d  raw:{_stats(raw):<42}  vs SPY:{_stats(excess):<42}  SPY:{_stats(spy)}")
 
     # ── PRIMARY HYPOTHESIS 1: Leadership ────────────────────────────────────
     print(f"\n{'─'*70}")

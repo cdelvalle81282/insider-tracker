@@ -98,6 +98,7 @@
       <option value=""             {% if not filters.source %}selected{% endif %}>All</option>
       <option value="ainvest"      {% if filters.source == 'ainvest' %}selected{% endif %}>Congress</option>
       <option value="open_cabinet" {% if filters.source == 'open_cabinet' %}selected{% endif %}>Executive</option>
+      <option value="trump_278t"   {% if filters.source == 'trump_278t' %}selected{% endif %}>Trump 278-T</option>
     </select>
   </div>
 
@@ -186,7 +187,7 @@
           </form>
           {% endif %}
           <span class="font-medium text-sm" style="color:var(--text-1);">{{ trade.politician_name }}</span>
-          {% if trade.source == 'open_cabinet' %}
+          {% if trade.source in ('open_cabinet', 'trump_278t') %}
           <span style="font-size:.55rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
                        padding:1px 5px; border-radius:3px; margin-left:4px;
                        color:#a78bfa; background:rgba(167,139,250,.12); border:1px solid rgba(167,139,250,.3);">

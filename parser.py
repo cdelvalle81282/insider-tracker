@@ -26,7 +26,7 @@ def normalize_ticker(raw: str | None) -> str | None:
     """
     if not raw:
         return None
-    t = raw.strip().strip('"').strip("'").strip("()")
+    t = raw.strip().strip('"\'()')
     if not t or t.upper() in _INVALID_TICKERS:
         return None
     # Strip exchange prefix: "NYSE: KRC" → "KRC", "ASX:LNW" → "LNW"

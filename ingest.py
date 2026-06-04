@@ -593,9 +593,10 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
                         "UPDATE filings SET issuer_ticker = %s WHERE issuer_cik = %s AND issuer_ticker = %s",
                         [normalized, row["issuer_cik"], original],
                     )
-                    conn.commit()
                     updated += 1
                     click.echo(f"  {original!r} → {normalized!r} (issuer_cik={row['issuer_cik']})")
+            if updated:
+                conn.commit()
             click.echo(f"Done. Normalized {updated} distinct ticker values.")
             _write_sentinel()
             return
