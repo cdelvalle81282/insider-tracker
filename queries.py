@@ -363,13 +363,14 @@ _SORT_COLUMNS = {
 
 
 def list_watchlist(conn: psycopg.Connection) -> dict[str, list[dict]]:
-    """Return {'tickers': [...], 'insiders': [...]} for the watchlist page."""
+    """Return {'tickers': [...], 'insiders': [...], 'congress_members': [...]} for the watchlist page."""
     rows = conn.execute(
         "SELECT id, type, value, label, created_at FROM watchlist ORDER BY created_at DESC"
     ).fetchall()
     tickers = [dict(r) for r in rows if r["type"] == "ticker"]
     insiders = [dict(r) for r in rows if r["type"] == "insider"]
-    return {"tickers": tickers, "insiders": insiders}
+    congress_members = [dict(r) for r in rows if r["type"] == "congress_member"]
+    return {"tickers": tickers, "insiders": insiders, "congress_members": congress_members}
 
 
 def add_watch(conn: psycopg.Connection, watch_type: str, value: str, label: str) -> None:
@@ -399,6 +400,14 @@ def watched_insiders(conn: psycopg.Connection) -> set[str]:
         "SELECT value FROM watchlist WHERE type = 'insider'"
     ).fetchall()
     return {r["value"] for r in rows}
+
+
+def watched_congress_members(conn: psycopg.Connection) -> set[str]:
+    """Returns a set of lowercase politician_name values for watched congress members."""
+    rows = conn.execute(
+        "SELECT value FROM watchlist WHERE type = 'congress_member'"
+    ).fetchall()
+    return {r["value"].lower() for r in rows}
 
 
 def get_all_sectors(conn: psycopg.Connection) -> list[str]:
@@ -1045,6 +1054,23 @@ def get_insider_full_history(
     return _enrich(rows, ctx=ctx)
 
 
+def get_insider_perf_profile(conn: psycopg.Connection, insider_cik: str) -> dict | None:
+    """Return backtest performance profile for an insider, or None if not profiled."""
+    row = conn.execute(
+        """
+        SELECT insider_cik, insider_name, role, n_trades,
+               win_30, avg_30, med_30,
+               win_60, avg_60, med_60,
+               win_90, avg_90, med_90,
+               peak_window, profile_label, updated_at
+        FROM insider_perf_profile
+        WHERE insider_cik = %s
+        """,
+        [insider_cik],
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def get_insider_summary(conn: psycopg.Connection, insider_cik: str) -> dict:
     """Aggregate stats for a single insider across all filings."""
     row = conn.execute(
@@ -1204,10 +1230,12 @@ def get_congress_trades(
     politician: str | None = None,
     chamber: str | None = None,
     tx_type: str | None = None,
+    source: str | None = None,
     days: int = 90,
     sort_by: str = "disclosure_date",
     sort_order: str = "desc",
     limit: int = 500,
+    watched_members: set[str] | None = None,
 ) -> list[dict]:
     """Return congress_trades rows matching the given filters.
 
@@ -1242,8 +1270,12 @@ def get_congress_trades(
         params.append(chamber)
 
     if tx_type:
-        clauses.append("transaction_type = %s")
-        params.append(tx_type)
+        clauses.append("LOWER(transaction_type) = %s")
+        params.append(tx_type.lower())
+
+    if source:
+        clauses.append("source = %s")
+        params.append(source)
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
@@ -1259,7 +1291,15 @@ def get_congress_trades(
     """
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        row = dict(r)
+        row["is_watched"] = (
+            (row.get("politician_name") or "").lower() in watched_members
+            if watched_members is not None else False
+        )
+        result.append(row)
+    return result
 
 
 def get_chart_buys(
@@ -1290,7 +1330,7 @@ def get_chart_buys(
     return [dict(r) for r in rows]
 
 
-def get_congress_summary(conn: psycopg.Connection, days: int = 30) -> dict:
+def get_congress_summary(conn: psycopg.Connection, days: int = 30, source: str | None = None) -> dict:
     """Return aggregate KPIs for the congress trades tab."""
     use_date = bool(days and days > 0)
     if use_date:
@@ -1301,6 +1341,9 @@ def get_congress_summary(conn: psycopg.Connection, days: int = 30) -> dict:
         date_clause = ""
         date_param = []
 
+    source_clause = "AND source = %s" if source else ""
+    source_param  = [source] if source else []
+
     totals = conn.execute(f"""
         SELECT
             COUNT(*) AS total_trades,
@@ -1309,26 +1352,26 @@ def get_congress_summary(conn: psycopg.Connection, days: int = 30) -> dict:
             SUM(CASE WHEN LOWER(transaction_type) IN ('purchase', 'buy') THEN 1 ELSE 0 END) AS purchase_count,
             SUM(CASE WHEN LOWER(transaction_type) IN ('sale', 'sell') THEN 1 ELSE 0 END) AS sale_count
         FROM congress_trades
-        WHERE 1=1 {date_clause}
-    """, date_param).fetchone()
+        WHERE 1=1 {date_clause} {source_clause}
+    """, date_param + source_param).fetchone()
 
     top_tickers = conn.execute(f"""
         SELECT ticker, COUNT(*) AS cnt
         FROM congress_trades
-        WHERE ticker IS NOT NULL AND ticker != '' {date_clause}
+        WHERE ticker IS NOT NULL AND ticker != '' {date_clause} {source_clause}
         GROUP BY ticker
         ORDER BY cnt DESC
         LIMIT 10
-    """, date_param).fetchall()
+    """, date_param + source_param).fetchall()
 
     top_politicians = conn.execute(f"""
         SELECT politician_name AS name, COUNT(*) AS cnt
         FROM congress_trades
-        WHERE 1=1 {date_clause}
+        WHERE 1=1 {date_clause} {source_clause}
         GROUP BY politician_name
         ORDER BY cnt DESC
         LIMIT 10
-    """, date_param).fetchall()
+    """, date_param + source_param).fetchall()
 
     return {
         "total_trades": totals["total_trades"] or 0,

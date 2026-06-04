@@ -796,10 +796,12 @@ async def insider_view(
     ctx = _make_ctx(db, config)
     history = queries.get_insider_full_history(db, cik, ctx=ctx)
     summary = queries.get_insider_summary(db, cik)
+    perf_profile = queries.get_insider_perf_profile(db, cik)
     name = history[0]["insider_name"] if history else cik
     return templates.TemplateResponse(request, "insider.html", {
         "history": history,
         "summary": summary,
+        "perf_profile": perf_profile,
         "name": name,
         "cik": cik,
     })
@@ -933,23 +935,28 @@ async def watchlist_add(
     watch_type: str = Form(default=""),
     value: str = Form(default=""),
     label: str = Form(default=""),
+    next: str = Form(default="/watchlist"),
 ):
-    if watch_type not in ("ticker", "insider"):
+    if watch_type not in ("ticker", "insider", "congress_member"):
         raise HTTPException(status_code=400, detail="Invalid watch_type")
     value = value.strip()
     label = label.strip()
-    if not value or len(value) > 64 or len(label) > 128:
+    if not value or len(value) > 128 or len(label) > 128:
         raise HTTPException(status_code=400, detail="Invalid value or label")
     if watch_type == "ticker":
+        if len(value) > 64:
+            raise HTTPException(status_code=400, detail="Invalid value or label")
         value = value.upper()
         if not _TICKER_RE.match(value):
             raise HTTPException(status_code=400, detail="Invalid ticker format")
     elif watch_type == "insider":
         if not _CIK_RE.match(value):
             raise HTTPException(status_code=400, detail="Invalid CIK format")
+    # congress_member: value is the politician name — stored as-is, matched case-insensitively
     queries.add_watch(db, watch_type, value, label or value)
     cache_module.invalidate_query_cache()
-    return RedirectResponse(url="/watchlist", status_code=303)
+    safe_next = next if next in ("/watchlist", "/congress") else "/watchlist"
+    return RedirectResponse(url=safe_next, status_code=303)
 
 
 @app.post("/watchlist/remove")
@@ -963,6 +970,57 @@ async def watchlist_remove(
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
+def _load_congress_leaderboard(min_trades: int = 3) -> list[dict]:
+    """Read congress_backtest.csv and return per-politician performance stats."""
+    csv_path = BASE_DIR / "data" / "congress_backtest.csv"
+    if not csv_path.exists():
+        return []
+
+    def _f(s: str) -> float | None:
+        try:
+            return float(s) if s not in ("", "None") else None
+        except ValueError:
+            return None
+
+    by_politician: dict[str, list[dict]] = {}
+    try:
+        with open(csv_path, newline="") as f:
+            for row in csv.DictReader(f):
+                name = row.get("politician_name") or ""
+                if not name:
+                    continue
+                by_politician.setdefault(name, []).append(row)
+    except Exception:
+        return []
+
+    ranked = []
+    for name, rows in by_politician.items():
+        if len(rows) < min_trades:
+            continue
+        chamber = (rows[0].get("chamber") or "").lower()
+        party   = rows[0].get("party") or ""
+        src     = "Executive" if chamber == "executive" else "Congress"
+
+        e90  = [v for r in rows if (v := _f(r.get("excess_90d"))) is not None]
+        e60  = [v for r in rows if (v := _f(r.get("excess_60d"))) is not None]
+        e30  = [v for r in rows if (v := _f(r.get("excess_30d"))) is not None]
+        win90 = sum(1 for v in e90 if v > 0) / len(e90) * 100 if e90 else None
+
+        ranked.append({
+            "name":    name,
+            "source":  src,
+            "party":   party,
+            "n":       len(rows),
+            "exc_30":  round(sum(e30) / len(e30), 1) if e30 else None,
+            "exc_60":  round(sum(e60) / len(e60), 1) if e60 else None,
+            "exc_90":  round(sum(e90) / len(e90), 1) if e90 else None,
+            "win_90":  round(win90) if win90 is not None else None,
+        })
+
+    ranked.sort(key=lambda x: x["exc_90"] if x["exc_90"] is not None else -999, reverse=True)
+    return ranked
+
+
 @app.get("/congress", response_class=HTMLResponse)
 @limiter.limit("60/minute")
 async def congress_view(
@@ -972,27 +1030,32 @@ async def congress_view(
     politician: str = Query(default=""),
     chamber: str = Query(default=""),
     tx_type: str = Query(default=""),
+    source: str = Query(default=""),
     days: int = Query(default=0),
     sort_by: str = Query(default="transaction_date"),
     sort_order: str = Query(default="desc"),
 ):
     effective_days = days if days > 0 else None
+    watched_members = queries.watched_congress_members(db)
     trades = queries.get_congress_trades(
         db,
         ticker=ticker or None,
         politician=politician or None,
         chamber=chamber or None,
         tx_type=tx_type or None,
+        source=source or None,
         days=effective_days,
         sort_by=sort_by,
         sort_order=sort_order,
+        watched_members=watched_members,
     )
-    summary = queries.get_congress_summary(db, days=effective_days)
+    summary = queries.get_congress_summary(db, days=effective_days, source=source or None)
     filters = {
         "ticker": ticker,
         "politician": politician,
         "chamber": chamber,
         "tx_type": tx_type,
+        "source": source,
         "days": days,
         "sort_by": sort_by,
         "sort_order": sort_order,
@@ -1002,6 +1065,7 @@ async def congress_view(
         "trades": trades,
         "summary": summary,
         "filters": filters,
+        "leaderboard": _load_congress_leaderboard(),
     })
 
 

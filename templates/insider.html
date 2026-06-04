@@ -63,6 +63,72 @@
 </div>
 {% endif %}
 
+<!-- ── Backtest performance profile ──────────────────────────────── -->
+{% if perf_profile %}
+{% set p = perf_profile %}
+{% macro win_color(w) %}{% if w >= 0.70 %}var(--buy){% elif w >= 0.50 %}var(--amber){% else %}var(--sell){% endif %}{% endmacro %}
+{% macro med_color(m) %}{% if m > 0 %}var(--buy){% else %}var(--sell){% endif %}{% endmacro %}
+{% macro bar_pct(w) %}{{ (w * 100) | int }}{% endmacro %}
+
+<div class="mb-6" style="border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:1rem 1.25rem;background:rgba(255,255,255,.02);">
+  <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+    <div>
+      <span class="sh" style="font-size:.7rem;color:var(--text-2);">
+        <span class="sh-dot" style="background:var(--amber);"></span>
+        Backtest Performance Profile
+      </span>
+      <span class="num" style="font-size:.6rem;color:var(--text-3);margin-left:.5rem;">
+        {{ p.n_trades }} buys scored · entry = transaction_date · excess vs SPY
+      </span>
+    </div>
+    <div style="display:flex;align-items:center;gap:.5rem;">
+      <span style="font-size:.62rem;color:var(--text-3);">Peak window:</span>
+      <span class="num" style="font-size:.75rem;font-weight:700;color:var(--amber);">{{ p.peak_window }}d</span>
+      <span style="font-size:.62rem;padding:.15rem .4rem;border-radius:4px;background:rgba(255,255,255,.06);color:var(--text-2);">{{ p.profile_label }}</span>
+    </div>
+  </div>
+
+  <!-- Window rows -->
+  {% for w_num, w_win, w_avg, w_med in [
+      (30, p.win_30, p.avg_30, p.med_30),
+      (60, p.win_60, p.avg_60, p.med_60),
+      (90, p.win_90, p.avg_90, p.med_90),
+  ] %}
+  {% if w_win is not none %}
+  <div class="flex items-center gap-3 mb-2" style="font-size:.7rem;">
+    <!-- Label + peak badge -->
+    <div style="width:2.8rem;flex-shrink:0;text-align:right;">
+      <span class="num" style="color:var(--text-3);">{{ w_num }}d</span>
+      {% if w_num == p.peak_window %}
+      <span style="margin-left:.25rem;font-size:.55rem;color:var(--amber);">★</span>
+      {% endif %}
+    </div>
+
+    <!-- Win bar -->
+    <div style="flex:1;height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden;">
+      <div style="height:100%;width:{{ bar_pct(w_win) }}%;background:{{ win_color(w_win) }};border-radius:3px;transition:width .3s;"></div>
+    </div>
+
+    <!-- Stats -->
+    <div class="num" style="width:3.5rem;flex-shrink:0;text-align:right;color:{{ win_color(w_win) }};">
+      {{ (w_win * 100) | int }}% win
+    </div>
+    <div class="num" style="width:4rem;flex-shrink:0;text-align:right;color:{{ med_color(w_med) }};">
+      {% if w_med > 0 %}+{% endif %}{{ "%.1f" | format(w_med) }}% med
+    </div>
+    <div class="num" style="width:4rem;flex-shrink:0;text-align:right;color:var(--text-3);">
+      {% if w_avg > 0 %}+{% endif %}{{ "%.1f" | format(w_avg) }}% avg
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
+
+  <p style="margin-top:.6rem;font-size:.6rem;color:var(--text-3);">
+    Median excess and win rate vs. SPY over the same window from the same transaction date. Positive = outperformed the market.
+  </p>
+</div>
+{% endif %}
+
 <!-- ── Trades table ───────────────────────────────────────────────── -->
 {% if not history %}
 <div class="text-center py-16" style="color:var(--text-3);">
