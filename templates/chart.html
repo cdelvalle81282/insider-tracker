@@ -8,6 +8,20 @@
   <div class="flex items-center gap-4">
     <h1 style="font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;color:var(--text-1);letter-spacing:.04em;">${{ ticker }}</h1>
     <a href="/issuer/{{ ticker }}" style="font-size:.65rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);transition:color .12s;" class="hover:text-sky-400">All transactions →</a>
+    {% set watched = is_watched if is_watched is defined else false %}
+    <button class="watch-star btn-ghost"
+      hx-post="/watchlist/toggle"
+      hx-target="this"
+      hx-swap="outerHTML"
+      hx-vals='{"watch_type":"ticker","value":"{{ ticker }}","label":"{{ ticker }}"}'
+      title="{{ 'Unwatch' if watched else 'Watch this ticker' }}"
+      style="display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;
+             color:{{ 'var(--amber)' if watched else 'var(--text-2)' }};background:transparent;border:1px solid rgba(255,255,255,.08);border-radius:4px;cursor:pointer;font-size:.72rem;">
+      <span>{{ '★' if watched else '☆' }}</span>
+      <span style="font-size:.62rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;">
+        {{ 'Watching' if watched else 'Watch' }}
+      </span>
+    </button>
   </div>
 
   <div class="flex items-center gap-2 flex-wrap">

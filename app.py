@@ -584,16 +584,34 @@ async def htmx_stats(
         pre_mtime = cache_module._sentinel_mtime()
         db = get_db()
         try:
-            stats = await asyncio.to_thread(
-                queries.get_summary_stats, db, target_date,
-                date_range=date_range_arg,
-                hide_10b5_1=effective_hide,
-                hide_equity_swap=effective_hide_swap,
-                codes=effective_codes,
-            )
+            # Compute current + prior-period stats in one thread dispatch
+            if date_range_arg:
+                prev_start = range_start - timedelta(days=(range_end - range_start).days + 1)
+                prev_range_arg = (prev_start, range_start - timedelta(days=1))
+                prev_target = prev_range_arg[1]
+            else:
+                prev_target = target_date - timedelta(days=1)
+                prev_range_arg = None
+
+            def _fetch_stats_pair() -> tuple[dict, dict]:
+                cur = queries.get_summary_stats(
+                    db, target_date, date_range=date_range_arg,
+                    hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+                    codes=effective_codes,
+                )
+                prev = queries.get_summary_stats(
+                    db, prev_target, date_range=prev_range_arg,
+                    hide_10b5_1=effective_hide, hide_equity_swap=effective_hide_swap,
+                    codes=effective_codes,
+                )
+                return cur, prev
+
+            stats, prev_stats = await asyncio.to_thread(_fetch_stats_pair)
         finally:
             db.close()
-        html = templates.env.get_template("_stats_partial.html").render({"stats": stats})
+        html = templates.env.get_template("_stats_partial.html").render(
+            {"stats": stats, "prev_stats": prev_stats}
+        )
         cache_module.cache_set(f"it:stats:{skey}", pre_mtime, html)
 
     return HTMLResponse(html)
@@ -642,6 +660,27 @@ async def htmx_clusters(
         html = templates.env.get_template("_clusters_partial.html").render({"clusters": clusters})
         cache_module.cache_set(f"it:clusters:{ckey}", pre_mtime, html)
 
+    return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
+# HTMX partial — today's top signals hero strip
+# ---------------------------------------------------------------------------
+
+@app.get("/htmx/top-signals", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_top_signals(request: Request):
+    skey = f"it:top-signals:{date.today().isoformat()}"
+    html = cache_module.cache_get(skey)
+    if html is None:
+        pre_mtime = cache_module._sentinel_mtime()
+        db = get_db()
+        try:
+            signals = await asyncio.to_thread(queries.get_top_signals_today, db)
+        finally:
+            db.close()
+        html = templates.env.get_template("_top_signals.html").render({"signals": signals})
+        cache_module.cache_set(skey, pre_mtime, html)
     return HTMLResponse(html)
 
 
@@ -918,6 +957,7 @@ async def chart_view(
             "text":     " ".join(label_parts),
         })
 
+    watched = queries.watched_tickers(db)
     return templates.TemplateResponse(request, "chart.html", {
         "ticker": ticker,
         "range": range,
@@ -931,6 +971,7 @@ async def chart_view(
         "code_filter": code_filter,
         "has_api_key": bool(api_key),
         "ranges": list(_RANGE_DAYS.keys()),
+        "is_watched": ticker in watched,
     })
 
 
@@ -987,6 +1028,46 @@ async def watchlist_remove(
     queries.remove_watch(db, watch_id)
     cache_module.invalidate_query_cache()
     return RedirectResponse(url="/watchlist", status_code=303)
+
+
+@app.post("/watchlist/toggle", response_class=HTMLResponse)
+async def watchlist_toggle(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+    watch_type: str = Form(default=""),
+    value: str = Form(default=""),
+    label: str = Form(default=""),
+):
+    if watch_type not in ("ticker", "insider"):
+        raise HTTPException(status_code=400, detail="Invalid watch_type")
+    value = value.strip()
+    label = label.strip()
+    if not value or len(value) > 128:
+        raise HTTPException(status_code=400, detail="Invalid value")
+    if watch_type == "ticker":
+        if len(value) > 64:
+            raise HTTPException(status_code=400, detail="Invalid ticker")
+        value = value.upper()
+        if not _TICKER_RE.match(value):
+            raise HTTPException(status_code=400, detail="Invalid ticker format")
+    elif watch_type == "insider":
+        if not _CIK_RE.match(value):
+            raise HTTPException(status_code=400, detail="Invalid CIK format")
+    is_watched = queries.toggle_watch(db, watch_type, value, label or value)
+    cache_module.invalidate_query_cache()
+    watch_star = templates.env.get_template("_macros.html").module.watch_star
+    return HTMLResponse(watch_star(watch_type, value, label or value, is_watched))
+
+
+def _congress_filters_dict(
+    *, ticker: str, politician: str, chamber: str, tx_type: str,
+    source: str, days: int, sort_by: str, sort_order: str,
+) -> dict:
+    return {
+        "ticker": ticker, "politician": politician, "chamber": chamber,
+        "tx_type": tx_type, "source": source, "days": days,
+        "sort_by": sort_by, "sort_order": sort_order,
+    }
 
 
 def _load_congress_leaderboard(min_trades: int = 3) -> list[dict]:
@@ -1076,16 +1157,11 @@ async def congress_view(
         watched_members=watched_members,
     )
     summary = queries.get_congress_summary(db, days=effective_days, source=source or None)
-    filters = {
-        "ticker": ticker,
-        "politician": politician,
-        "chamber": chamber,
-        "tx_type": tx_type,
-        "source": source,
-        "days": days,
-        "sort_by": sort_by,
-        "sort_order": sort_order,
-    }
+    filters = _congress_filters_dict(
+        ticker=ticker, politician=politician, chamber=chamber,
+        tx_type=tx_type, source=source, days=days,
+        sort_by=sort_by, sort_order=sort_order,
+    )
     return templates.TemplateResponse(request, "congress.html", {
         "request": request,
         "trades": trades,
@@ -1093,6 +1169,65 @@ async def congress_view(
         "filters": filters,
         "leaderboard": _load_congress_leaderboard(),
     })
+
+
+@app.get("/htmx/congress-trades", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_congress_trades(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+    ticker: str = Query(default=""),
+    politician: str = Query(default=""),
+    chamber: str = Query(default=""),
+    tx_type: str = Query(default=""),
+    source: str = Query(default=""),
+    days: int = Query(default=0),
+    sort_by: str = Query(default="transaction_date"),
+    sort_order: str = Query(default="desc"),
+):
+    effective_days = days if days > 0 else None
+    watched_members = queries.watched_congress_members(db)
+    trades = queries.get_congress_trades(
+        db,
+        ticker=ticker or None,
+        politician=politician or None,
+        chamber=chamber or None,
+        tx_type=tx_type or None,
+        source=source or None,
+        days=effective_days,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        watched_members=watched_members,
+    )
+    filters = _congress_filters_dict(
+        ticker=ticker, politician=politician, chamber=chamber,
+        tx_type=tx_type, source=source, days=days,
+        sort_by=sort_by, sort_order=sort_order,
+    )
+    return templates.TemplateResponse(request, "_congress_partial.html", {
+        "trades": trades,
+        "filters": filters,
+    })
+
+
+# ---------------------------------------------------------------------------
+# API — tickers list for search datalist
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tickers-list")
+@limiter.limit("30/minute")
+async def tickers_list(request: Request):
+    cached = cache_module.cache_get("it:tickers-list")
+    if cached is not None:
+        return JSONResponse(cached)
+    pre_mtime = cache_module._sentinel_mtime()
+    db = get_db()
+    try:
+        tickers = queries.get_ticker_list(db)
+    finally:
+        db.close()
+    cache_module.cache_set("it:tickers-list", pre_mtime, tickers)
+    return JSONResponse(tickers)
 
 
 # ---------------------------------------------------------------------------

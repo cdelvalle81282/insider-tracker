@@ -1,4 +1,5 @@
 {# HTMX partial — re-rendered on filter change. No <html> wrapper. #}
+{% from "_macros.html" import watch_star %}
 {% macro pager(side, page, total_pages) %}
   {% if total_pages > 1 %}
   <div class="pager" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;font-size:.72rem;color:var(--text-3);">
@@ -67,10 +68,11 @@
 {% endif %}
 
 <!-- ── Sort macro ─────────────────────────────────────────────────── -->
-{% macro sort_th(label, col, align="right") %}
+{% macro sort_th(label, col, align="right", data_col="") %}
 <th class="th sort {% if filters and filters.sort_by == col %}sorted{% endif %}"
     style="text-align:{{ align }};"
-    onclick="sortBy('{{ col }}')">
+    onclick="sortBy('{{ col }}')"
+    {% if data_col %}data-col="{{ data_col }}"{% endif %}>
   {{ label }}
   {% if filters and filters.sort_by == col %}
     <span style="color:var(--sky);">{{ '↑' if filters.sort_order == 'asc' else '↓' }}</span>
@@ -85,6 +87,14 @@
 
   <!-- Buys -->
   <div>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:4px;gap:4px;">
+    <button type="button" onclick="toggleCol('held-after')" data-col-toggle="held-after"
+            class="chip" title="Toggle Held After column">Held After</button>
+    <button type="button" onclick="toggleCol('shares')" data-col-toggle="shares"
+            class="chip" title="Toggle Shares column">Shares</button>
+    <button type="button" onclick="toggleCol('pct-held')" data-col-toggle="pct-held"
+            class="chip" title="Toggle % Held column">% Held</button>
+  </div>
   <details class="group" open>
     <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
       <span class="caret">▶</span>
@@ -103,11 +113,11 @@
             <th class="th text-left">Company</th>
             {{ sort_th("Insider", "insider", "left") }}
             <th class="th text-left">Title</th>
-            {{ sort_th("Shares", "shares") }}
-            <th class="th text-right">Held After</th>
+            {{ sort_th("Shares", "shares", data_col="shares") }}
+            <th class="th text-right" data-col="held-after">Held After</th>
             {{ sort_th("Price", "price") }}
             {{ sort_th("$ Value", "value") }}
-            <th class="th text-right">% Held</th>
+            <th class="th text-right" data-col="pct-held">% Held</th>
             {{ sort_th("Filed", "filed") }}
           </tr>
         </thead>
@@ -124,7 +134,7 @@
             <td class="td">
               {% if row.issuer_ticker and row.issuer_ticker not in ('NONE', 'N/A') %}
               <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400" style="color:var(--text-1);">{{ row.issuer_ticker }}</a>
-              {% if row.is_watched %}<span class="watched-star">★</span>{% endif %}
+              {{ watch_star('ticker', row.issuer_ticker, row.issuer_ticker, row.is_watched) }}
               {% else %}
               <span style="color:var(--text-3);">—</span>
               {% endif %}
@@ -135,11 +145,11 @@
             </td>
             <td class="td" style="font-size:.75rem;color:var(--text-1);">
               <a href="/insider/{{ row.insider_cik }}" class="hover:underline hover:text-sky-400">{{ row.insider_name }}</a>
-              {% if row.is_watched and not row.issuer_ticker %}<span class="watched-star">★</span>{% endif %}
+              {{ watch_star('insider', row.insider_cik, row.insider_name, row.is_watched, font_size='.65rem', margin='3px') }}
             </td>
             <td class="td" style="font-size:.7rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
-            <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
-            <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
+            <td class="td num text-right" data-col="shares" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
+            <td class="td num text-right" data-col="held-after" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
             <td class="td num text-right" style="color:var(--buy);font-weight:600;">
               {{ row.total_value_fmt or '—' }}
@@ -149,7 +159,7 @@
               </div>
               {% endif %}
             </td>
-            <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ row.pct_holdings or '—' }}</td>
+            <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}" data-col="pct-held">{{ row.pct_holdings or '—' }}</td>
             <td class="td text-right" style="white-space:nowrap;">
               <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
               {% if row.disclosure_lag is not none %}
@@ -165,6 +175,31 @@
           {% endfor %}
         </tbody>
       </table>
+    </div>
+    <!-- Mobile cards (visible only on small screens via CSS) -->
+    <div class="mobile-cards">
+      {% for row in buys %}
+      <div style="background:var(--bg-surface);border:1px solid var(--border);border-left:2px solid var(--buy);
+                  border-radius:8px;padding:10px 12px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+          <div>
+            {% if row.issuer_ticker and row.issuer_ticker not in ('NONE','N/A') %}
+            <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link" style="font-size:.9rem;">{{ row.issuer_ticker }}</a>
+            {% endif %}
+            {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;">{{ row.conviction }}</span>{% endif %}
+          </div>
+          <span class="num" style="color:var(--buy);font-weight:700;font-size:.85rem;">{{ row.total_value_fmt or '—' }}</span>
+        </div>
+        <div style="font-size:.72rem;color:var(--text-2);margin-bottom:3px;">{{ row.issuer_name }}</div>
+        <div style="font-size:.72rem;color:var(--text-1);">
+          <a href="/insider/{{ row.insider_cik }}" style="color:var(--text-1);">{{ row.insider_name }}</a>
+          {% if row.insider_title %}<span style="color:var(--text-3);"> · {{ row.insider_title }}</span>{% endif %}
+        </div>
+        <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;">
+          <a href="/filing/{{ row.transaction_id }}" style="color:var(--text-3);">{{ row.filed_rel }}</a>
+        </div>
+      </div>
+      {% endfor %}
     </div>
   </details>
   {{ pager('buys', buys_page if buys_page is defined else 1, buys_total_pages if buys_total_pages is defined else 1) }}
@@ -206,6 +241,7 @@
             <td class="td">
               {% if row.issuer_ticker and row.issuer_ticker not in ('NONE', 'N/A') %}
               <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400" style="color:var(--text-1);">{{ row.issuer_ticker }}</a>
+              {{ watch_star('ticker', row.issuer_ticker, row.issuer_ticker, row.is_watched) }}
               {% else %}
               <span style="color:var(--text-3);">—</span>
               {% endif %}
@@ -242,6 +278,31 @@
         </tbody>
       </table>
     </div>
+    <!-- Mobile cards (visible only on small screens via CSS) -->
+    <div class="mobile-cards">
+      {% for row in sells %}
+      <div style="background:var(--bg-surface);border:1px solid var(--border);border-left:2px solid var(--sell);
+                  border-radius:8px;padding:10px 12px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+          <div>
+            {% if row.issuer_ticker and row.issuer_ticker not in ('NONE','N/A') %}
+            <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link" style="font-size:.9rem;">{{ row.issuer_ticker }}</a>
+            {% endif %}
+            {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;">{{ row.conviction }}</span>{% endif %}
+          </div>
+          <span class="num" style="color:var(--sell);font-weight:700;font-size:.85rem;">{{ row.total_value_fmt or '—' }}</span>
+        </div>
+        <div style="font-size:.72rem;color:var(--text-2);margin-bottom:3px;">{{ row.issuer_name }}</div>
+        <div style="font-size:.72rem;color:var(--text-1);">
+          <a href="/insider/{{ row.insider_cik }}" style="color:var(--text-1);">{{ row.insider_name }}</a>
+          {% if row.insider_title %}<span style="color:var(--text-3);"> · {{ row.insider_title }}</span>{% endif %}
+        </div>
+        <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;">
+          <a href="/filing/{{ row.transaction_id }}" style="color:var(--text-3);">{{ row.filed_rel }}</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
   </details>
   {{ pager('sells', sells_page if sells_page is defined else 1, sells_total_pages if sells_total_pages is defined else 1) }}
   </div>
@@ -250,3 +311,27 @@
 
 
 </div>{# /animate-in #}
+
+<script>
+(function() {
+  var COLS = ['held-after', 'shares', 'pct-held'];
+  COLS.forEach(function(col) {
+    var hidden = localStorage.getItem('col-hidden-' + col) === '1';
+    if (hidden) _applyColVisibility(col, true);
+  });
+  function _applyColVisibility(col, hide) {
+    document.querySelectorAll('[data-col="' + col + '"]').forEach(function(el) {
+      el.style.display = hide ? 'none' : '';
+    });
+    document.querySelectorAll('[data-col-toggle="' + col + '"]').forEach(function(btn) {
+      btn.style.opacity = hide ? '.4' : '1';
+    });
+  }
+  window.toggleCol = function(col) {
+    var hidden = localStorage.getItem('col-hidden-' + col) === '1';
+    var newHidden = !hidden;
+    localStorage.setItem('col-hidden-' + col, newHidden ? '1' : '0');
+    _applyColVisibility(col, newHidden);
+  };
+})();
+</script>

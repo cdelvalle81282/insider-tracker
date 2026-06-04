@@ -395,6 +395,25 @@ def remove_watch(conn: psycopg.Connection, watch_id: int) -> None:
     conn.execute("DELETE FROM watchlist WHERE id = %s", [watch_id])
 
 
+def toggle_watch(
+    conn: psycopg.Connection,
+    watch_type: str,
+    value: str,
+    label: str,
+) -> bool:
+    """Toggles watch status. Returns True if now watched, False if removed."""
+    assert conn.autocommit, "toggle_watch requires an autocommit connection"
+    row = conn.execute(
+        "SELECT id FROM watchlist WHERE type = %s AND value = %s",
+        [watch_type, value],
+    ).fetchone()
+    if row:
+        remove_watch(conn, row["id"])
+        return False
+    add_watch(conn, watch_type, value, label)
+    return True
+
+
 def watched_tickers(conn: psycopg.Connection) -> set[str]:
     rows = conn.execute(
         "SELECT value FROM watchlist WHERE type = 'ticker'"
@@ -423,6 +442,46 @@ def get_all_sectors(conn: psycopg.Connection) -> list[str]:
         "SELECT DISTINCT sector FROM filings WHERE sector IS NOT NULL ORDER BY sector"
     ).fetchall()
     return [r["sector"] for r in rows]
+
+
+def get_ticker_list(conn: psycopg.Connection, limit: int = 6000) -> list[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT issuer_ticker FROM filings "
+        "WHERE issuer_ticker IS NOT NULL AND issuer_ticker NOT IN ('NONE','N/A') "
+        "ORDER BY issuer_ticker LIMIT %s",
+        [limit],
+    ).fetchall()
+    return [r["issuer_ticker"] for r in rows if r["issuer_ticker"]]
+
+
+def get_top_signals_today(
+    conn: psycopg.Connection,
+    limit: int = 5,
+    min_value: float = 50000,
+) -> list[dict]:
+    """Return top insider buys filed today, ordered by value descending, for the hero strip."""
+    rows = conn.execute(
+        """
+        SELECT issuer_ticker, issuer_name, insider_name, insider_title,
+               total_value, transaction_date
+        FROM filings
+        WHERE filed_at::date = CURRENT_DATE
+          AND transaction_code = 'P'
+          AND table_type = 'ND'
+          AND superseded_by IS NULL AND joint_filer_of IS NULL
+          AND is_10b5_1 = 0 AND equity_swap = 0
+          AND total_value >= %s
+        ORDER BY total_value DESC
+        LIMIT %s
+        """,
+        [min_value, limit],
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["value_fmt"] = _fmt_value(d.get("total_value") or 0)
+        result.append(d)
+    return result
 
 
 def get_daily_summary(

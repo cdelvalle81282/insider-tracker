@@ -339,6 +339,26 @@
       background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.25);
       border-radius: 10px; padding: 14px 18px;
     }
+
+    /* ── Gear dropdown ──────────────────────────────── */
+    .gear-menu.open .gear-dropdown { display:block !important; }
+
+    /* ── Mobile responsive ──────────────────────────────── */
+    @media (max-width: 768px) {
+      /* Nav: hide text labels on mobile, compress */
+      .nav-link { font-size:.62rem; padding:4px 8px; letter-spacing:.06em; }
+      main { padding-left:12px; padding-right:12px; }
+
+      /* Tables: hide desktop table, show mobile cards */
+      .tbl-wrap table { display:none; }
+      .mobile-cards { display:flex !important; flex-direction:column; gap:10px; }
+    }
+    @media (min-width:769px) {
+      .mobile-cards { display:none !important; }
+    }
+
+    /* ── Column visibility ──────────────────────────────── */
+    .col-hidden { display:none !important; }
   </style>
 </head>
 <body>
@@ -359,14 +379,34 @@
         <a href="/watchlist" class="nav-link {% block nav_watchlist %}{% endblock %}">Watchlist</a>
         <a href="/congress"  class="nav-link {% block nav_congress %}{% endblock %}">Congress</a>
         <a href="/backtest"  class="nav-link {% block nav_backtest %}{% endblock %}">Backtest</a>
-        <a href="/run-log"   class="nav-link {% block nav_runlog %}{% endblock %}">Run Log</a>
-        <a href="/logic"     class="nav-link {% block nav_logic %}{% endblock %}">Config</a>
       </div>
 
       <div class="ml-auto flex items-center gap-3">
         <div id="loading-indicator" style="opacity:0; transition:opacity .18s; display:flex; align-items:center; gap:6px; color:var(--sky);">
           <span style="width:6px;height:6px;border-radius:50%;background:var(--sky);display:inline-block;" class="animate-ping"></span>
           <span style="font-size:.6rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;">Loading</span>
+        </div>
+
+        <!-- Gear menu (ops pages) -->
+        <div style="position:relative;" class="gear-menu">
+          <button onclick="document.querySelector('.gear-menu').classList.toggle('open')"
+                  style="width:30px;height:30px;border-radius:7px;border:1px solid var(--border);
+                         background:var(--bg-surface);color:var(--text-2);cursor:pointer;
+                         display:flex;align-items:center;justify-content:center;transition:all .15s;flex-shrink:0;"
+                  title="Admin">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </button>
+          <div class="gear-dropdown" style="
+            display:none; position:absolute; right:0; top:calc(100% + 6px);
+            background:var(--bg-surface); border:1px solid var(--border);
+            border-radius:8px; min-width:130px; padding:4px;
+            box-shadow:0 8px 24px rgba(0,0,0,.4); z-index:200;">
+            <a href="/run-log" class="nav-link {% block nav_runlog %}{% endblock %}" style="display:block;padding:7px 12px;border-radius:5px;">Run Log</a>
+            <a href="/logic"   class="nav-link {% block nav_logic %}{% endblock %}"   style="display:block;padding:7px 12px;border-radius:5px;">Config</a>
+          </div>
         </div>
         <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode"
                 style="width:30px;height:30px;border-radius:7px;border:1px solid var(--border);
@@ -417,6 +457,12 @@
       _syncThemeIcon();
     }
     _syncThemeIcon();
+
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.gear-menu')) {
+        document.querySelectorAll('.gear-menu.open').forEach(m => m.classList.remove('open'));
+      }
+    });
   </script>
 
 </body>

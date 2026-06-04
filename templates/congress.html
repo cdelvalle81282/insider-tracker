@@ -45,7 +45,12 @@
 </div>
 
 <!-- Filter bar -->
-<form method="GET" action="/congress"
+<form id="congress-filter-form"
+      method="GET"
+      hx-get="/htmx/congress-trades"
+      hx-target="#congress-table-container"
+      hx-swap="innerHTML"
+      hx-trigger="change, submit"
       class="flex flex-wrap items-center gap-2 pb-4 mb-5"
       style="border-bottom: 1px solid var(--border);">
 
@@ -126,171 +131,10 @@
   {% endif %}
 </form>
 
-<!-- Trades table -->
-{% if trades %}
-<div class="tbl-wrap">
-  <table class="w-full border-collapse">
-    <thead>
-      <tr>
-        <th class="th">
-          <a href="/congress?{{ filters | replace_filter('sort_by', 'disclosure_date') }}"
-             style="color:inherit;">Disclosed</a>
-        </th>
-        <th class="th">
-          <a href="/congress?{{ filters | replace_filter('sort_by', 'transaction_date') }}"
-             style="color:inherit;">Date</a>
-        </th>
-        <th class="th">
-          <a href="/congress?{{ filters | replace_filter('sort_by', 'politician_name') }}"
-             style="color:inherit;">Politician</a>
-        </th>
-        <th class="th">Party</th>
-        <th class="th">State</th>
-        <th class="th">
-          <a href="/congress?{{ filters | replace_filter('sort_by', 'ticker') }}"
-             style="color:inherit;">Ticker</a>
-        </th>
-        <th class="th">Asset</th>
-        <th class="th">Type</th>
-        <th class="th">
-          <a href="/congress?{{ filters | replace_filter('sort_by', 'amount_min') }}"
-             style="color:inherit;">Amount</a>
-        </th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for trade in trades %}
-      <tr class="{% if trade.transaction_type == 'purchase' %}row-buy{% elif trade.transaction_type == 'sale' %}row-sell{% endif %}">
-
-        <!-- Disclosed -->
-        <td class="td num" style="color:var(--text-2); font-size:.72rem; white-space:nowrap;">
-          {{ trade.disclosure_date or '—' }}
-        </td>
-
-        <!-- Transaction date -->
-        <td class="td num" style="color:var(--text-2); font-size:.72rem; white-space:nowrap;">
-          {{ trade.transaction_date or '—' }}
-        </td>
-
-        <!-- Politician -->
-        <td class="td" style="white-space:nowrap;">
-          {% if trade.is_watched %}
-          <span style="color:#facc15; font-size:.7rem; margin-right:3px;" title="Watched">★</span>
-          {% else %}
-          <form method="POST" action="/watchlist/add" style="display:inline; margin-right:3px;">
-            <input type="hidden" name="watch_type" value="congress_member" />
-            <input type="hidden" name="value" value="{{ trade.politician_name }}" />
-            <input type="hidden" name="next" value="/congress" />
-            <button type="submit" title="Watch {{ trade.politician_name }}"
-                    style="background:none; border:none; padding:0; cursor:pointer; font-size:.7rem; color:var(--text-3); line-height:1;"
-                    onmouseover="this.style.color='#facc15'" onmouseout="this.style.color='var(--text-3)'">☆</button>
-          </form>
-          {% endif %}
-          <span class="font-medium text-sm" style="color:var(--text-1);">{{ trade.politician_name }}</span>
-          {% if trade.source in ('open_cabinet', 'trump_278t') %}
-          <span style="font-size:.55rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
-                       padding:1px 5px; border-radius:3px; margin-left:4px;
-                       color:#a78bfa; background:rgba(167,139,250,.12); border:1px solid rgba(167,139,250,.3);">
-            Exec
-          </span>
-          {% else %}
-          <span style="font-size:.6rem; color:var(--text-3); margin-left:4px; text-transform:uppercase; letter-spacing:.06em;">
-            {{ trade.chamber }}
-          </span>
-          {% endif %}
-        </td>
-
-        <!-- Party -->
-        <td class="td" style="white-space:nowrap;">
-          {% if trade.party == 'Republican' or trade.party == 'R' %}
-            <span style="color:#f87171; font-size:.7rem; font-weight:600;">R</span>
-          {% elif trade.party == 'Democrat' or trade.party == 'D' %}
-            <span style="color:#60a5fa; font-size:.7rem; font-weight:600;">D</span>
-          {% elif trade.party %}
-            <span style="color:var(--text-2); font-size:.7rem;">{{ trade.party[:1] }}</span>
-          {% else %}
-            <span style="color:var(--text-3);">—</span>
-          {% endif %}
-        </td>
-
-        <!-- State -->
-        <td class="td" style="color:var(--text-2); font-size:.75rem; white-space:nowrap;">
-          {{ trade.state or '—' }}
-        </td>
-
-        <!-- Ticker -->
-        <td class="td" style="white-space:nowrap;">
-          {% if trade.ticker %}
-          <a href="/chart/{{ trade.ticker }}" class="ticker-link"
-             style="color:var(--sky);">{{ trade.ticker }}</a>
-          {% else %}
-          <span style="color:var(--text-3);">—</span>
-          {% endif %}
-        </td>
-
-        <!-- Asset description -->
-        <td class="td" style="color:var(--text-2); font-size:.75rem; max-width:220px;">
-          <span class="truncate block" title="{{ trade.asset_description or '' }}">
-            {{ (trade.asset_description or '—')[:60] }}{% if trade.asset_description and trade.asset_description|length > 60 %}…{% endif %}
-          </span>
-        </td>
-
-        <!-- Type badge -->
-        <td class="td" style="white-space:nowrap;">
-          {% if trade.transaction_type == 'purchase' %}
-            <span style="font-size:.6rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-                         padding:2px 7px; border-radius:4px;
-                         color:var(--buy); background:rgba(15,206,160,.1); border:1px solid rgba(15,206,160,.25);">
-              Buy
-            </span>
-          {% elif trade.transaction_type == 'sale' %}
-            <span style="font-size:.6rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
-                         padding:2px 7px; border-radius:4px;
-                         color:var(--sell); background:rgba(246,75,110,.1); border:1px solid rgba(246,75,110,.25);">
-              Sell
-            </span>
-          {% elif trade.transaction_type %}
-            <span style="font-size:.6rem; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
-                         padding:2px 7px; border-radius:4px;
-                         color:var(--text-2); background:rgba(30,42,65,.7); border:1px solid var(--border);">
-              {{ trade.transaction_type }}
-            </span>
-          {% else %}
-            <span style="color:var(--text-3);">—</span>
-          {% endif %}
-        </td>
-
-        <!-- Amount -->
-        <td class="td num" style="color:var(--text-1); font-size:.75rem; white-space:nowrap;">
-          {{ trade.amount_label or '—' }}
-        </td>
-
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<!-- Congress trades table — swapped by HTMX filter changes -->
+<div id="congress-table-container">
+  {% include "_congress_partial.html" %}
 </div>
-<p style="font-size:.6rem; color:var(--text-3); margin-top:10px; text-align:right;">
-  Showing {{ trades|length }} trade{{ 's' if trades|length != 1 else '' }}
-</p>
-
-{% else %}
-<!-- Empty state -->
-<div style="text-align:center; padding:64px 0;">
-  <div style="font-size:2rem; margin-bottom:12px; opacity:.3;">—</div>
-  <p style="color:var(--text-3); font-size:.8rem;">No congressional trades found for these filters.</p>
-  {% if filters.ticker or filters.politician or filters.chamber or filters.tx_type %}
-  <p style="color:var(--text-3); font-size:.72rem; margin-top:6px;">
-    Try <a href="/congress?days={{ filters.days }}" style="color:var(--sky); text-decoration:underline;">clearing the filters</a>
-    or running <code style="font-family:monospace; color:var(--text-2);">python congress_ingest.py</code> to populate data.
-  </p>
-  {% else %}
-  <p style="color:var(--text-3); font-size:.72rem; margin-top:6px;">
-    Run <code style="font-family:monospace; color:var(--text-2);">python congress_ingest.py</code> to populate congressional trade data.
-  </p>
-  {% endif %}
-</div>
-{% endif %}
 
 <!-- Performance leaderboard (from backtest CSV) -->
 {% if leaderboard %}

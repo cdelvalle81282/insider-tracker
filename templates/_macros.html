@@ -1,0 +1,13 @@
+{# Shared Jinja2 macros — import with {% from "_macros.html" import ... %} #}
+
+{% macro watch_star(watch_type, value, label, is_watched, font_size=".75rem", margin="2px") -%}
+<button class="watch-star"
+  hx-post="/watchlist/toggle"
+  hx-target="this"
+  hx-swap="outerHTML"
+  hx-vals='{"watch_type":"{{ watch_type }}","value":"{{ value }}","label":"{{ label }}"}'
+  title="{{ 'Unwatch' if is_watched else 'Watch' }}"
+  style="background:none;border:none;padding:0;cursor:pointer;font-size:{{ font_size }};color:{{ 'var(--amber)' if is_watched else 'var(--text-3)' }};line-height:1;margin-left:{{ margin }};"
+  onmouseover="this.style.color='var(--amber)'"
+  onmouseout="this.style.color='{{ 'var(--amber)' if is_watched else 'var(--text-3)' }}'">{{ '★' if is_watched else '☆' }}</button>
+{%- endmacro %}

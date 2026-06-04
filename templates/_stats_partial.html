@@ -4,15 +4,33 @@
     <div class="kpi-label">▲ Buys</div>
     <div class="kpi-val" style="color:var(--buy);">{{ stats.buy_count }}</div>
     <div class="kpi-sub">{{ stats.buy_total_fmt or '—' }}</div>
+    {% if prev_stats is defined and prev_stats %}
+    {% set delta = stats.buy_count - prev_stats.buy_count %}
+    <div style="font-size:.55rem;margin-top:3px;color:{% if delta > 0 %}var(--buy){% elif delta < 0 %}var(--sell){% else %}var(--text-3){% endif %};">
+      {% if delta > 0 %}+{% endif %}{{ delta }} vs prev
+    </div>
+    {% endif %}
   </div>
   <div class="kpi" style="border-color:rgba(246,75,110,.22);">
     <div class="kpi-label">▼ Sells</div>
     <div class="kpi-val" style="color:var(--sell);">{{ stats.sell_count }}</div>
     <div class="kpi-sub">{{ stats.sell_total_fmt or '—' }}</div>
+    {% if prev_stats is defined and prev_stats %}
+    {% set delta = stats.sell_count - prev_stats.sell_count %}
+    <div style="font-size:.55rem;margin-top:3px;color:{% if delta > 0 %}var(--sell){% elif delta < 0 %}var(--buy){% else %}var(--text-3){% endif %};">
+      {% if delta > 0 %}+{% endif %}{{ delta }} vs prev
+    </div>
+    {% endif %}
   </div>
   <div class="kpi">
     <div class="kpi-label">Net Flow</div>
     <div class="kpi-val" style="color:{% if stats.net_flow >= 0 %}var(--buy){% else %}var(--sell){% endif %};">{{ stats.net_flow_fmt }}</div>
+    {% if prev_stats is defined and prev_stats %}
+    {% set delta_flow = stats.net_flow - prev_stats.net_flow %}
+    <div style="font-size:.55rem;margin-top:3px;color:{% if delta_flow > 0 %}var(--buy){% elif delta_flow < 0 %}var(--sell){% else %}var(--text-3){% endif %};">
+      {% if delta_flow >= 0 %}+{% endif %}{{ "{:.0f}".format(delta_flow / 1000) }}K vs prev
+    </div>
+    {% endif %}
   </div>
   <div class="kpi">
     <div class="kpi-label">Issuers</div>

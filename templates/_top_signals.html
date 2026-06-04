@@ -1,0 +1,33 @@
+{# Rendered by GET /htmx/top-signals — today's top buy signals hero strip. No <html> wrapper. #}
+{% if signals %}
+<div class="animate-in" style="margin-bottom:1rem;">
+  <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
+    <span class="sh" style="color:var(--buy);">
+      <span class="sh-dot" style="background:var(--buy);box-shadow:0 0 6px rgba(15,206,160,.5);"></span>
+      Today's Top Buys
+    </span>
+    <a href="/?codes=P&sort_by=value&sort_order=desc"
+       style="font-size:.58rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);"
+       class="hover:text-sky-400">View all →</a>
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+    {% for s in signals %}
+    <a href="/chart/{{ s.issuer_ticker }}" style="text-decoration:none;">
+      <div style="background:var(--bg-raised);border:1px solid rgba(15,206,160,.22);border-radius:7px;
+                  padding:.4rem .7rem;white-space:nowrap;font-size:.75rem;transition:border-color .15s;"
+           onmouseover="this.style.borderColor='rgba(15,206,160,.5)'"
+           onmouseout="this.style.borderColor='rgba(15,206,160,.22)'">
+        <span class="num" style="color:var(--buy);font-weight:700;">{{ s.issuer_ticker or '—' }}</span>
+        <span class="num" style="color:var(--buy);margin-left:.35rem;font-size:.7rem;">{{ s.value_fmt }}</span>
+        {% if s.insider_name %}
+        <span style="color:var(--text-2);margin-left:.4rem;font-size:.68rem;">{{ s.insider_name }}</span>
+        {% endif %}
+        {% if s.insider_title %}
+        <span style="color:var(--text-3);margin-left:.25rem;font-size:.62rem;">· {{ s.insider_title }}</span>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

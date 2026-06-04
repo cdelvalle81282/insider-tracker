@@ -4,6 +4,13 @@
 
 {% block content %}
 
+<!-- Today's top signals strip — loaded async, non-blocking -->
+<div id="top-signals-container"
+     hx-get="/htmx/top-signals"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+</div>
+
 <!-- Filter bar -->
 <form id="filter-form"
   hx-get="/htmx/filings"
@@ -213,8 +220,11 @@
     <input type="text" name="search" id="search-input" value="{{ filters.search }}"
            placeholder="Ticker · company · insider"
            class="fg-in" style="width:170px;"
-           onkeydown="searchKeydown(event)" />
+           onkeydown="searchKeydown(event)"
+           list="ticker-suggestions" />
+    <datalist id="ticker-suggestions"></datalist>
   </div>
+  <span style="font-size:.55rem;color:var(--text-3);margin-left:2px;">↵ ticker → chart</span>
 
   <!-- Sector -->
   {% if all_sectors %}
@@ -332,6 +342,24 @@
     document.querySelector(`.range-chip[data-days="${daysBack}"]`)?.classList.add('active');
     htmx.trigger(document.getElementById('filter-form'), 'change');
   }
+
+  // Populate ticker autocomplete datalist
+  (function() {
+    fetch('/api/tickers-list')
+      .then(function(r) { return r.json(); })
+      .then(function(tickers) {
+        var dl = document.getElementById('ticker-suggestions');
+        if (!dl) return;
+        var frag = document.createDocumentFragment();
+        tickers.forEach(function(t) {
+          var opt = document.createElement('option');
+          opt.value = t;
+          frag.appendChild(opt);
+        });
+        dl.appendChild(frag);
+      })
+      .catch(function() {});
+  })();
 </script>
 
 {% endblock %}
