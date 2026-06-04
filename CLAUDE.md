@@ -117,6 +117,8 @@ ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull && sudo s
 - `insider-ingest-nightly.service` — oneshot triggered by nightly timer
 - `insider-prices.timer` — runs `--update-prices` at 01:00 UTC Mon–Fri (9 PM ET) — refreshes close prices in `ticker_metadata`
 - `insider-prices.service` — oneshot triggered by prices timer
+- `insider-congress.timer` — runs `congress_ingest.py` at 13:00 UTC Mon–Fri (9 AM ET) — refreshes congressional trades from AInvest API
+- `insider-congress.service` — oneshot triggered by congress timer
 - `insider-backup.timer` — runs at 05:30 UTC daily — PG backup to S3 (staggered 30 min after `sync_job` cron)
 
 ```bash
@@ -321,6 +323,7 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **`insider-tracker.service` has `MemoryMax=512M` / `MemoryHigh=400M`:** Workers currently use ~65 MB each (130 MB total). The hard limit is 512 MB — if the process exceeds this systemd kills it. Raise the limit in `/etc/systemd/system/insider-tracker.service` if adding workers or the cache grows significantly (then `sudo systemctl daemon-reload`).
 - **`insider-backup.timer` runs at 05:30 UTC, not 05:00:** Staggered 30 minutes after the `sync_job` cron to avoid simultaneous AWS CLI + Python sync competing for memory at the same minute.
 - **Pydantic v2 treats empty form strings as null for `Form(...)` required fields:** FastAPI ≥ 0.111 uses Pydantic v2, which returns a 422 `"input":null` error when a required `Form(...)` str field is submitted as an empty string. Use `Form(default="")` for any string form param and let route-level `if not value:` validation return a 400. Also add `required` to the HTML input to block empty browser submissions early.
+- **`congress_ingest.py` runs on `insider-congress.timer` (Mon–Fri 13:00 UTC = 9 AM ET):** Default `--stale-days 7` means each ticker is re-fetched at most once a week. `ON CONFLICT DO NOTHING` deduplicates by `transaction_id`. For a forced full refresh run `congress_ingest.py --stale-days 1` manually. The timer is at `/etc/systemd/system/insider-congress.{service,timer}`.
 
 ## SEC compliance
 
@@ -336,4 +339,3 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - **AI trade analysis** — Claude API "why is this notable" blurb on high-conviction trades
 - **Notes/tags on filings** — internal editorial commentary
 - **Email digest** — daily summary as alternative to Slack
-- **Congress ingest on timer** — wire `congress_ingest.py` into a systemd timer for automatic daily refresh
