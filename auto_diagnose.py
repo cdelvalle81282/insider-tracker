@@ -124,7 +124,7 @@ def analyze(diagnostics: dict, alert_info: dict) -> dict:
 
     prompt = f"""You are an autonomous ops agent for the Insider Tracker application.
 Stack: FastAPI + PostgreSQL 16 + uvicorn (2 workers) on a DigitalOcean droplet.
-Key services: insider-tracker.service (uvicorn), insider-ingest-nightly.timer (03:00 UTC Mon-Sat), insider-prices.timer (01:00 UTC Mon-Fri).
+Key services: insider-tracker.service (uvicorn), insider-ingest-nightly.timer (03:00 UTC Mon-Sat), insider-prices.timer (01:00 UTC Mon-Fri ONLY — no weekend runs; a stale prices sentinel Sat/Sun/Mon-before-02:00 UTC is expected and not a failure).
 
 An alert fired: {json.dumps(alert_info, indent=2)}
 
@@ -226,8 +226,40 @@ def post_slack(analysis: dict, auto_fixed: list[str], alert_info: dict, webhook_
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _prices_weekend_gap(check_name: str) -> bool:
+    """True during the Fri→Mon gap when insider-prices.timer (Mon-Fri 01:00 UTC) doesn't run.
+
+    Covers Sat all day, Sun all day, and Mon before 02:00 UTC (giving the 01:00 run
+    a one-hour window to complete and ping the heartbeat before we'd suppress anything).
+    """
+    if "price" not in check_name.lower():
+        return False
+    now = datetime.now(timezone.utc)
+    wd = now.weekday()  # 0=Mon … 6=Sun
+    return wd in (5, 6) or (wd == 0 and now.hour < 2)
+
+
 def run_diagnostic(alert_info: dict) -> None:
     slack_url = os.getenv("SLACK_WEBHOOK_URL")
+    check_name = alert_info.get("check_name", "")
+
+    # Short-circuit known weekend false positive for the prices timer (Mon-Fri only).
+    if _prices_weekend_gap(check_name):
+        msg = (
+            ":white_check_mark: *Insider Tracker — Expected Weekend Gap*\n"
+            f"*Alert:* {check_name}\n"
+            "insider-prices.timer runs Mon–Fri 01:00 UTC only. "
+            "This staleness is expected over the weekend — no action needed."
+        )
+        if slack_url:
+            try:
+                _post_to_slack(slack_url, {"text": msg})
+            except Exception as e:
+                _LOG.error("Slack post failed: %s", e)
+        else:
+            print(msg)
+        return
+
     diagnostics = collect_diagnostics()
     analysis = analyze(diagnostics, alert_info)
     auto_fixed = apply_fixes(analysis.get("safe_auto_fixes", []))
