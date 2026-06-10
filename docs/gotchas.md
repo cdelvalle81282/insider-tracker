@@ -20,6 +20,7 @@ Format: `- **Short label:** What breaks / what to do instead. Why it matters.`
 - **Buy alert keys:** Unified `buy:` prefix — prevents double-firing when a trade matches both big_buy and insider_buy thresholds
 - **`_resolve_date_range(d, start_date, end_date)`:** Use this helper in any route that accepts date params — don't inline the parsing block again
 - **Lightweight Charts:** Always use `autoSize: true` — never `width: element.clientWidth` at init time (clientWidth can be 0 before CSS applies). Pin CDN version: `@4.2.0`
+- **`insider_perf_profile` table is optional:** Created by `load_insider_profiles.py`, not in migrations. `get_insider_perf_profile()` catches `UndefinedTable` and returns None — the insider page renders fine with no perf section. Don't add it to migrations; don't let callers crash if it's absent.
 - **Duplicate form inputs:** Never have two `<input>` elements with the same `name` in the HTMX filter form — FastAPI receives them as a list and may 422 or silently mishandle.
 - **EDGAR daily-index vs quarterly:** `full-index/YYYY/QTRn/form.idx` is updated with a multi-day lag. For recent dates use `daily-index/YYYY/QTRn/form.YYYYMMDD.idx` (same-day). Fall back to quarterly on any non-200 (not just 404 — SEC also returns 403 for missing dates).
 - **Daily-index date format:** Daily index embeds dates as `YYYYMMDD` (no dashes); quarterly uses `YYYY-MM-DD`. Normalize to ISO before storing as `filed_at` or `DATE(filed_at)` queries return 0 results.
