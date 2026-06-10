@@ -46,6 +46,11 @@ LEGITIMATE_HIGH_PRICE = {
     "MNTR",    # uncertain — exclude to be safe
     "ECDA",    # uncertain — exclude to be safe
     "FROG",    # uncertain — exclude to be safe
+    # Legitimate high-priced stocks discovered after initial run
+    "TPL",     # Texas Pacific Land ~$1,000-1,400/share
+    "EQIX",    # Equinix ~$900-1,100/share
+    "GWW",     # W.W. Grainger ~$1,000-1,100/share
+    "TDG",     # TransDigm Group ~$1,200-1,400/share
 }
 
 # SQL placeholder list for the exclusion set.
