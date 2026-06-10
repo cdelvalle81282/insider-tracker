@@ -1136,20 +1136,25 @@ def get_insider_full_history(
 
 
 def get_insider_perf_profile(conn: psycopg.Connection, insider_cik: str) -> dict | None:
-    """Return backtest performance profile for an insider, or None if not profiled."""
-    row = conn.execute(
-        """
-        SELECT insider_cik, insider_name, role, n_trades,
-               win_30, avg_30, med_30,
-               win_60, avg_60, med_60,
-               win_90, avg_90, med_90,
-               peak_window, profile_label, updated_at
-        FROM insider_perf_profile
-        WHERE insider_cik = %s
-        """,
-        [insider_cik],
-    ).fetchone()
-    return dict(row) if row else None
+    """Return backtest performance profile for an insider, or None if not profiled.
+    Table is optional (populated by load_insider_profiles.py) — returns None if absent."""
+    try:
+        row = conn.execute(
+            """
+            SELECT insider_cik, insider_name, role, n_trades,
+                   win_30, avg_30, med_30,
+                   win_60, avg_60, med_60,
+                   win_90, avg_90, med_90,
+                   peak_window, profile_label, updated_at
+            FROM insider_perf_profile
+            WHERE insider_cik = %s
+            """,
+            [insider_cik],
+        ).fetchone()
+        return dict(row) if row else None
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return None
 
 
 def get_insider_summary(conn: psycopg.Connection, insider_cik: str) -> dict:
