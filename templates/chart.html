@@ -12,8 +12,9 @@
     <button class="watch-star btn-ghost"
       hx-post="/watchlist/toggle"
       hx-target="this"
-      hx-swap="outerHTML"
+      hx-swap="none"
       hx-vals='{"watch_type":"ticker","value":"{{ ticker }}","label":"{{ ticker }}"}'
+      hx-on::after-request="_toggleChartWatch(this)"
       title="{{ 'Unwatch' if watched else 'Watch this ticker' }}"
       style="display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;
              color:{{ 'var(--amber)' if watched else 'var(--text-2)' }};background:transparent;border:1px solid rgba(255,255,255,.08);border-radius:4px;cursor:pointer;font-size:.72rem;">
@@ -153,7 +154,9 @@
             <span style="color:var(--sell);font-size:.65rem;font-weight:700;letter-spacing:.06em;">▼ SELL</span>
             {% endif %}
           </td>
-          <td class="td" style="color:var(--text-1);font-size:.78rem;">{{ f.insider_name }}</td>
+          <td class="td" style="font-size:.78rem;">
+            <a href="/insider/{{ f.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);">{{ f.insider_name }}</a>
+          </td>
           <td class="td" style="color:var(--text-2);font-size:.72rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.insider_title or '—' }}</td>
           <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(f.shares) if f.shares else '—' }}</td>
           <td class="td num text-right" style="color:var(--text-2);">{{ f.price_fmt or '—' }}</td>
@@ -248,5 +251,17 @@
 })();
 </script>
 {% endif %}
+
+<script>
+function _toggleChartWatch(btn) {
+  const star  = btn.querySelector('span:first-child');
+  const label = btn.querySelector('span:last-child');
+  const nowWatching = star.textContent.trim() !== '★';
+  star.textContent  = nowWatching ? '★' : '☆';
+  label.textContent = nowWatching ? 'Watching' : 'Watch';
+  btn.style.color   = nowWatching ? 'var(--amber)' : 'var(--text-2)';
+  btn.title         = nowWatching ? 'Unwatch' : 'Watch this ticker';
+}
+</script>
 
 {% endblock %}

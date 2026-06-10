@@ -41,7 +41,7 @@
 
   <!-- Range presets -->
   <div class="fg" style="padding:0 6px; gap:2px;">
-    <button type="button" onclick="setRange(0)"  data-days="0"  class="chip range-chip {% if not is_range %}active{% endif %}">Today</button>
+    <button type="button" onclick="goToday()"  data-days="0"  class="chip range-chip {% if not is_range %}active{% endif %}">Today</button>
     <button type="button" onclick="setRange(6)"  data-days="6"  class="chip range-chip">7d</button>
     <button type="button" onclick="setRange(29)" data-days="29" class="chip range-chip">30d</button>
   </div>
@@ -316,6 +316,14 @@
     }
   }
 
+  // Chrome fires 'change' not keydown when user selects a datalist suggestion with Enter
+  document.getElementById('search-input').addEventListener('change', function () {
+    const val = this.value.trim();
+    if (/^[A-Za-z]{1,5}$/.test(val)) {
+      window.location.href = '/chart/' + val.toUpperCase();
+    }
+  });
+
   // Highlight the matching chip based on current start/end inputs on load
   (function() {
     const start = document.getElementById('start_date').value;
@@ -329,6 +337,13 @@
       }
     }
   })();
+
+  function goToday() {
+    const today = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    window.location.href = '/?d=' + fmt(today);
+  }
 
   function setRange(daysBack) {
     const today = new Date();

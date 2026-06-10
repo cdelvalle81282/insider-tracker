@@ -4,40 +4,41 @@
 
 {% block content %}
 
-<h1 class="text-xl font-bold text-white mb-5">Ingestion Run Log</h1>
+<h1 class="text-xl font-bold mb-5" style="color:var(--text-1);">Ingestion Run Log</h1>
 
-<div class="overflow-x-auto rounded-lg border border-gray-800">
+<div class="tbl-wrap">
   <table class="w-full text-sm">
-    <thead class="bg-gray-900 text-gray-500 text-xs uppercase">
+    <thead>
       <tr>
-        <th class="px-3 py-2 text-left">Date</th>
-        <th class="px-3 py-2 text-left">Started</th>
-        <th class="px-3 py-2 text-left">Finished</th>
-        <th class="px-3 py-2 text-right">Filings</th>
-        <th class="px-3 py-2 text-right">Rows</th>
-        <th class="px-3 py-2 text-right">Errors</th>
-        <th class="px-3 py-2 text-left">Detail</th>
+        <th class="th text-left">Date</th>
+        <th class="th text-left">Started</th>
+        <th class="th text-left">Finished</th>
+        <th class="th text-right">Filings</th>
+        <th class="th text-right">Rows</th>
+        <th class="th text-right">Errors</th>
+        <th class="th text-left">Detail</th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-800">
+    <tbody>
       {% for run in log %}
-      <tr class="hover:bg-gray-800/40 {% if run.errors > 0 %}border-l-2 border-red-800{% endif %}">
-        <td class="px-3 py-2 text-white font-mono text-xs">{{ run.date_processed }}</td>
-        <td class="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{{ run.started_at[:19].replace('T',' ') }}</td>
-        <td class="px-3 py-2 text-gray-400 text-xs whitespace-nowrap">{{ run.finished_at[:19].replace('T',' ') if run.finished_at else '…' }}</td>
-        <td class="px-3 py-2 text-right text-gray-300 text-xs">{{ run.filings_found }}</td>
-        <td class="px-3 py-2 text-right text-green-400 text-xs font-medium">+{{ run.rows_inserted }}</td>
-        <td class="px-3 py-2 text-right {% if run.errors > 0 %}text-red-400{% else %}text-gray-600{% endif %} text-xs">
+      <tr class="{% if run.errors > 0 %}row-sell{% endif %}">
+        <td class="td num" style="color:var(--text-1);font-size:.75rem;white-space:nowrap;">{{ run.date_processed }}</td>
+        <td class="td num" style="color:var(--text-2);font-size:.72rem;white-space:nowrap;">{{ run.started_at[:19].replace('T',' ') }}</td>
+        <td class="td num" style="color:var(--text-2);font-size:.72rem;white-space:nowrap;">{{ run.finished_at[:19].replace('T',' ') if run.finished_at else '…' }}</td>
+        <td class="td num text-right" style="color:var(--text-2);font-size:.72rem;">{{ run.filings_found }}</td>
+        <td class="td num text-right font-semibold" style="color:var(--buy);font-size:.72rem;">+{{ run.rows_inserted }}</td>
+        <td class="td num text-right font-semibold" style="font-size:.72rem;{% if run.errors > 0 %}color:var(--sell);{% else %}color:var(--text-3);{% endif %}">
           {{ run.errors }}
         </td>
-        <td class="px-3 py-2 text-gray-600 text-xs max-w-[320px] truncate" title="{{ run.error_detail or '' }}">
+        <td class="td" style="color:var(--text-3);font-size:.72rem;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+            title="{{ run.error_detail or '' }}">
           {{ run.error_detail or '' }}
         </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="7" class="px-3 py-10 text-center text-gray-600">
-          No runs yet. Try: <code class="text-indigo-400">python ingest.py --date today</code>
+        <td colspan="7" style="padding:40px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">
+          No runs yet. Try: <code style="color:var(--sky);">python ingest.py --date today</code>
         </td>
       </tr>
       {% endfor %}

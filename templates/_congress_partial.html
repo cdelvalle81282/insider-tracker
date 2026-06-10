@@ -58,7 +58,9 @@
                     onmouseover="this.style.color='#facc15'" onmouseout="this.style.color='var(--text-3)'">☆</button>
           </form>
           {% endif %}
-          <span class="font-medium text-sm" style="color:var(--text-1);">{{ trade.politician_name }}</span>
+          <a href="/congress?politician={{ trade.politician_name | urlencode }}&days={{ filters.days or 0 }}"
+             style="color:var(--text-1); font-size:.82rem; text-decoration:none;"
+             onmouseover="this.style.color='#38bdf8'" onmouseout="this.style.color='var(--text-1)'">{{ trade.politician_name }}</a>
           {% if trade.source in ('open_cabinet', 'trump_278t') %}
           <span style="font-size:.55rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase;
                        padding:1px 5px; border-radius:3px; margin-left:4px;
