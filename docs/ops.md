@@ -43,6 +43,17 @@ sudo systemctl status insider-ingest-nightly.timer
 - **URL:** https://opi-insider.duckdns.org
 - **GitHub:** https://github.com/cdelvalle81282/insider-tracker
 
+## DuckDNS
+
+`opi-insider.duckdns.org` is kept alive by a cron job on the server. DuckDNS free domains expire after 90 days of inactivity without regular pings.
+
+- **Script:** `/usr/local/bin/duckdns_update.sh` — calls the DuckDNS update API with the current server IP
+- **Schedule:** `*/5 * * * *` (every 5 minutes, deploy user's crontab)
+- **Log:** `/home/deploy/duckdns.log` — should contain `OK` after each run
+- **Token:** stored in the script itself (deploy@167.99.167.244)
+
+If DNS breaks again: SSH in, run `/usr/local/bin/duckdns_update.sh`, and check the log. If the response is `KO`, the token or domain name is wrong. Re-add the cron entry with `crontab -e` if it's missing.
+
 ## nginx notes
 
 - `sites-enabled` is NOT a symlink — always edit `/etc/nginx/sites-enabled/insider-tracker` directly, then `nginx -t && systemctl reload nginx`
