@@ -6,16 +6,16 @@ Pulls Form 4 filings (insider buys/sells) from SEC EDGAR, stores them in Postgre
 
 ## Self-Improvement Protocol
 
-**Every time you fix a bug, hit an unexpected edge case, or discover a non-obvious behavior — add a bullet to `docs/gotchas.md` before committing.**
+**Every time you fix a bug, hit an unexpected edge case, or discover a non-obvious behavior — add a bullet to `private/gotchas.md` before committing.**
 
 Format: `- **Short label:** What breaks / what to do instead. Why it matters.`
 
-This file + the docs/ folder is the institutional memory for this codebase.
+This file + the docs/ folder + the gitignored `private/` folder is the institutional memory for this codebase.
 
 ## Reference docs
 
-- **`docs/gotchas.md`** — Known gotchas (EDGAR quirks, psycopg3 patterns, PG migration notes, caching, alert dedup). Read this before touching any existing logic.
-- **`docs/ops.md`** — Environment variables, systemd timers/services, server info, nginx notes.
+- **`private/gotchas.md`** — Known gotchas (EDGAR quirks, psycopg3 patterns, PG migration notes, caching, alert dedup). Read this before touching any existing logic. Gitignored (not in the public repo) — contains operational detail.
+- **`private/ops.md`** — Environment variables, systemd timers/services, server info, nginx notes. Gitignored (not in the public repo) — contains server IP and infra detail.
 - **`docs/architecture.md`** — DB schema, concurrency model, dashboard features list.
 
 ## Stack
