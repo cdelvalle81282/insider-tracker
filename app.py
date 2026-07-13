@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import statistics
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -934,9 +935,18 @@ async def chart_view(
                     "text":     label,
                 })
 
-    # Build marker list for Lightweight Charts
+    # Build marker list for Lightweight Charts.
+    # Group same-day, same-direction transactions into a single marker -- tickers
+    # with a repeat institutional filer (e.g. many same-day 10b5-1 sale lines)
+    # would otherwise stack one full-text label per transaction on the same
+    # candle. Above MAX_LABELED_MARKERS, drop per-marker text entirely (arrows
+    # only) -- a systematic seller trading near-daily for months (common for
+    # PE sponsors post-lockup) still produces one marker per day, and adjacent
+    # days' text labels overlap into an unreadable wall even without same-day
+    # dupes. Full detail always remains in the transaction table below.
+    MAX_LABELED_MARKERS = 25
     code_filter = {"buys": ["P"], "sells": ["S"], "both": ["P", "S"]}.get(mode, ["P", "S"])
-    markers = []
+    marker_groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for f in filings:
         if f.get("transaction_code") not in code_filter:
             continue
@@ -945,16 +955,30 @@ async def chart_view(
             continue
         if hasattr(tx_date, "isoformat"):
             tx_date = tx_date.isoformat()
-        is_buy = f.get("transaction_code") == "P"
-        label_parts = [f.get("insider_name", "")]
-        if f.get("total_value_fmt"):
-            label_parts.append(f["total_value_fmt"])
+        marker_groups[(tx_date, f["transaction_code"])].append(f)
+
+    show_labels = len(marker_groups) <= MAX_LABELED_MARKERS
+    markers = []
+    for (tx_date, code), group in marker_groups.items():
+        is_buy = code == "P"
+        text = ""
+        if show_labels:
+            if len(group) == 1:
+                label_parts = [group[0].get("insider_name", "")]
+                if group[0].get("total_value_fmt"):
+                    label_parts.append(group[0]["total_value_fmt"])
+                text = " ".join(label_parts)
+            else:
+                names = sorted({g.get("insider_name", "") for g in group if g.get("insider_name")})
+                total = sum(g.get("total_value") or 0 for g in group)
+                extra = f" +{len(names) - 1} more" if len(names) > 1 else f" ({len(group)}x)"
+                text = f"{names[0]}{extra} {queries._fmt_value(total)}".strip()
         markers.append({
             "time":     tx_date,
             "position": "belowBar" if is_buy else "aboveBar",
             "color":    "#22c55e" if is_buy else "#ef4444",
             "shape":    "arrowUp" if is_buy else "arrowDown",
-            "text":     " ".join(label_parts),
+            "text":     text,
         })
 
     watched = queries.watched_tickers(db)
