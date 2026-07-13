@@ -955,7 +955,7 @@ def get_cluster_activity(
     cluster_tickers = [r["issuer_ticker"] for r in rows]
     ticker_placeholders = ",".join(["%s"] * len(cluster_tickers))
     all_tx = conn.execute(f"""
-        SELECT transaction_id, insider_name, insider_title,
+        SELECT transaction_id, insider_cik, insider_name, insider_title,
                transaction_code, shares, price_per_share, total_value, is_10b5_1,
                issuer_ticker
         FROM filings
