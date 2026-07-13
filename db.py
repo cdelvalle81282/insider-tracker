@@ -55,12 +55,17 @@ def _get_pool() -> ConnectionPool:
 
 def get_db() -> psycopg.Connection:
     """
-    Get a connection from the pool. Caller must close() it when done.
-    psycopg_pool's PoolConnection.close() returns the connection to the pool
-    rather than tearing it down -- drop-in replacement for the old
-    `sqlite3.Connection.close()` pattern.
+    Get a connection from the pool. Caller must release it via put_db() when done.
+    Calling conn.close() instead only kills the physical connection -- it does NOT
+    notify the pool, so the pool's in-use slot is never freed. That silently depletes
+    max_size over time (each leaked call permanently loses one slot for that worker).
     """
     return _get_pool().getconn()
+
+
+def put_db(conn: psycopg.Connection) -> None:
+    """Return a connection acquired via get_db() to the pool."""
+    _get_pool().putconn(conn)
 
 
 def get_cli_db() -> psycopg.Connection:

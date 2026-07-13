@@ -37,7 +37,7 @@ from backtest import (
     detect_resistance_break,
 )
 from config import PAGE_SIZE, save_overrides
-from db import get_db, get_request_db
+from db import get_db, get_request_db, put_db
 from queries import EnrichContext
 
 BASE_DIR = Path(__file__).parent
@@ -366,7 +366,7 @@ async def index(
                 cached_sectors = _get_all_sectors_cached(db)
             all_sectors = cached_sectors
         finally:
-            db.close()
+            put_db(db)
     else:
         buys, sells, buy_count, sell_count = cached_result
         daily_summary = []
@@ -526,7 +526,7 @@ async def htmx_filings(
                 if summary_mode else []
             )
         finally:
-            db.close()
+            put_db(db)
     else:
         buys, sells, buy_count, sell_count = cached_result
         daily_summary = []
@@ -608,7 +608,7 @@ async def htmx_stats(
 
             stats, prev_stats = await asyncio.to_thread(_fetch_stats_pair)
         finally:
-            db.close()
+            put_db(db)
         html = templates.env.get_template("_stats_partial.html").render(
             {"stats": stats, "prev_stats": prev_stats}
         )
@@ -656,7 +656,7 @@ async def htmx_clusters(
                 codes=effective_codes,
             )
         finally:
-            db.close()
+            put_db(db)
         html = templates.env.get_template("_clusters_partial.html").render({"clusters": clusters})
         cache_module.cache_set(f"it:clusters:{ckey}", pre_mtime, html)
 
@@ -678,7 +678,7 @@ async def htmx_top_signals(request: Request):
         try:
             signals = await asyncio.to_thread(queries.get_top_signals_today, db)
         finally:
-            db.close()
+            put_db(db)
         html = templates.env.get_template("_top_signals.html").render({"signals": signals})
         cache_module.cache_set(skey, pre_mtime, html)
     return HTMLResponse(html)
@@ -1225,7 +1225,7 @@ async def tickers_list(request: Request):
     try:
         tickers = queries.get_ticker_list(db)
     finally:
-        db.close()
+        put_db(db)
     cache_module.cache_set("it:tickers-list", pre_mtime, tickers)
     return JSONResponse(tickers)
 
