@@ -114,6 +114,7 @@ PRICE_CORRUPTION_ALLOWLIST = {
     "GWW",     # W.W. Grainger ~$1,000-1,100/share
     "TDG",     # TransDigm Group ~$1,200-1,400/share
     "NEN",     # New England Realty Associates LP — Units of Partnership Interest ~$1,900+/unit, not common stock
+    "OWPC",    # One World Products — Series C Special Preferred Stock issued in a private comp settlement, ~$4,865/share; not open-market-traded
 }
 
 TICKER_CACHE_DAYS = 7
