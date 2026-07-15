@@ -113,6 +113,7 @@ PRICE_CORRUPTION_ALLOWLIST = {
     "EQIX",    # Equinix ~$900-1,100/share
     "GWW",     # W.W. Grainger ~$1,000-1,100/share
     "TDG",     # TransDigm Group ~$1,200-1,400/share
+    "NEN",     # New England Realty Associates LP — Units of Partnership Interest ~$1,900+/unit, not common stock
 }
 
 TICKER_CACHE_DAYS = 7
