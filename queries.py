@@ -59,11 +59,17 @@ def _sanitize_codes(codes: list[str] | None) -> tuple[list[str], str]:
 def _fmt_value(v: float | None) -> str:
     if v is None:
         return ""
-    if abs(v) >= 1_000_000:
-        return f"${v/1_000_000:.1f}M"
-    if abs(v) >= 1_000:
-        return f"${v/1_000:.0f}K"
-    return f"${v:,.0f}"
+    sign = "-" if v < 0 else ""
+    av = abs(v)
+    if av >= 1_000_000_000_000:
+        return f"{sign}${av/1_000_000_000_000:,.2f}T"
+    if av >= 1_000_000_000:
+        return f"{sign}${av/1_000_000_000:,.2f}B"
+    if av >= 1_000_000:
+        return f"{sign}${av/1_000_000:,.1f}M"
+    if av >= 1_000:
+        return f"{sign}${av/1_000:,.0f}K"
+    return f"{sign}${av:,.0f}"
 
 
 def _relative_time(ts: str | None) -> str:

@@ -53,6 +53,7 @@ def _replace_filter(filters: dict, key: str, value) -> str:
 
 
 templates.env.filters["replace_filter"] = _replace_filter
+templates.env.filters["fmt_value"] = queries._fmt_value
 
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _CIK_RE = re.compile(r"^\d{1,10}$")

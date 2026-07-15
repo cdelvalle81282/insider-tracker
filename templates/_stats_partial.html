@@ -28,7 +28,7 @@
     {% if prev_stats is defined and prev_stats %}
     {% set delta_flow = stats.net_flow - prev_stats.net_flow %}
     <div style="font-size:.55rem;margin-top:3px;color:{% if delta_flow > 0 %}var(--buy){% elif delta_flow < 0 %}var(--sell){% else %}var(--text-3){% endif %};">
-      {% if delta_flow >= 0 %}+{% endif %}{{ "{:.0f}".format(delta_flow / 1000) }}K vs prev
+      {% if delta_flow >= 0 %}+{% endif %}{{ delta_flow|fmt_value }} vs prev
     </div>
     {% endif %}
   </div>
