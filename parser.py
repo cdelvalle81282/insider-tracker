@@ -12,6 +12,8 @@ from typing import Any
 
 from lxml import etree
 
+from config import PRICE_CORRUPTION_ALLOWLIST, PRICE_CORRUPTION_THRESHOLD
+
 _EXCHANGE_PREFIXES = frozenset({"NYSE", "NASDAQ", "AMEX", "ASX", "LSE", "TSX", "OTC", "OTCBB", "CBOE"})
 _INVALID_TICKERS = frozenset({"NONE", "N/A", "NA", "N A", "-", "--", "TBD", "UNKNOWN", "N/A."})
 _VALID_TICKER_RE = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2})?$")
@@ -76,6 +78,29 @@ def _float(el: etree._Element | None, tag: str) -> float | None:
 def _int_flag(el: etree._Element | None, tag: str) -> int:
     val = _text(el, tag, "0")
     return 1 if val and val.upper() in ("1", "TRUE", "YES", "Y") else 0
+
+
+def correct_price_corruption(
+    shares: float | None, price: float | None, ticker: str | None
+) -> tuple[float | None, float | None]:
+    """Detect and correct the 'total value stored as per-share price' filer error.
+
+    Some filers put an aggregate amount (debt principal, total proceeds, a
+    merger reference figure) in transactionPricePerShare instead of a real
+    per-share price. If price looks implausible for a per-share value, recover
+    the true price by dividing by shares when that yields a plausible ratio
+    (price WAS the total); otherwise null both fields rather than propagate a
+    nonsensical total_value. See PRICE_CORRUPTION_THRESHOLD in config.py.
+
+    Returns (price_per_share, total_value).
+    """
+    if price is None:
+        return None, None
+    if price <= PRICE_CORRUPTION_THRESHOLD or (ticker and ticker in PRICE_CORRUPTION_ALLOWLIST):
+        return price, (shares * price) if shares is not None else None
+    if shares and 0.001 <= price / shares <= 100_000:
+        return price / shares, price  # price WAS the total value
+    return None, None
 
 
 def _collect_footnotes(root: etree._Element) -> str:
@@ -145,8 +170,15 @@ def _build_row(
     ownership_nature = tx.find("ownershipNature")
 
     shares = _float(amounts, "transactionShares")
-    price = _float(amounts, "transactionPricePerShare")
-    total_value = (shares * price) if (shares is not None and price is not None) else None
+    raw_price = _float(amounts, "transactionPricePerShare")
+    if table_type == "ND":
+        # Derivative price_per_share is an exercise/conversion price, not a
+        # transaction price — the corruption check only applies to non-derivative
+        # (open-market-style) transactions. See gotchas.md.
+        price, total_value = correct_price_corruption(shares, raw_price, issuer.get("issuer_ticker"))
+    else:
+        price = raw_price
+        total_value = (shares * raw_price) if (shares is not None and raw_price is not None) else None
 
     return {
         "transaction_id": transaction_id,

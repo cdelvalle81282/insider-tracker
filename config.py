@@ -83,6 +83,38 @@ POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
 SEC_USER_AGENT = "Option Pit Research charlie@optionpit.com"
 SEC_RATE_LIMIT = 8  # requests per second — SEC cap is 10; stay safely under
 
+# Some filers put an aggregate amount (debt principal, total proceeds, a merger
+# reference figure) in transactionPricePerShare instead of a real per-share
+# price — see the "Corrupt price_per_share" and "note/debt aggregate-as-price"
+# entries in private/gotchas.md. No ordinary common/preferred stock trades
+# above this threshold except the names in PRICE_CORRUPTION_ALLOWLIST, so
+# price_per_share above it is treated as suspect: recovered by dividing by
+# shares when that yields a plausible per-share price, otherwise nulled along
+# with total_value. Shared by parser.py (at ingest) and fix_corrupt_prices.py
+# (historical backfill) — keep both in sync with this constant.
+PRICE_CORRUPTION_THRESHOLD = 1000
+
+PRICE_CORRUPTION_ALLOWLIST = {
+    "BRK.A",   # ~$730K/share
+    "BRK.B",   # ~$490/share
+    "NVR",     # ~$7-8K/share
+    "BKNG",    # ~$4-6K/share
+    "AZO",     # ~$3-4K/share
+    "FICO",    # ~$1.2-2.2K/share
+    "MELI",    # ~$1.7-2K/share
+    "FIX",     # ~$1-2K/share
+    "MKL",     # ~$1.8-2.1K/share
+    "FCNCA",   # ~$1-2K/share
+    "WTM",     # ~$2K/share
+    "MNTR",    # uncertain — exclude to be safe
+    "ECDA",    # uncertain — exclude to be safe
+    "FROG",    # uncertain — exclude to be safe
+    "TPL",     # Texas Pacific Land ~$1,000-1,400/share
+    "EQIX",    # Equinix ~$900-1,100/share
+    "GWW",     # W.W. Grainger ~$1,000-1,100/share
+    "TDG",     # TransDigm Group ~$1,200-1,400/share
+}
+
 TICKER_CACHE_DAYS = 7
 
 PAGE_SIZE = 25

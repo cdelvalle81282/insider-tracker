@@ -1,8 +1,9 @@
 """
 fix_corrupt_prices.py — Correct price_per_share corruption in the filings table.
 
-Bug: for certain transactions, the parser stored (shares × actual_price) in
-price_per_share instead of actual_price.  This makes:
+Bug: some filers put an aggregate amount (debt principal, total proceeds, a
+merger reference figure) in transactionPricePerShare instead of a real
+per-share price. This makes:
   - price_per_share  = total transaction value  (should be per-share price)
   - total_value      = shares²  × actual_price  (completely wrong)
 
@@ -12,6 +13,10 @@ Fix:
 
 Rows where the corrected price is implausible (shares=0 or still >$100K) are
 NULLed out rather than written with a bad number.
+
+`parser.correct_price_corruption()` applies this same logic automatically at
+ingest time for all new filings — this script is for backfilling rows ingested
+before that check existed, or after PRICE_CORRUPTION_ALLOWLIST changes.
 
 Usage:
   python fix_corrupt_prices.py            # dry-run, prints summary
@@ -24,34 +29,13 @@ import sys
 
 from dotenv import load_dotenv
 
+from config import PRICE_CORRUPTION_ALLOWLIST, PRICE_CORRUPTION_THRESHOLD
 from db import get_cli_db
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Stocks whose high share prices are legitimate — never touch these rows.
-# ---------------------------------------------------------------------------
-LEGITIMATE_HIGH_PRICE = {
-    "BRK.A",   # ~$730K/share
-    "BRK.B",   # ~$490/share
-    "NVR",     # ~$7-8K/share
-    "BKNG",    # ~$4-6K/share
-    "AZO",     # ~$3-4K/share
-    "FICO",    # ~$1.2-2.2K/share
-    "MELI",    # ~$1.7-2K/share
-    "FIX",     # ~$1-2K/share
-    "MKL",     # ~$1.8-2.1K/share
-    "FCNCA",   # ~$1-2K/share
-    "WTM",     # ~$2K/share
-    "MNTR",    # uncertain — exclude to be safe
-    "ECDA",    # uncertain — exclude to be safe
-    "FROG",    # uncertain — exclude to be safe
-    # Legitimate high-priced stocks discovered after initial run
-    "TPL",     # Texas Pacific Land ~$1,000-1,400/share
-    "EQIX",    # Equinix ~$900-1,100/share
-    "GWW",     # W.W. Grainger ~$1,000-1,100/share
-    "TDG",     # TransDigm Group ~$1,200-1,400/share
-}
+# Kept as an alias for backward compatibility with anything importing this name.
+LEGITIMATE_HIGH_PRICE = PRICE_CORRUPTION_ALLOWLIST
 
 # SQL placeholder list for the exclusion set.
 # psycopg3 uses %s placeholders; we build one per ticker.
@@ -61,11 +45,15 @@ _EXCLUDE_PARAMS = tuple(sorted(LEGITIMATE_HIGH_PRICE))
 # ---------------------------------------------------------------------------
 # SQL — shared WHERE predicate parts (excluding the phase-specific condition)
 # ---------------------------------------------------------------------------
+# NOTE: not restricted to transaction_code IN ('P','S') — the same filer
+# error (aggregate amount stored in price_per_share) also shows up on 'A'/
+# 'F'/'J'/etc. coded non-derivative rows. table_type='ND' is still required:
+# derivative price_per_share is an exercise/conversion price, a different
+# semantic entirely (see gotchas.md).
 _COMMON_WHERE = f"""
-    price_per_share > 1000
+    price_per_share > {PRICE_CORRUPTION_THRESHOLD}
     AND issuer_ticker NOT IN ({_EXCLUDE_PLACEHOLDERS})
     AND superseded_by IS NULL
-    AND transaction_code IN ('P', 'S')
     AND table_type = 'ND'
 """
 
@@ -138,15 +126,8 @@ _PHASE2_UPDATE_SQL = """
     WHERE
 """ + _COMMON_WHERE + _PHASE2_EXTRA
 
-# Verification query: how many >$1000 rows remain outside the exclusion list?
-_VERIFY_SQL = f"""
-    SELECT COUNT(*) AS n FROM filings
-    WHERE price_per_share > 1000
-      AND issuer_ticker NOT IN ({_EXCLUDE_PLACEHOLDERS})
-      AND superseded_by IS NULL
-      AND transaction_code IN ('P', 'S')
-      AND table_type = 'ND'
-"""
+# Verification query: how many rows above the threshold remain outside the exclusion list?
+_VERIFY_SQL = "SELECT COUNT(*) AS n FROM filings WHERE" + _COMMON_WHERE
 
 
 def _fmt_price(val: float | None) -> str:
@@ -223,10 +204,10 @@ def run_apply(conn) -> None:
     row = conn.execute(_VERIFY_SQL, _EXCLUDE_PARAMS).fetchone()
     remaining = row["n"]
     if remaining == 0:
-        print("Verification passed: 0 rows with price_per_share > 1000 remain outside exclusion list.")
+        print(f"Verification passed: 0 rows with price_per_share > {PRICE_CORRUPTION_THRESHOLD} remain outside exclusion list.")
     else:
         print(
-            f"WARNING: {remaining:,} rows with price_per_share > 1000 still remain outside "
+            f"WARNING: {remaining:,} rows with price_per_share > {PRICE_CORRUPTION_THRESHOLD} still remain outside "
             "the exclusion list. Manual review required."
         )
         sys.exit(1)

@@ -601,7 +601,6 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             _write_sentinel()
             return
 
-
         if backfill_sectors:
             ciks = [r["issuer_cik"] for r in conn.execute(
                 "SELECT DISTINCT issuer_cik FROM filings WHERE sector IS NULL"
