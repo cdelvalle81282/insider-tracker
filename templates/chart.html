@@ -7,7 +7,7 @@
 <div class="flex flex-wrap items-center justify-between gap-4 mb-5">
   <div class="flex items-center gap-4">
     <h1 style="font-family:'JetBrains Mono',monospace;font-size:1.6rem;font-weight:700;color:var(--text-1);letter-spacing:.04em;">${{ ticker }}</h1>
-    <a href="/issuer/{{ ticker }}" style="font-size:.65rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);transition:color .12s;" class="hover:text-sky-400">All transactions →</a>
+    <a href="/issuer/{{ ticker }}" style="font-size:.76rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);transition:color .12s;" class="hover:text-sky-400">All transactions →</a>
     {% set watched = is_watched if is_watched is defined else false %}
     <button class="watch-star btn-ghost"
       hx-post="/watchlist/toggle"
@@ -17,9 +17,9 @@
       hx-on::after-request="_toggleChartWatch(this)"
       title="{{ 'Unwatch' if watched else 'Watch this ticker' }}"
       style="display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;
-             color:{{ 'var(--amber)' if watched else 'var(--text-2)' }};background:transparent;border:1px solid rgba(255,255,255,.08);border-radius:4px;cursor:pointer;font-size:.72rem;">
+             color:{{ 'var(--amber)' if watched else 'var(--text-2)' }};background:transparent;border:1px solid rgba(255,255,255,.08);border-radius:4px;cursor:pointer;font-size:.82rem;">
       <span>{{ '★' if watched else '☆' }}</span>
-      <span style="font-size:.62rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;">
+      <span style="font-size:.74rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;">
         {{ 'Watching' if watched else 'Watch' }}
       </span>
     </button>
@@ -49,8 +49,8 @@
 <!-- No API key warning -->
 {% if not has_api_key %}
 <div class="warn-banner mb-5">
-  <p style="color:var(--amber);font-size:.78rem;font-weight:600;margin-bottom:4px;">Polygon.io API key not configured</p>
-  <p style="color:rgba(245,158,11,.5);font-size:.72rem;">
+  <p style="color:var(--amber);font-size:.88rem;font-weight:600;margin-bottom:4px;">Polygon.io API key not configured</p>
+  <p style="color:rgba(245,158,11,.5);font-size:.82rem;">
     Add <code style="color:var(--amber);">POLYGON_API_KEY=your_key</code> to
     <code style="color:var(--amber);">/home/deploy/insider-tracker/.env</code> on the server, then restart.
   </p>
@@ -62,14 +62,14 @@
   {% if has_api_key %}
   <div id="chart" class="w-full" style="height:420px;"></div>
   {% else %}
-  <div style="display:flex;align-items:center;justify-content:center;height:240px;color:var(--text-3);font-size:.8rem;">
+  <div style="display:flex;align-items:center;justify-content:center;height:240px;color:var(--text-3);font-size:.90rem;">
     Price chart unavailable — API key required
   </div>
   {% endif %}
 </div>
 
 {% if has_api_key %}
-<div class="flex items-center flex-wrap gap-x-5 gap-y-1 mb-4 px-1" style="font-size:.62rem;color:var(--text-3);">
+<div class="flex items-center flex-wrap gap-x-5 gap-y-1 mb-4 px-1" style="font-size:.74rem;color:var(--text-3);">
   <span style="font-weight:600;letter-spacing:.1em;text-transform:uppercase;">Legend</span>
   <span><span style="color:#f59e0b;font-weight:700;">—</span> 50 MA</span>
   <span><span style="color:#38bdf8;font-weight:700;">—</span> 200 MA</span>
@@ -87,31 +87,31 @@
 <!-- Earnings card -->
 <div class="surface mb-5" style="padding:12px 18px;display:flex;flex-wrap:wrap;align-items:center;gap:16px;">
   <div class="flex items-center gap-3">
-    <span style="font-size:.58rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);">Earnings Est.</span>
+    <span style="font-size:.70rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--text-3);">Earnings Est.</span>
     {% if earnings %}
       {% if earnings.days_until >= 0 and earnings.days_until <= 30 %}
-      <span style="color:var(--amber);font-weight:600;font-size:.85rem;">
+      <span style="color:var(--amber);font-weight:600;font-size:.94rem;">
         ⚠ {{ earnings.estimated_next }}
-        <span style="color:rgba(245,158,11,.5);font-weight:400;font-size:.72rem;">({{ earnings.days_until }}d away)</span>
+        <span style="color:rgba(245,158,11,.5);font-weight:400;font-size:.82rem;">({{ earnings.days_until }}d away)</span>
       </span>
       {% elif earnings.days_until > 30 and earnings.days_until <= 90 %}
-      <span class="num" style="color:var(--text-1);font-size:.82rem;">
+      <span class="num" style="color:var(--text-1);font-size:.92rem;">
         {{ earnings.estimated_next }}
-        <span style="color:var(--text-2);font-size:.7rem;">({{ earnings.days_until }}d)</span>
+        <span style="color:var(--text-2);font-size:.80rem;">({{ earnings.days_until }}d)</span>
       </span>
       {% else %}
-      <span class="num" style="color:var(--text-2);font-size:.82rem;">{{ earnings.estimated_next }}</span>
+      <span class="num" style="color:var(--text-2);font-size:.92rem;">{{ earnings.estimated_next }}</span>
       {% endif %}
-      <span class="num" style="font-size:.65rem;color:var(--text-3);">· Last: {{ earnings.fiscal_period }} {{ earnings.fiscal_year }} ({{ earnings.last_period }})</span>
+      <span class="num" style="font-size:.76rem;color:var(--text-3);">· Last: {{ earnings.fiscal_period }} {{ earnings.fiscal_year }} ({{ earnings.last_period }})</span>
     {% else %}
-    <span style="color:var(--text-3);font-size:.8rem;">No Polygon data</span>
+    <span style="color:var(--text-3);font-size:.90rem;">No Polygon data</span>
     {% endif %}
   </div>
   <div class="flex items-center gap-4 ml-auto">
     <a href="https://finance.yahoo.com/calendar/earnings?symbol={{ ticker }}" target="_blank" rel="noopener"
-       style="font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);" class="hover:text-white transition-colors">Yahoo Finance ↗</a>
+       style="font-size:.76rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);" class="hover:text-white transition-colors">Yahoo Finance ↗</a>
     <a href="https://www.earningswhispers.com/stocks/{{ ticker | lower }}" target="_blank" rel="noopener"
-       style="font-size:.65rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);" class="hover:text-white transition-colors">EW ↗</a>
+       style="font-size:.76rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);" class="hover:text-white transition-colors">EW ↗</a>
   </div>
 </div>
 
@@ -122,7 +122,7 @@
       <span class="sh-dot" style="background:{% if mode == 'sells' %}var(--sell){% else %}var(--buy){% endif %};"></span>
       Insider Transactions
     </span>
-    <span class="num" style="font-size:.62rem;color:var(--text-3);">
+    <span class="num" style="font-size:.74rem;color:var(--text-3);">
       ({{ filings | selectattr('transaction_code', 'in', code_filter) | list | length }})
     </span>
   </div>
@@ -146,18 +146,18 @@
         {% for f in filings %}
         {% if f.transaction_code in code_filter %}
         <tr class="{% if f.transaction_code == 'P' %}row-buy{% else %}row-sell{% endif %} {% if f.is_10b5_1 %}row-dimmed{% endif %}">
-          <td class="td num" style="color:var(--text-2);white-space:nowrap;font-size:.72rem;">{{ f.transaction_date }}</td>
+          <td class="td num" style="color:var(--text-2);white-space:nowrap;font-size:.82rem;">{{ f.transaction_date }}</td>
           <td class="td text-center">
             {% if f.transaction_code == 'P' %}
-            <span style="color:var(--buy);font-size:.65rem;font-weight:700;letter-spacing:.06em;">▲ BUY</span>
+            <span style="color:var(--buy);font-size:.76rem;font-weight:700;letter-spacing:.06em;">▲ BUY</span>
             {% else %}
-            <span style="color:var(--sell);font-size:.65rem;font-weight:700;letter-spacing:.06em;">▼ SELL</span>
+            <span style="color:var(--sell);font-size:.76rem;font-weight:700;letter-spacing:.06em;">▼ SELL</span>
             {% endif %}
           </td>
-          <td class="td" style="font-size:.78rem;">
+          <td class="td" style="font-size:.88rem;">
             <a href="/insider/{{ f.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);">{{ f.insider_name }}</a>
           </td>
-          <td class="td" style="color:var(--text-2);font-size:.72rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.insider_title or '—' }}</td>
+          <td class="td" style="color:var(--text-2);font-size:.82rem;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ f.insider_title or '—' }}</td>
           <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(f.shares) if f.shares else '—' }}</td>
           <td class="td num text-right" style="color:var(--text-2);">{{ f.price_fmt or '—' }}</td>
           <td class="td num text-right font-bold" style="color:{% if f.transaction_code == 'P' %}var(--buy){% else %}var(--sell){% endif %};">{{ f.total_value_fmt or '—' }}</td>
@@ -172,7 +172,7 @@
         </tr>
         {% endif %}
         {% else %}
-        <tr><td colspan="9" style="padding:32px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No transactions in this range</td></tr>
+        <tr><td colspan="9" style="padding:32px 12px;text-align:center;color:var(--text-3);font-size:.90rem;">No transactions in this range</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -191,7 +191,7 @@
 
   if (!bars.length) {
     const noData = document.createElement('div');
-    noData.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3);font-size:.8rem;';
+    noData.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-3);font-size:.90rem;';
     noData.textContent = 'No price data available for $' + {{ ticker | tojson }};
     el.appendChild(noData);
     return;

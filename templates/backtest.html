@@ -9,7 +9,7 @@
   <h1 style="font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:.15em; color:var(--text-1);">
     Backtest: Insider Buy → Trend Signals
   </h1>
-  <p style="font-size:.78rem; color:var(--text-2); margin-top:4px;">
+  <p style="font-size:.88rem; color:var(--text-2); margin-top:4px;">
     {% if not running %}
       {{ summary.total | default(0) }} trades scored &mdash; returns measured at 15d / 30d / 45d / 60d / 90d post-trade
     {% else %}
@@ -22,7 +22,7 @@
 {% if running %}
 <div class="warn-banner flex items-center gap-3">
   <span style="width:8px;height:8px;border-radius:50%;background:var(--amber);display:inline-block;flex-shrink:0;" class="animate-ping"></span>
-  <span style="font-size:.8rem; color:var(--amber); font-weight:500;">
+  <span style="font-size:.90rem; color:var(--amber); font-weight:500;">
     Backtest still running — check back in a few minutes.
   </span>
 </div>
@@ -110,13 +110,13 @@
       {% for n in [2, 3, 4] %}
       {% set entry = sdata[n] if n in sdata else {} %}
       <div style="background:var(--bg-raised); border:1px solid var(--border); border-radius:8px; padding:8px 14px; min-width:130px;">
-        <div style="font-size:.58rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--text-3); margin-bottom:4px;">
+        <div style="font-size:.70rem; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--text-3); margin-bottom:4px;">
           {{ n }}+ Signals
         </div>
         <div class="num" style="font-size:.9rem; color:var(--text-1);">
           {{ entry.get('count', 0) }} trades
         </div>
-        <div class="num" style="font-size:.75rem; margin-top:2px;">
+        <div class="num" style="font-size:.85rem; margin-top:2px;">
           {% if entry.get('avg_return') is not none %}
           avg
           <span style="color:{% if (entry.avg_return or 0) >= 0 %}var(--buy){% else %}var(--sell){% endif %}; font-weight:600;">
@@ -152,23 +152,23 @@
   <div class="fg gap-3">
     <span class="fg-label">Signals</span>
     <div class="fg-sep"></div>
-    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+    <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;color:var(--text-2);cursor:pointer;">
       <input type="checkbox" id="f-gc"  onchange="applyFilters()" style="accent-color:var(--sky);"> GC
     </label>
-    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+    <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;color:var(--text-2);cursor:pointer;">
       <input type="checkbox" id="f-rb"  onchange="applyFilters()" style="accent-color:var(--sky);"> RB
     </label>
-    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+    <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;color:var(--text-2);cursor:pointer;">
       <input type="checkbox" id="f-hhl" onchange="applyFilters()" style="accent-color:var(--sky);"> HHL
     </label>
-    <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+    <label style="display:flex;align-items:center;gap:5px;font-size:.82rem;color:var(--text-2);cursor:pointer;">
       <input type="checkbox" id="f-cb"  onchange="applyFilters()" style="accent-color:var(--sky);"> CB
     </label>
   </div>
 
   {# Hide 10b5-1 #}
   <div class="fg">
-    <label style="display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--text-2);cursor:pointer;">
+    <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--text-2);cursor:pointer;">
       <input type="checkbox" id="f-hide10b5" checked onchange="applyFilters()" style="accent-color:var(--sky);">
       Hide 10b5-1
     </label>
@@ -203,39 +203,39 @@
     <thead>
       <tr>
         <th class="th sort text-left" data-col="ticker" onclick="sortBy('ticker')">
-          Ticker <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Ticker <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-left" data-col="trade_date" onclick="sortBy('trade_date')">
-          Date <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Date <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-left" data-col="insider_name" onclick="sortBy('insider_name')">
-          Insider <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Insider <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th text-left">Title</th>
         <th class="th sort text-right" data-col="value" onclick="sortBy('value')">
-          Value <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Value <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th text-center" style="color:var(--sky);" title="Golden Cross">GC</th>
         <th class="th text-center" style="color:var(--sky);" title="Resistance Break">RB</th>
         <th class="th text-center" style="color:var(--sky);" title="HH + HL">HHL</th>
         <th class="th text-center" style="color:var(--sky);" title="Channel Break">CB</th>
         <th class="th sort text-center" data-col="stacked" onclick="sortBy('stacked')" title="Stacked signal count">
-          Stack <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Stack <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-right" data-col="ret15" onclick="sortBy('ret15')">
-          Ret 15d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Ret 15d <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-right" data-col="ret30" onclick="sortBy('ret30')">
-          Ret 30d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Ret 30d <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-right" data-col="ret45" onclick="sortBy('ret45')">
-          Ret 45d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Ret 45d <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-right" data-col="ret60" onclick="sortBy('ret60')">
-          Ret 60d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Ret 60d <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
         <th class="th sort text-right" data-col="ret90" onclick="sortBy('ret90')">
-          Ret 90d <span class="sort-ind num" style="font-size:.6rem; color:var(--text-3);"></span>
+          Ret 90d <span class="sort-ind num" style="font-size:.72rem; color:var(--text-3);"></span>
         </th>
       </tr>
     </thead>
@@ -247,28 +247,28 @@
         <td class="td">
           <a href="/chart/{{ row.ticker }}" class="ticker-link" style="color:var(--sky);">{{ row.ticker }}</a>
         </td>
-        <td class="td num" style="font-size:.72rem; color:var(--text-2); white-space:nowrap;">{{ row.trade_date }}</td>
-        <td class="td" style="font-size:.75rem; color:var(--text-1); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.insider_name }}">
+        <td class="td num" style="font-size:.82rem; color:var(--text-2); white-space:nowrap;">{{ row.trade_date }}</td>
+        <td class="td" style="font-size:.85rem; color:var(--text-1); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.insider_name }}">
           {{ row.insider_name }}
         </td>
-        <td class="td" style="font-size:.7rem; color:var(--text-2); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.title }}">
+        <td class="td" style="font-size:.80rem; color:var(--text-2); max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.title }}">
           {% if row.is_officer and row.is_director %}<span class="plan-badge">O+D</span>
           {% elif row.is_officer %}<span class="plan-badge">Officer</span>
           {% elif row.is_director %}<span class="plan-badge">Dir</span>{% endif %}
           {{ row.title }}
         </td>
-        <td class="td num text-right" style="font-size:.75rem; color:var(--text-1); white-space:nowrap;" data-cell="value"></td>
+        <td class="td num text-right" style="font-size:.85rem; color:var(--text-1); white-space:nowrap;" data-cell="value"></td>
         {# Signal cells — class="sig-cell" data-sig used by JS #}
         <td class="td text-center sig-cell" data-sig="gc"></td>
         <td class="td text-center sig-cell" data-sig="rb"></td>
         <td class="td text-center sig-cell" data-sig="hhl"></td>
         <td class="td text-center sig-cell" data-sig="cb"></td>
-        <td class="td text-center num" style="font-size:.75rem; font-weight:700;" data-cell="stack"></td>
-        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret15"></td>
-        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret30"></td>
-        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret45"></td>
-        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret60"></td>
-        <td class="td text-right num" style="font-size:.75rem; white-space:nowrap;" data-cell="ret90"></td>
+        <td class="td text-center num" style="font-size:.85rem; font-weight:700;" data-cell="stack"></td>
+        <td class="td text-right num" style="font-size:.85rem; white-space:nowrap;" data-cell="ret15"></td>
+        <td class="td text-right num" style="font-size:.85rem; white-space:nowrap;" data-cell="ret30"></td>
+        <td class="td text-right num" style="font-size:.85rem; white-space:nowrap;" data-cell="ret45"></td>
+        <td class="td text-right num" style="font-size:.85rem; white-space:nowrap;" data-cell="ret60"></td>
+        <td class="td text-right num" style="font-size:.85rem; white-space:nowrap;" data-cell="ret90"></td>
       </tr>
       {% else %}
       <tr id="empty-row">
@@ -279,7 +279,7 @@
   </table>
 </div>
 <div class="flex items-center justify-between mt-2 px-1">
-  <span id="row-count" style="font-size:.68rem; color:var(--text-3);"></span>
+  <span id="row-count" style="font-size:.78rem; color:var(--text-3);"></span>
 </div>
 
 {# ── Embedded row data for JS ─────────────────────────────────────── #}

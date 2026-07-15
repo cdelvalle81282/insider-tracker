@@ -142,10 +142,10 @@
   <div class="sh mb-4">
     <span class="sh-dot" style="background:var(--amber);"></span>
     <span style="color:var(--text-2);">Performance Leaderboard</span>
-    <span style="font-size:.6rem; color:var(--text-3); margin-left:8px;">90-day excess return vs SPY · from disclosure date · min 3 trades</span>
+    <span style="font-size:.72rem; color:var(--text-3); margin-left:8px;">90-day excess return vs SPY · from disclosure date · min 3 trades</span>
   </div>
   <div class="tbl-wrap">
-    <table class="w-full border-collapse" style="font-size:.72rem;">
+    <table class="w-full border-collapse" style="font-size:.82rem;">
       <thead>
         <tr>
           <th class="th" style="text-align:left;">Politician</th>
@@ -167,15 +167,14 @@
           </td>
           <td class="td" style="text-align:center;">
             {% if p.source == 'Executive' %}
-            <span style="font-size:.55rem; font-weight:700; padding:1px 5px; border-radius:3px;
-                         color:#a78bfa; background:rgba(167,139,250,.12); border:1px solid rgba(167,139,250,.3);">Exec</span>
+            <span class="exec-badge">Exec</span>
             {% else %}
-            <span style="font-size:.55rem; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em;">Cong</span>
+            <span style="font-size:.68rem; color:var(--text-3); text-transform:uppercase; letter-spacing:.06em;">Cong</span>
             {% endif %}
           </td>
           <td class="td" style="text-align:center;">
-            {% if 'Democrat' in (p.party or '') %}<span style="color:#60a5fa; font-size:.65rem; font-weight:600;">D</span>
-            {% elif 'Republican' in (p.party or '') %}<span style="color:#f87171; font-size:.65rem; font-weight:600;">R</span>
+            {% if 'Democrat' in (p.party or '') %}<span style="color:#60a5fa; font-size:.76rem; font-weight:600;">D</span>
+            {% elif 'Republican' in (p.party or '') %}<span style="color:#f87171; font-size:.76rem; font-weight:600;">R</span>
             {% else %}<span style="color:var(--text-3);">—</span>{% endif %}
           </td>
           <td class="td num" style="color:var(--text-2);">{{ p.n }}</td>
@@ -214,7 +213,7 @@
       <div class="flex items-center justify-between py-1" style="border-bottom:1px solid var(--border-dim);">
         <a href="/congress?ticker={{ item.ticker }}&days={{ filters.days }}"
            class="ticker-link" style="color:var(--sky);">{{ item.ticker }}</a>
-        <span class="num" style="color:var(--text-2); font-size:.75rem;">{{ item.count }}</span>
+        <span class="num" style="color:var(--text-2); font-size:.85rem;">{{ item.count }}</span>
       </div>
       {% endfor %}
     </div>
@@ -231,8 +230,8 @@
       {% for item in summary.top_politicians %}
       <div class="flex items-center justify-between py-1" style="border-bottom:1px solid var(--border-dim);">
         <a href="/congress?politician={{ item.name | urlencode }}&days={{ filters.days }}"
-           style="color:var(--text-1); font-size:.8rem; hover:color:var(--sky);">{{ item.name }}</a>
-        <span class="num" style="color:var(--text-2); font-size:.75rem;">{{ item.count }}</span>
+           style="color:var(--text-1); font-size:.90rem; hover:color:var(--sky);">{{ item.name }}</a>
+        <span class="num" style="color:var(--text-2); font-size:.85rem;">{{ item.count }}</span>
       </div>
       {% endfor %}
     </div>

@@ -2,7 +2,7 @@
 {% from "_macros.html" import watch_star %}
 {% macro pager(side, page, total_pages) %}
   {% if total_pages > 1 %}
-  <div class="pager" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;font-size:.72rem;color:var(--text-3);">
+  <div class="pager" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;font-size:.82rem;color:var(--text-3);">
     {% if page > 1 %}
     <button class="chip"
             hx-get="/htmx/filings?{{ filters | replace_filter(side ~ '_page', page - 1) }}"
@@ -30,7 +30,7 @@
       <span class="sh-dot" style="background:var(--text-2);"></span>
       Daily Summary
     </span>
-    <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:4px;">{{ range_start }} → {{ range_end }}</span>
+    <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:4px;">{{ range_start }} → {{ range_end }}</span>
   </summary>
   <div class="tbl-wrap">
     <table class="w-full ds-table">
@@ -50,7 +50,7 @@
         <tr style="border-top:1px solid var(--border-dim);">
           <td class="td">
             <a href="/?d={{ row.day }}" class="num hover:text-white transition-colors"
-               style="color:var(--text-2);font-size:.75rem;">{{ row.day }}</a>
+               style="color:var(--text-2);font-size:.85rem;">{{ row.day }}</a>
           </td>
           <td class="td num text-right" style="color:var(--buy);font-weight:600;">{{ row.buy_count or '—' }}</td>
           <td class="td num text-right" style="color:var(--buy);">{{ row.buy_total_fmt or '—' }}</td>
@@ -63,7 +63,7 @@
       </tbody>
     </table>
   </div>
-  <p style="font-size:.62rem;color:var(--text-3);margin-top:8px;">Click any date to view its individual transactions.</p>
+  <p style="font-size:.74rem;color:var(--text-3);margin-top:8px;">Click any date to view its individual transactions.</p>
 </details>
 {% endif %}
 
@@ -102,7 +102,7 @@
         <span class="sh-dot" style="background:var(--buy);"></span>
         Buys
       </span>
-      <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ buys|length }}{% if buy_count is defined and buy_count > buys|length %} of {{ buy_count }}{% endif %})</span>
+      <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:2px;">({{ buys|length }}{% if buy_count is defined and buy_count > buys|length %} of {{ buy_count }}{% endif %})</span>
     </summary>
     <div class="tbl-wrap">
       <table class="w-full">
@@ -128,7 +128,7 @@
               {% if row.conviction %}
               <span class="score score-{{ row.conviction_tier }}">{{ row.conviction }}</span>
               {% else %}
-              <span style="color:var(--text-3);font-size:.65rem;">—</span>
+              <span style="color:var(--text-3);font-size:.76rem;">—</span>
               {% endif %}
             </td>
             <td class="td">
@@ -140,14 +140,14 @@
               {% endif %}
             </td>
             <td class="td" style="max-width:130px;">
-              <div style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
-              {% if row.sector %}<div style="font-size:.6rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
+              <div style="font-size:.82rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
+              {% if row.sector %}<div style="font-size:.72rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
             </td>
-            <td class="td" style="font-size:.75rem;color:var(--text-1);">
+            <td class="td" style="font-size:.85rem;color:var(--text-1);">
               <a href="/insider/{{ row.insider_cik }}" class="hover:underline hover:text-sky-400">{{ row.insider_name }}</a>
               {{ watch_star('insider', row.insider_cik, row.insider_name, row.is_watched, font_size='.65rem', margin='3px') }}
             </td>
-            <td class="td" style="font-size:.7rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
+            <td class="td" style="font-size:.80rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
             <td class="td num text-right" data-col="shares" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="td num text-right" data-col="held-after" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
@@ -161,7 +161,7 @@
             </td>
             <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}" data-col="pct-held">{{ row.pct_holdings or '—' }}</td>
             <td class="td text-right" style="white-space:nowrap;">
-              <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
+              <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.80rem;color:var(--text-3);">{{ row.filed_rel }}</a>
               {% if row.disclosure_lag is not none %}
               <div class="lag-badge lag-{% if row.disclosure_lag <= 2 %}hot{% elif row.disclosure_lag <= 10 %}warm{% else %}late{% endif %}"
                    title="{{ row.disclosure_lag }} days between trade and filing">
@@ -171,7 +171,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="11" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No buys matching current filters</td></tr>
+          <tr><td colspan="11" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.90rem;">No buys matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -188,14 +188,14 @@
             {% endif %}
             {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;">{{ row.conviction }}</span>{% endif %}
           </div>
-          <span class="num" style="color:var(--buy);font-weight:700;font-size:.85rem;">{{ row.total_value_fmt or '—' }}</span>
+          <span class="num" style="color:var(--buy);font-weight:700;font-size:.94rem;">{{ row.total_value_fmt or '—' }}</span>
         </div>
-        <div style="font-size:.72rem;color:var(--text-2);margin-bottom:3px;">{{ row.issuer_name }}</div>
-        <div style="font-size:.72rem;color:var(--text-1);">
+        <div style="font-size:.82rem;color:var(--text-2);margin-bottom:3px;">{{ row.issuer_name }}</div>
+        <div style="font-size:.82rem;color:var(--text-1);">
           <a href="/insider/{{ row.insider_cik }}" style="color:var(--text-1);">{{ row.insider_name }}</a>
           {% if row.insider_title %}<span style="color:var(--text-3);"> · {{ row.insider_title }}</span>{% endif %}
         </div>
-        <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;">
+        <div style="font-size:.74rem;color:var(--text-3);margin-top:4px;">
           <a href="/filing/{{ row.transaction_id }}" style="color:var(--text-3);">{{ row.filed_rel }}</a>
         </div>
       </div>
@@ -214,7 +214,7 @@
         <span class="sh-dot" style="background:var(--sell);"></span>
         Sells
       </span>
-      <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ sells|length }}{% if sell_count is defined and sell_count > sells|length %} of {{ sell_count }}{% endif %})</span>
+      <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:2px;">({{ sells|length }}{% if sell_count is defined and sell_count > sells|length %} of {{ sell_count }}{% endif %})</span>
     </summary>
     <div class="tbl-wrap">
       <table class="w-full">
@@ -237,7 +237,7 @@
         <tbody>
           {% for row in sells %}
           <tr class="row-sell {% if row.is_10b5_1 %}row-dimmed{% endif %}">
-            <td class="td text-right" style="width:36px;color:var(--text-3);font-size:.65rem;">—</td>
+            <td class="td text-right" style="width:36px;color:var(--text-3);font-size:.76rem;">—</td>
             <td class="td">
               {% if row.issuer_ticker and row.issuer_ticker not in ('NONE', 'N/A') %}
               <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link hover:text-sky-400" style="color:var(--text-1);">{{ row.issuer_ticker }}</a>
@@ -247,13 +247,13 @@
               {% endif %}
             </td>
             <td class="td" style="max-width:130px;">
-              <div style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
-              {% if row.sector %}<div style="font-size:.6rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
+              <div style="font-size:.82rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
+              {% if row.sector %}<div style="font-size:.72rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
             </td>
-            <td class="td" style="font-size:.75rem;color:var(--text-1);">
+            <td class="td" style="font-size:.85rem;color:var(--text-1);">
               <a href="/insider/{{ row.insider_cik }}" class="hover:underline hover:text-sky-400">{{ row.insider_name }}</a>
             </td>
-            <td class="td" style="font-size:.7rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
+            <td class="td" style="font-size:.80rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares_owned_after | float) if row.shares_owned_after else '—' }}</td>
             <td class="td num text-right" style="color:var(--text-2);">{{ row.price_fmt or '—' }}</td>
@@ -263,7 +263,7 @@
               {% if row.is_10b5_1 %}<span class="plan-badge">Plan</span>{% endif %}
             </td>
             <td class="td text-right" style="white-space:nowrap;">
-              <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
+              <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.80rem;color:var(--text-3);">{{ row.filed_rel }}</a>
               {% if row.disclosure_lag is not none %}
               <div class="lag-badge lag-{% if row.disclosure_lag <= 2 %}hot{% elif row.disclosure_lag <= 10 %}warm{% else %}late{% endif %}"
                    title="{{ row.disclosure_lag }} days between trade and filing">
@@ -273,7 +273,7 @@
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="12" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">No sells matching current filters</td></tr>
+          <tr><td colspan="12" style="padding:28px 12px;text-align:center;color:var(--text-3);font-size:.90rem;">No sells matching current filters</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -290,14 +290,14 @@
             {% endif %}
             {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;">{{ row.conviction }}</span>{% endif %}
           </div>
-          <span class="num" style="color:var(--sell);font-weight:700;font-size:.85rem;">{{ row.total_value_fmt or '—' }}</span>
+          <span class="num" style="color:var(--sell);font-weight:700;font-size:.94rem;">{{ row.total_value_fmt or '—' }}</span>
         </div>
-        <div style="font-size:.72rem;color:var(--text-2);margin-bottom:3px;">{{ row.issuer_name }}</div>
-        <div style="font-size:.72rem;color:var(--text-1);">
+        <div style="font-size:.82rem;color:var(--text-2);margin-bottom:3px;">{{ row.issuer_name }}</div>
+        <div style="font-size:.82rem;color:var(--text-1);">
           <a href="/insider/{{ row.insider_cik }}" style="color:var(--text-1);">{{ row.insider_name }}</a>
           {% if row.insider_title %}<span style="color:var(--text-3);"> · {{ row.insider_title }}</span>{% endif %}
         </div>
-        <div style="font-size:.62rem;color:var(--text-3);margin-top:4px;">
+        <div style="font-size:.74rem;color:var(--text-3);margin-top:4px;">
           <a href="/filing/{{ row.transaction_id }}" style="color:var(--text-3);">{{ row.filed_rel }}</a>
         </div>
       </div>

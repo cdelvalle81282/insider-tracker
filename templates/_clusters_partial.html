@@ -7,7 +7,7 @@
       <span class="sh-dot" style="background:var(--amber);"></span>
       Cluster Activity
     </span>
-    <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">
+    <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:2px;">
       {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} · 2+ insiders
     </span>
     <!-- Direction filters -->
@@ -34,27 +34,27 @@
         <span class="ticker-link w-16 shrink-0" style="color:var(--text-3);">—</span>
         {% endif %}
 
-        <span style="font-size:.75rem;color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.issuer_name }}</span>
+        <span style="font-size:.85rem;color:var(--text-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ c.issuer_name }}</span>
 
         {% if c.sector %}
-        <span style="font-size:.62rem;color:var(--text-3);flex-shrink:0;">{{ c.sector }}</span>
+        <span style="font-size:.74rem;color:var(--text-3);flex-shrink:0;">{{ c.sector }}</span>
         {% endif %}
 
         {% if c.direction == 'buy' %}
-        <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;color:var(--buy);flex-shrink:0;">▲ BUY</span>
+        <span style="font-size:.70rem;font-weight:700;letter-spacing:.1em;color:var(--buy);flex-shrink:0;">▲ BUY</span>
         {% elif c.direction == 'sell' %}
-        <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;color:var(--sell);flex-shrink:0;">▼ SELL</span>
+        <span style="font-size:.70rem;font-weight:700;letter-spacing:.1em;color:var(--sell);flex-shrink:0;">▼ SELL</span>
         {% else %}
-        <span style="font-size:.58rem;font-weight:700;letter-spacing:.1em;color:var(--amber);flex-shrink:0;">↕ MIXED</span>
+        <span style="font-size:.70rem;font-weight:700;letter-spacing:.1em;color:var(--amber);flex-shrink:0;">↕ MIXED</span>
         {% endif %}
 
-        <span style="font-size:.58rem;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.22);flex-shrink:0;">{{ c.insider_count }} insiders</span>
+        <span style="font-size:.70rem;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.22);flex-shrink:0;">{{ c.insider_count }} insiders</span>
 
-        <span class="num font-bold shrink-0" style="font-size:.85rem;color:{% if c.direction == 'buy' %}var(--buy){% elif c.direction == 'sell' %}var(--sell){% else %}var(--amber){% endif %};">{{ c.total_value_fmt or '—' }}</span>
+        <span class="num font-bold shrink-0" style="font-size:.94rem;color:{% if c.direction == 'buy' %}var(--buy){% elif c.direction == 'sell' %}var(--sell){% else %}var(--amber){% endif %};">{{ c.total_value_fmt or '—' }}</span>
       </summary>
 
       <div style="padding:0 16px 14px;">
-        <table class="w-full" style="font-size:.75rem;">
+        <table class="w-full" style="font-size:.85rem;">
           <thead>
             <tr style="border-bottom:1px solid var(--border);">
               <th class="th text-left" style="background:transparent;padding:6px 8px;">Insider</th>
@@ -89,7 +89,7 @@
         </table>
         {% if c.issuer_ticker %}
         <div style="margin-top:10px;text-align:right;">
-          <a href="/chart/{{ c.issuer_ticker }}" style="font-size:.65rem;color:var(--sky);" class="hover:text-white transition-colors">
+          <a href="/chart/{{ c.issuer_ticker }}" style="font-size:.76rem;color:var(--sky);" class="hover:text-white transition-colors">
             View ${{ c.issuer_ticker }} chart →
           </a>
         </div>

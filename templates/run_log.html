@@ -22,22 +22,22 @@
     <tbody>
       {% for run in log %}
       <tr class="{% if run.errors > 0 %}row-sell{% endif %}">
-        <td class="td num" style="color:var(--text-1);font-size:.75rem;white-space:nowrap;">{{ run.date_processed }}</td>
-        <td class="td num" style="color:var(--text-2);font-size:.72rem;white-space:nowrap;">{{ run.started_at[:19].replace('T',' ') }}</td>
-        <td class="td num" style="color:var(--text-2);font-size:.72rem;white-space:nowrap;">{{ run.finished_at[:19].replace('T',' ') if run.finished_at else '…' }}</td>
-        <td class="td num text-right" style="color:var(--text-2);font-size:.72rem;">{{ run.filings_found }}</td>
-        <td class="td num text-right font-semibold" style="color:var(--buy);font-size:.72rem;">+{{ run.rows_inserted }}</td>
-        <td class="td num text-right font-semibold" style="font-size:.72rem;{% if run.errors > 0 %}color:var(--sell);{% else %}color:var(--text-3);{% endif %}">
+        <td class="td num" style="color:var(--text-1);font-size:.85rem;white-space:nowrap;">{{ run.date_processed }}</td>
+        <td class="td num" style="color:var(--text-2);font-size:.82rem;white-space:nowrap;">{{ run.started_at[:19].replace('T',' ') }}</td>
+        <td class="td num" style="color:var(--text-2);font-size:.82rem;white-space:nowrap;">{{ run.finished_at[:19].replace('T',' ') if run.finished_at else '…' }}</td>
+        <td class="td num text-right" style="color:var(--text-2);font-size:.82rem;">{{ run.filings_found }}</td>
+        <td class="td num text-right font-semibold" style="color:var(--buy);font-size:.82rem;">+{{ run.rows_inserted }}</td>
+        <td class="td num text-right font-semibold" style="font-size:.82rem;{% if run.errors > 0 %}color:var(--sell);{% else %}color:var(--text-3);{% endif %}">
           {{ run.errors }}
         </td>
-        <td class="td" style="color:var(--text-3);font-size:.72rem;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+        <td class="td" style="color:var(--text-3);font-size:.82rem;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
             title="{{ run.error_detail or '' }}">
           {{ run.error_detail or '' }}
         </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="7" style="padding:40px 12px;text-align:center;color:var(--text-3);font-size:.8rem;">
+        <td colspan="7" style="padding:40px 12px;text-align:center;color:var(--text-3);font-size:.90rem;">
           No runs yet. Try: <code style="color:var(--sky);">python ingest.py --date today</code>
         </td>
       </tr>

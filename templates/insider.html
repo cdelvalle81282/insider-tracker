@@ -6,7 +6,7 @@
 <div class="mb-5 flex items-start justify-between flex-wrap gap-3">
   <div>
     <h1 class="text-2xl font-bold" style="color:var(--text-1);">{{ name }}</h1>
-    <p class="num mt-1" style="font-size:.65rem;color:var(--text-3);">CIK {{ cik }}</p>
+    <p class="num mt-1" style="font-size:.76rem;color:var(--text-3);">CIK {{ cik }}</p>
   </div>
   <form method="POST" action="/watchlist/add">
     <input type="hidden" name="watch_type" value="insider" />
@@ -54,7 +54,7 @@
   </div>
   <div class="kpi">
     <div class="kpi-label">Date Range</div>
-    <div class="kpi-val num" style="font-size:.72rem;color:var(--text-2);">
+    <div class="kpi-val num" style="font-size:.82rem;color:var(--text-2);">
       {% if summary.first_trade %}
         {{ summary.first_trade }} → {{ summary.last_trade }}
       {% else %}—{% endif %}
@@ -73,18 +73,18 @@
 <div class="mb-6" style="border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:1rem 1.25rem;background:rgba(255,255,255,.02);">
   <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
     <div>
-      <span class="sh" style="font-size:.7rem;color:var(--text-2);">
+      <span class="sh" style="font-size:.80rem;color:var(--text-2);">
         <span class="sh-dot" style="background:var(--amber);"></span>
         Backtest Performance Profile
       </span>
-      <span class="num" style="font-size:.6rem;color:var(--text-3);margin-left:.5rem;">
+      <span class="num" style="font-size:.72rem;color:var(--text-3);margin-left:.5rem;">
         {{ p.n_trades }} buys scored · entry = transaction_date · excess vs SPY
       </span>
     </div>
     <div style="display:flex;align-items:center;gap:.5rem;">
-      <span style="font-size:.62rem;color:var(--text-3);">Peak window:</span>
-      <span class="num" style="font-size:.75rem;font-weight:700;color:var(--amber);">{{ p.peak_window }}d</span>
-      <span style="font-size:.62rem;padding:.15rem .4rem;border-radius:4px;background:rgba(255,255,255,.06);color:var(--text-2);">{{ p.profile_label }}</span>
+      <span style="font-size:.74rem;color:var(--text-3);">Peak window:</span>
+      <span class="num" style="font-size:.85rem;font-weight:700;color:var(--amber);">{{ p.peak_window }}d</span>
+      <span style="font-size:.74rem;padding:.15rem .4rem;border-radius:4px;background:rgba(255,255,255,.06);color:var(--text-2);">{{ p.profile_label }}</span>
     </div>
   </div>
 
@@ -95,12 +95,12 @@
       (90, p.win_90, p.avg_90, p.med_90),
   ] %}
   {% if w_win is not none %}
-  <div class="flex items-center gap-3 mb-2" style="font-size:.7rem;">
+  <div class="flex items-center gap-3 mb-2" style="font-size:.80rem;">
     <!-- Label + peak badge -->
     <div style="width:2.8rem;flex-shrink:0;text-align:right;">
       <span class="num" style="color:var(--text-3);">{{ w_num }}d</span>
       {% if w_num == p.peak_window %}
-      <span style="margin-left:.25rem;font-size:.55rem;color:var(--amber);">★</span>
+      <span style="margin-left:.25rem;font-size:.68rem;color:var(--amber);">★</span>
       {% endif %}
     </div>
 
@@ -123,7 +123,7 @@
   {% endif %}
   {% endfor %}
 
-  <p style="margin-top:.6rem;font-size:.6rem;color:var(--text-3);">
+  <p style="margin-top:.6rem;font-size:.72rem;color:var(--text-3);">
     Median excess and win rate vs. SPY over the same window from the same transaction date. Positive = outperformed the market.
   </p>
 </div>
@@ -143,7 +143,7 @@
       <span class="sh-dot" style="background:var(--text-2);"></span>
       All Trades
     </span>
-    <span class="num" style="font-size:.62rem;color:var(--text-3);margin-left:2px;">({{ history | length }})</span>
+    <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:2px;">({{ history | length }})</span>
   </summary>
 
   <div class="tbl-wrap">
@@ -167,7 +167,7 @@
         {% for row in history %}
         <tr class="{% if row.transaction_code == 'P' %}row-buy{% elif row.transaction_code == 'S' %}row-sell{% endif %} {% if row.conviction_tier == 'high' and row.transaction_code == 'P' %}conviction-high{% endif %} {% if row.is_10b5_1 %}row-dimmed{% endif %}">
 
-          <td class="td num" style="color:var(--text-2);font-size:.72rem;white-space:nowrap;">{{ row.transaction_date or '—' }}</td>
+          <td class="td num" style="color:var(--text-2);font-size:.82rem;white-space:nowrap;">{{ row.transaction_date or '—' }}</td>
 
           <td class="td">
             {% if row.issuer_ticker %}
@@ -180,20 +180,20 @@
 
           <td class="td" style="max-width:160px;">
             {% if row.issuer_ticker %}
-            <a href="/issuer/{{ row.issuer_ticker }}" style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" class="hover:text-sky-400">{{ row.issuer_name }}</a>
+            <a href="/issuer/{{ row.issuer_ticker }}" style="font-size:.82rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" class="hover:text-sky-400">{{ row.issuer_name }}</a>
             {% else %}
-            <div style="font-size:.72rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
+            <div style="font-size:.82rem;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.issuer_name }}</div>
             {% endif %}
-            {% if row.sector %}<div style="font-size:.6rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
+            {% if row.sector %}<div style="font-size:.72rem;color:var(--text-3);">{{ row.sector }}</div>{% endif %}
           </td>
 
           <td class="td text-center">
             {% if row.transaction_code == 'P' %}
-            <span style="color:var(--buy);font-weight:700;font-size:.7rem;">▲ Buy</span>
+            <span style="color:var(--buy);font-weight:700;font-size:.80rem;">▲ Buy</span>
             {% elif row.transaction_code == 'S' %}
-            <span style="color:var(--sell);font-weight:700;font-size:.7rem;">▼ Sell</span>
+            <span style="color:var(--sell);font-weight:700;font-size:.80rem;">▼ Sell</span>
             {% else %}
-            <span style="color:var(--text-3);font-size:.7rem;">{{ row.transaction_code }}</span>
+            <span style="color:var(--text-3);font-size:.80rem;">{{ row.transaction_code }}</span>
             {% endif %}
           </td>
 
@@ -212,12 +212,12 @@
             {% if row.conviction %}
             <span class="score score-{{ row.conviction_tier }}">{{ row.conviction }}</span>
             {% else %}
-            <span style="color:var(--text-3);font-size:.65rem;">—</span>
+            <span style="color:var(--text-3);font-size:.76rem;">—</span>
             {% endif %}
           </td>
 
           <td class="td text-right" style="white-space:nowrap;">
-            <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.7rem;color:var(--text-3);">{{ row.filed_rel }}</a>
+            <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.80rem;color:var(--text-3);">{{ row.filed_rel }}</a>
           </td>
         </tr>
         {% endfor %}
