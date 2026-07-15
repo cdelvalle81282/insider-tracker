@@ -83,18 +83,18 @@
 {% endmacro %}
 
 <!-- ── Buys & Sells tables ────────────────────────────────────────── -->
+<div style="display:flex;justify-content:flex-end;margin-bottom:4px;gap:4px;">
+  <button type="button" onclick="toggleCol('held-after')" data-col-toggle="held-after"
+          class="chip" title="Toggle Held After column">Held After</button>
+  <button type="button" onclick="toggleCol('shares')" data-col-toggle="shares"
+          class="chip" title="Toggle Shares column">Shares</button>
+  <button type="button" onclick="toggleCol('pct-held')" data-col-toggle="pct-held"
+          class="chip" title="Toggle % Held column">% Held</button>
+</div>
 <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
   <!-- Buys -->
   <div>
-  <div style="display:flex;justify-content:flex-end;margin-bottom:4px;gap:4px;">
-    <button type="button" onclick="toggleCol('held-after')" data-col-toggle="held-after"
-            class="chip" title="Toggle Held After column">Held After</button>
-    <button type="button" onclick="toggleCol('shares')" data-col-toggle="shares"
-            class="chip" title="Toggle Shares column">Shares</button>
-    <button type="button" onclick="toggleCol('pct-held')" data-col-toggle="pct-held"
-            class="chip" title="Toggle % Held column">% Held</button>
-  </div>
   <details class="group" open>
     <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
       <span class="caret">▶</span>
