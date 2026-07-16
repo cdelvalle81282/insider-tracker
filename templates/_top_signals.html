@@ -12,21 +12,22 @@
   </div>
   <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
     {% for s in signals %}
-    <a href="/chart/{{ s.issuer_ticker }}" style="text-decoration:none;">
-      <div style="background:var(--bg-raised);border:1px solid rgba(15,206,160,.22);border-radius:7px;
-                  padding:.4rem .7rem;white-space:nowrap;font-size:.85rem;transition:border-color .15s;"
-           onmouseover="this.style.borderColor='rgba(15,206,160,.5)'"
-           onmouseout="this.style.borderColor='rgba(15,206,160,.22)'">
+    <div style="background:var(--bg-raised);border:1px solid rgba(15,206,160,.22);border-radius:7px;
+                padding:.4rem .7rem;white-space:nowrap;font-size:.85rem;transition:border-color .15s;"
+         onmouseover="this.style.borderColor='rgba(15,206,160,.5)'"
+         onmouseout="this.style.borderColor='rgba(15,206,160,.22)'">
+      <a href="/chart/{{ s.issuer_ticker }}" style="text-decoration:none;">
         <span class="num" style="color:var(--buy);font-weight:700;">{{ s.issuer_ticker or '—' }}</span>
         <span class="num" style="color:var(--buy);margin-left:.35rem;font-size:.80rem;">{{ s.value_fmt }}</span>
-        {% if s.insider_name %}
-        <span style="color:var(--text-2);margin-left:.4rem;font-size:.78rem;">{{ s.insider_name }}</span>
-        {% endif %}
-        {% if s.insider_title %}
-        <span style="color:var(--text-3);margin-left:.25rem;font-size:.74rem;">· {{ s.insider_title }}</span>
-        {% endif %}
-      </div>
-    </a>
+      </a>
+      {% if s.insider_name %}
+      <a href="/insider/{{ s.insider_cik }}" class="hover:text-sky-400"
+         style="text-decoration:none;color:var(--text-2);margin-left:.4rem;font-size:.78rem;">{{ s.insider_name }}</a>
+      {% endif %}
+      {% if s.insider_title %}
+      <span style="color:var(--text-3);margin-left:.25rem;font-size:.74rem;">· {{ s.insider_title }}</span>
+      {% endif %}
+    </div>
     {% endfor %}
   </div>
 </div>

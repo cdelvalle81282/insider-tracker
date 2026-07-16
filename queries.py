@@ -695,7 +695,7 @@ def get_top_signals_today(
     """Return top insider buys filed today, ordered by value descending, for the hero strip."""
     rows = conn.execute(
         """
-        SELECT issuer_ticker, issuer_name, insider_name, insider_title,
+        SELECT issuer_ticker, issuer_name, insider_name, insider_title, insider_cik,
                total_value, transaction_date
         FROM filings
         WHERE filed_at::date = CURRENT_DATE

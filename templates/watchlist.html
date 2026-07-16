@@ -56,7 +56,10 @@
             <a href="/chart/{{ f.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ f.issuer_ticker or '—' }}</a>
           </td>
           <td class="td" style="color:var(--text-2);">
-            {{ f.insider_name or '—' }}{% if f.insider_title %} <span style="color:var(--text-3);font-size:.8rem;">· {{ f.insider_title }}</span>{% endif %}
+            {% if f.insider_name %}
+            <a href="/insider/{{ f.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-2);">{{ f.insider_name }}</a>
+            {% else %}—{% endif %}
+            {% if f.insider_title %} <span style="color:var(--text-3);font-size:.8rem;">· {{ f.insider_title }}</span>{% endif %}
           </td>
           <td class="td num text-right" style="color:{{ 'var(--buy)' if is_buy else 'var(--sell)' }};font-weight:600;">
             {{ '▲' if is_buy else '▼' }} {{ f.value_fmt }}

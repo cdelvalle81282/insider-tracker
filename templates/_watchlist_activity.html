@@ -13,22 +13,23 @@
   <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
     {% for f in feed %}
     {% set is_buy = f.transaction_code == 'P' %}
-    <a href="/filing/{{ f.transaction_id }}" style="text-decoration:none;">
-      <div style="background:var(--bg-raised);border:1px solid {% if is_buy %}rgba(15,206,160,.22){% else %}rgba(246,75,110,.22){% endif %};
-                  border-radius:7px;padding:.4rem .7rem;white-space:nowrap;font-size:.85rem;transition:border-color .15s;"
-           onmouseover="this.style.borderColor='{% if is_buy %}rgba(15,206,160,.5){% else %}rgba(246,75,110,.5){% endif %}'"
-           onmouseout="this.style.borderColor='{% if is_buy %}rgba(15,206,160,.22){% else %}rgba(246,75,110,.22){% endif %}'">
+    <div style="background:var(--bg-raised);border:1px solid {% if is_buy %}rgba(15,206,160,.22){% else %}rgba(246,75,110,.22){% endif %};
+                border-radius:7px;padding:.4rem .7rem;white-space:nowrap;font-size:.85rem;transition:border-color .15s;"
+         onmouseover="this.style.borderColor='{% if is_buy %}rgba(15,206,160,.5){% else %}rgba(246,75,110,.5){% endif %}'"
+         onmouseout="this.style.borderColor='{% if is_buy %}rgba(15,206,160,.22){% else %}rgba(246,75,110,.22){% endif %}'">
+      <a href="/filing/{{ f.transaction_id }}" style="text-decoration:none;">
         <span style="color:{% if is_buy %}var(--buy){% else %}var(--sell){% endif %};font-size:.72rem;">{{ '▲' if is_buy else '▼' }}</span>
         <span class="num" style="color:var(--text-1);font-weight:700;margin-left:.3rem;">{{ f.issuer_ticker or '—' }}</span>
         <span class="num" style="color:{% if is_buy %}var(--buy){% else %}var(--sell){% endif %};margin-left:.35rem;font-size:.80rem;">{{ f.value_fmt }}</span>
-        {% if f.insider_name %}
-        <span style="color:var(--text-2);margin-left:.4rem;font-size:.78rem;">{{ f.insider_name }}</span>
-        {% endif %}
-        <span style="color:var(--text-3);margin-left:.4rem;font-size:.74rem;">
-          · {{ 'today' if f.days_ago == 0 else (f.days_ago ~ 'd ago') }}
-        </span>
-      </div>
-    </a>
+      </a>
+      {% if f.insider_name %}
+      <a href="/insider/{{ f.insider_cik }}" class="hover:text-sky-400"
+         style="text-decoration:none;color:var(--text-2);margin-left:.4rem;font-size:.78rem;">{{ f.insider_name }}</a>
+      {% endif %}
+      <span style="color:var(--text-3);margin-left:.4rem;font-size:.74rem;">
+        · {{ 'today' if f.days_ago == 0 else (f.days_ago ~ 'd ago') }}
+      </span>
+    </div>
     {% endfor %}
   </div>
 </div>

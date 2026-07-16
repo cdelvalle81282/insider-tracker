@@ -118,7 +118,7 @@
       <div class="grid grid-cols-2 gap-3 text-sm">
         <div>
           <p class="text-gray-500 text-xs">Name</p>
-          <p class="text-white">{{ filing.insider_name }}</p>
+          <p class="text-white"><a href="/insider/{{ filing.insider_cik }}" class="hover:underline hover:text-sky-400">{{ filing.insider_name }}</a></p>
         </div>
         <div>
           <p class="text-gray-500 text-xs">Title</p>

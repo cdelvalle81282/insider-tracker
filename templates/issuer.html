@@ -124,7 +124,9 @@
         <tbody class="divide-y divide-gray-800/60">
           {% for row in day_rows %}
           <tr class="{% if row.is_10b5_1 %}opacity-40{% endif %} hover:bg-white/5">
-            <td class="py-1.5 pr-3 text-gray-200">{{ row.insider_name }}</td>
+            <td class="py-1.5 pr-3">
+              <a href="/insider/{{ row.insider_cik }}" class="text-gray-200 hover:text-white hover:underline">{{ row.insider_name }}</a>
+            </td>
             <td class="py-1.5 pr-3 text-gray-500 max-w-[160px] truncate">{{ row.insider_title or '—' }}</td>
             <td class="py-1.5 text-center">
               {% if row.transaction_code == 'P' %}
