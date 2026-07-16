@@ -233,6 +233,7 @@ def _match_cluster(
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
+          AND issuer_ticker IS NOT NULL
         GROUP BY issuer_cik, issuer_name, issuer_ticker
         HAVING COUNT(DISTINCT insider_cik) >= %s
            AND MAX(ingested_at) >= %s
