@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -59,6 +60,7 @@ SIGNAL_DETECTORS = {
 }
 
 MIN_VALUE = 500_000
+MAX_LABELED_MARKERS = 25
 
 
 def _sma(closes, period):
@@ -170,21 +172,38 @@ def main():
         ma200_data = [{"time": d, "value": v} for d, v in zip(dates, sma200) if v is not None]
         rsi_data   = [{"time": d, "value": v} for d, v in zip(dates, rsi14)  if v is not None]
 
-        # Buy markers (on candle chart)
-        buy_markers = []
+        # Buy markers (on candle chart). Group same-day buys into a single marker and
+        # drop per-marker text above MAX_LABELED_MARKERS -- mirrors the clutter fix in
+        # app.py::chart_view (the web app chart), otherwise a cluster of same-day buys
+        # or a heavily-traded ticker stacks a full-name label per transaction.
         d0, d1 = min(dates), max(dates)
+        buy_groups: dict[str, list[dict]] = defaultdict(list)
         for buy in buys:
             bd = buy["transaction_date"]
             if not d0 <= bd <= d1:
                 continue
-            nm = (buy.get("insider_name") or "")[:25]
-            tv = _fmt(buy.get("total_value"))
+            buy_groups[bd].append(buy)
+
+        show_labels = len(buy_groups) <= MAX_LABELED_MARKERS
+        buy_markers = []
+        for bd, group in buy_groups.items():
+            text = ""
+            if show_labels:
+                if len(group) == 1:
+                    nm = (group[0].get("insider_name") or "")[:25]
+                    tv = _fmt(group[0].get("total_value"))
+                    text = f"{nm} {tv}".strip()
+                else:
+                    names = sorted({g.get("insider_name") or "" for g in group if g.get("insider_name")})
+                    total = sum(g.get("total_value") or 0 for g in group)
+                    extra = f" +{len(names) - 1} more" if len(names) > 1 else f" ({len(group)}x)"
+                    text = f"{names[0]}{extra} {_fmt(total)}".strip()
             buy_markers.append({
                 "time": bd,
                 "position": "belowBar",
                 "color": "#22c55e",
                 "shape": "arrowUp",
-                "text": f"{nm} {tv}".strip(),
+                "text": text,
             })
 
         # Signal markers

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections import defaultdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -93,6 +94,7 @@ MA50       = "#f59e0b"
 MA200      = "#818cf8"
 
 MIN_VALUE  = 500_000
+MAX_LABELED_MARKERS = 25
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -242,20 +244,38 @@ def _build_figure(
         )
 
     # ── Insider buy vertical lines (green dashed) ─────────────────────────
+    # Group same-day buys into a single annotation and drop label text above
+    # MAX_LABELED_MARKERS -- mirrors the clutter fix in app.py::chart_view (the
+    # web app chart), otherwise a cluster of same-day buys stacks overlapping
+    # full-name annotations at the same x position and y=0.985.
     d0, d1 = (min(dates), max(dates)) if dates else ("", "")
+    buy_groups: dict[str, list[dict]] = defaultdict(list)
     for buy in buys:
         bd = buy["transaction_date"]
         if not d0 <= bd <= d1:
             continue
-        name_s  = (buy.get("insider_name") or "Unknown")[:28]
-        title_s = (buy.get("insider_title") or "")[:22]
-        tv      = _fmt(buy.get("total_value"))
-        label   = f"▲ {name_s}"
-        if tv:
-            label += f"  {tv}"
-        if title_s:
-            label += f"  {title_s}"
+        buy_groups[bd].append(buy)
+
+    show_labels = len(buy_groups) <= MAX_LABELED_MARKERS
+    for bd, group in buy_groups.items():
         _vshape(bd, BUY_LINE, width=1.1, dash="dash")
+        if not show_labels:
+            continue
+        if len(group) == 1:
+            b       = group[0]
+            name_s  = (b.get("insider_name") or "Unknown")[:28]
+            title_s = (b.get("insider_title") or "")[:22]
+            tv      = _fmt(b.get("total_value"))
+            label   = f"▲ {name_s}"
+            if tv:
+                label += f"  {tv}"
+            if title_s:
+                label += f"  {title_s}"
+        else:
+            names = sorted({g.get("insider_name") or "" for g in group if g.get("insider_name")})
+            total = sum(g.get("total_value") or 0 for g in group)
+            extra = f" +{len(names) - 1} more" if len(names) > 1 else f" ({len(group)}x)"
+            label = f"▲ {names[0]}{extra}  {_fmt(total)}".strip()
         _vann(bd, label, BUY_TEXT, y=0.985, anchor="left")
 
     # ── Signal fire vertical lines (solid, coloured) ──────────────────────
