@@ -689,6 +689,37 @@ async def htmx_top_signals(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# HTMX partial — watchlist activity hero strip
+# ---------------------------------------------------------------------------
+
+def _get_watchlist_feed_sync(db: psycopg.Connection) -> list[dict]:
+    tickers = queries.watched_tickers(db)
+    insiders = queries.watched_insiders(db)
+    return queries.get_watchlist_feed(db, tickers, insiders, lookback_days=14, limit=8)
+
+
+@app.get("/htmx/watchlist-activity", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_watchlist_activity(request: Request):
+    # Prefixed "it:query:" (not "it:top-signals:") so watchlist add/remove
+    # invalidates it immediately via invalidate_query_cache(), same as the
+    # main filings query cache — this content is watchlist-dependent, unlike
+    # the top-signals strip.
+    skey = f"it:query:watchlist-activity:{date.today().isoformat()}"
+    html = cache_module.cache_get(skey)
+    if html is None:
+        pre_mtime = cache_module._sentinel_mtime()
+        db = get_db()
+        try:
+            feed = await asyncio.to_thread(_get_watchlist_feed_sync, db)
+        finally:
+            put_db(db)
+        html = templates.env.get_template("_watchlist_activity.html").render({"feed": feed})
+        cache_module.cache_set(skey, pre_mtime, html)
+    return HTMLResponse(html)
+
+
+# ---------------------------------------------------------------------------
 # CSV export
 # ---------------------------------------------------------------------------
 
@@ -1012,7 +1043,27 @@ async def watchlist_page(
     db: psycopg.Connection = Depends(get_request_db),
 ):
     wl = queries.list_watchlist(db)
-    return templates.TemplateResponse(request, "watchlist.html", {"watchlist": wl})
+    tickers = [item["value"] for item in wl["tickers"]]
+    insider_ciks = [item["value"] for item in wl["insiders"]]
+    congress_names_lower = [item["value"].lower() for item in wl["congress_members"]]
+
+    last_by_ticker = queries.get_last_activity_by_ticker(db, tickers)
+    last_by_insider = queries.get_last_activity_by_insider(db, insider_ciks)
+    last_by_congress = queries.get_last_activity_by_congress_member(db, congress_names_lower)
+
+    for item in wl["tickers"]:
+        item["last_activity"] = last_by_ticker.get(item["value"])
+    for item in wl["insiders"]:
+        item["last_activity"] = last_by_insider.get(item["value"])
+    for item in wl["congress_members"]:
+        item["last_activity"] = last_by_congress.get(item["value"].lower())
+
+    activity_feed = queries.get_watchlist_feed(db, tickers, insider_ciks, lookback_days=60, limit=20)
+
+    return templates.TemplateResponse(request, "watchlist.html", {
+        "watchlist": wl,
+        "activity_feed": activity_feed,
+    })
 
 
 @app.post("/watchlist/add")

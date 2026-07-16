@@ -540,6 +540,128 @@ def watched_congress_members(conn: psycopg.Connection) -> set[str]:
     return {r["value"].lower() for r in rows}
 
 
+def get_watchlist_feed(
+    conn: psycopg.Connection,
+    watched_tickers,
+    watched_insiders,
+    lookback_days: int = 14,
+    limit: int = 8,
+) -> list[dict]:
+    """Flat, most-recent-first feed of buy/sell activity for watched tickers/insiders.
+    Used by the dashboard hero strip (short lookback) and the /watchlist activity
+    feed (longer lookback) — this is "what happened" across the whole watchlist,
+    not per-item status (see get_last_activity_by_* for that)."""
+    tickers = list(watched_tickers or [])
+    insiders = list(watched_insiders or [])
+    if not tickers and not insiders:
+        return []
+    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT issuer_ticker, issuer_name, insider_name, insider_title, insider_cik,
+               transaction_code, total_value, transaction_date, filed_at, transaction_id
+        FROM filings
+        WHERE table_type = 'ND'
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+          AND transaction_code IN ('P', 'S')
+          AND transaction_date >= %s
+          AND (issuer_ticker = ANY(%s) OR insider_cik = ANY(%s))
+        ORDER BY filed_at DESC
+        LIMIT %s
+        """,
+        [cutoff, tickers, insiders, limit],
+    ).fetchall()
+    today = date.today()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["value_fmt"] = _fmt_value(d.get("total_value") or 0)
+        d["days_ago"] = (today - d["transaction_date"]).days if d.get("transaction_date") else None
+        result.append(d)
+    return result
+
+
+def get_last_activity_by_ticker(conn: psycopg.Connection, tickers: list[str]) -> dict[str, dict]:
+    """Most recent buy/sell per watched ticker — for the /watchlist status view."""
+    if not tickers:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT DISTINCT ON (issuer_ticker)
+               issuer_ticker, transaction_code, total_value, transaction_date, insider_name
+        FROM filings
+        WHERE table_type = 'ND'
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+          AND transaction_code IN ('P', 'S')
+          AND issuer_ticker = ANY(%s)
+        ORDER BY issuer_ticker, transaction_date DESC, filed_at DESC
+        """,
+        [tickers],
+    ).fetchall()
+    today = date.today()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["value_fmt"] = _fmt_value(d.get("total_value") or 0)
+        d["days_ago"] = (today - d["transaction_date"]).days if d.get("transaction_date") else None
+        out[d["issuer_ticker"]] = d
+    return out
+
+
+def get_last_activity_by_insider(conn: psycopg.Connection, ciks: list[str]) -> dict[str, dict]:
+    """Most recent buy/sell per watched insider (across all companies) — for the /watchlist status view."""
+    if not ciks:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT DISTINCT ON (insider_cik)
+               insider_cik, issuer_ticker, issuer_name, transaction_code, total_value, transaction_date
+        FROM filings
+        WHERE table_type = 'ND'
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+          AND transaction_code IN ('P', 'S')
+          AND insider_cik = ANY(%s)
+        ORDER BY insider_cik, transaction_date DESC, filed_at DESC
+        """,
+        [ciks],
+    ).fetchall()
+    today = date.today()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["value_fmt"] = _fmt_value(d.get("total_value") or 0)
+        d["days_ago"] = (today - d["transaction_date"]).days if d.get("transaction_date") else None
+        out[d["insider_cik"]] = d
+    return out
+
+
+def get_last_activity_by_congress_member(conn: psycopg.Connection, names_lower: list[str]) -> dict[str, dict]:
+    """Most recent trade per watched politician — for the /watchlist status view."""
+    if not names_lower:
+        return {}
+    rows = conn.execute(
+        """
+        SELECT DISTINCT ON (LOWER(politician_name))
+               LOWER(politician_name) AS name_lower, ticker, transaction_type,
+               amount_label, transaction_date::date AS transaction_date
+        FROM congress_trades
+        WHERE LOWER(politician_name) = ANY(%s)
+        ORDER BY LOWER(politician_name), transaction_date::date DESC
+        """,
+        [names_lower],
+    ).fetchall()
+    today = date.today()
+    out = {}
+    for r in rows:
+        d = dict(r)
+        d["days_ago"] = (today - d["transaction_date"]).days if d.get("transaction_date") else None
+        out[d["name_lower"]] = d
+    return out
+
+
 def get_all_sectors(conn: psycopg.Connection) -> list[str]:
     rows = conn.execute(
         "SELECT DISTINCT sector FROM filings WHERE sector IS NOT NULL ORDER BY sector"

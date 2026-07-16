@@ -126,6 +126,57 @@ def _format_buy_message(alert_type: str, row: dict, base_url: str) -> dict:
     }
 
 
+def _format_watchlist_message(row: dict, base_url: str) -> dict:
+    ticker = row.get("issuer_ticker") or "?"
+    company = row.get("issuer_name") or ""
+    insider = row.get("insider_name") or "Unknown"
+    title = row.get("insider_title") or "Insider"
+    value = _fmt(row.get("total_value"))
+    shares = f"{row.get('shares', 0):,.0f}" if row.get("shares") else "?"
+    price = _fmt(row.get("price_per_share"))
+    is_plan = row.get("is_10b5_1", 0)
+    conviction = row.get("conviction")
+    is_sell = row.get("transaction_code") == "S"
+
+    emoji = "🔴" if is_sell else "🟢"
+    direction = "SELL" if is_sell else "BUY"
+    plan_note = " · 10b5-1 plan" if is_plan else " · Open market"
+    score_note = f" · Score {conviction}/10" if conviction else ""
+
+    filing_url = f"{base_url}/filing/{row.get('transaction_id', '')}"
+
+    return {
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": f"⭐ WATCHLIST {direction} — ${ticker}"},
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"{emoji} *{insider}* ({title})\n"
+                        f"{shares} shares @ {price} = *{value}*"
+                        f"{plan_note}{score_note}"
+                    ),
+                },
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Filing"},
+                    "url": filing_url,
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"_{company}_"}
+                ],
+            },
+        ]
+    }
+
+
 def _format_cluster_message(row: dict, base_url: str) -> dict:
     ticker = row.get("issuer_ticker") or "?"
     company = row.get("issuer_name") or ""
@@ -179,6 +230,34 @@ def _match_big_buy(
         ORDER BY total_value DESC
         """,
         [threshold, since_ts],
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _match_watchlist_activity(
+    conn: psycopg.Connection,
+    since_ts: str,
+    watched_tickers: list[str],
+    watched_insiders: list[str],
+) -> list[dict]:
+    """Any buy or sell (no $ threshold) on a watched ticker or insider — watching
+    something means the user cares about it regardless of size. Checked before the
+    generic thresholds in check_and_send() so a matching trade gets the
+    ⭐ WATCHLIST message instead of (or as well as) BIG BUY / C-SUITE BUY."""
+    if not watched_tickers and not watched_insiders:
+        return []
+    rows = conn.execute(
+        """
+        SELECT * FROM filings
+        WHERE transaction_code IN ('P', 'S')
+          AND ingested_at >= %s
+          AND superseded_by IS NULL
+          AND joint_filer_of IS NULL
+          AND table_type = 'ND'
+          AND (issuer_ticker = ANY(%s) OR insider_cik = ANY(%s))
+        ORDER BY total_value DESC NULLS LAST
+        """,
+        [since_ts, watched_tickers, watched_insiders],
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -249,8 +328,8 @@ def _match_cluster(
 # ---------------------------------------------------------------------------
 
 def _buy_alert_key(row: dict) -> str:
-    # Shared key across all buy alert types so a trade that matches both
-    # big_buy and insider_buy thresholds only fires one Slack message.
+    # Shared key across all buy/sell alert types (watchlist, big_buy, insider_buy)
+    # so a trade that matches more than one only fires one Slack message.
     return (
         f"buy:"
         f"{row.get('issuer_cik','')}:"
@@ -298,6 +377,18 @@ def check_and_send(
     base_url = config.get("alert_base_url", "https://opi-insider.duckdns.org")
     keywords = rules.get("insider_title_keywords", [])
     sent = 0
+
+    # 0. Watchlist activity — any size, buy or sell. Claimed under the same
+    # shared key as big_buy/insider_buy, so a watched trade that also clears
+    # a generic threshold gets exactly one alert (this one, checked first).
+    watched_tickers = list(queries.watched_tickers(conn))
+    watched_insiders = list(queries.watched_insiders(conn))
+    for row in _match_watchlist_activity(conn, since_ts, watched_tickers, watched_insiders):
+        key = _buy_alert_key(row)
+        if _try_claim_alert(conn, key, "watchlist"):
+            payload = _format_watchlist_message(row, base_url)
+            if _post_to_slack(webhook_url, payload):
+                sent += 1
 
     # 1. Big buy
     big_threshold = rules.get("big_buy_threshold", 1_000_000)

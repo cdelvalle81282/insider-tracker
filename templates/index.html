@@ -4,6 +4,13 @@
 
 {% block content %}
 
+<!-- Watchlist activity strip — loaded async, non-blocking. Takes priority over the market-wide strip below. -->
+<div id="watchlist-activity-container"
+     hx-get="/htmx/watchlist-activity"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+</div>
+
 <!-- Today's top signals strip — loaded async, non-blocking -->
 <div id="top-signals-container"
      hx-get="/htmx/top-signals"
@@ -67,6 +74,18 @@
            step="10000" min="0" class="fg-in" style="width:82px;" />
   </div>
 
+  <!-- Watched — first-class toggle, not buried in the Filters accordion -->
+  <label class="flex items-center gap-1.5 cursor-pointer select-none" style="
+      height:32px;padding:0 12px;border-radius:8px;transition:all .12s;
+      border:1px solid {% if filters.get('watched_only') == '1' %}var(--amber){% else %}var(--border){% endif %};
+      background:{% if filters.get('watched_only') == '1' %}rgba(245,158,11,.12){% else %}var(--bg-surface){% endif %};">
+    <input type="checkbox" name="watched_only" value="1"
+           {% if filters.get('watched_only') == '1' %}checked{% endif %}
+           class="accent-yellow-500 w-3 h-3 rounded" />
+    <span style="font-size:.78rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+                 color:{% if filters.get('watched_only') == '1' %}var(--amber){% else %}var(--text-2){% endif %};">★ Watched</span>
+  </label>
+
   {% set _panel_active = (
       filters.get('hide_10b5_1') == '1' or
       filters.get('hide_equity_swap') == '1' or
@@ -74,7 +93,6 @@
       filters.get('has_options_only') == '1' or
       filters.get('hide_entity_filers') == '1' or
       filters.get('ceo_cfo') == '1' or
-      filters.get('watched_only') == '1' or
       filters.get('roles') or
       filters.get('market_cap_tiers')
   ) %}
@@ -85,7 +103,6 @@
       filters.get('has_options_only') == '1',
       filters.get('hide_entity_filers') == '1',
       filters.get('ceo_cfo') == '1',
-      filters.get('watched_only') == '1',
       (filters.get('roles') or []) | length > 0,
       (filters.get('market_cap_tiers') or []) | length > 0,
   ] | select | list | length %}
@@ -138,13 +155,6 @@
                  {% if filters.get('ceo_cfo') == '1' %}checked{% endif %}
                  class="accent-sky-500 w-3 h-3 rounded" />
           <span class="fg-label">C-Suite</span>
-        </label>
-        <div class="fg-sep"></div>
-        <label class="flex items-center gap-1.5 cursor-pointer select-none">
-          <input type="checkbox" name="watched_only" value="1"
-                 {% if filters.get('watched_only') == '1' %}checked{% endif %}
-                 class="accent-yellow-500 w-3 h-3 rounded" />
-          <span class="fg-label" style="{% if filters.get('watched_only') == '1' %}color:var(--amber);{% endif %}">★ Watched</span>
         </label>
       </div>
 

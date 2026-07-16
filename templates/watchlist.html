@@ -2,13 +2,82 @@
 {% block title %}Watchlist — Insider Tracker{% endblock %}
 {% block nav_watchlist %}active{% endblock %}
 
+{% macro activity_line(act) %}
+  {% if act %}
+    {% set is_buy = act.transaction_code == 'P' %}
+    <span class="num" style="color:{{ 'var(--buy)' if is_buy else 'var(--sell)' }};font-weight:600;font-size:.78rem;">{{ '▲' if is_buy else '▼' }} {{ act.value_fmt }}</span>
+    <span style="color:var(--text-3);font-size:.76rem;margin-left:4px;">· {{ 'today' if act.days_ago == 0 else (act.days_ago ~ 'd ago') }}</span>
+  {% else %}
+    <span style="color:var(--text-3);font-size:.78rem;">No tracked activity</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro congress_activity_line(act) %}
+  {% if act %}
+    {% set is_buy = (act.transaction_type or '') | lower in ['purchase', 'buy'] %}
+    <span style="color:{{ 'var(--buy)' if is_buy else 'var(--sell)' }};font-weight:600;font-size:.78rem;">{{ '▲' if is_buy else '▼' }} {{ act.ticker or '?' }}{% if act.amount_label %} {{ act.amount_label }}{% endif %}</span>
+    <span style="color:var(--text-3);font-size:.76rem;margin-left:4px;">· {{ 'today' if act.days_ago == 0 else (act.days_ago ~ 'd ago') }}</span>
+  {% else %}
+    <span style="color:var(--text-3);font-size:.78rem;">No tracked activity</span>
+  {% endif %}
+{% endmacro %}
+
 {% block content %}
 
 <div class="mb-5">
   <h1 class="text-xl font-bold" style="color:var(--text-1);">Watchlist</h1>
   <p style="color:var(--text-2);font-size:.90rem;margin-top:4px;">
-    Pin tickers and insiders. Watched items are marked with ★ on the dashboard and can be filtered to with "Watched only."
+    Recent activity on pinned tickers, insiders, and politicians first — add, remove, and manage below.
   </p>
+</div>
+
+<!-- Recent Activity -->
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:12px;">
+    Recent Activity <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— last 60 days, tickers &amp; insiders</span>
+  </h2>
+
+  {% if activity_feed %}
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">Ticker</th>
+          <th class="th text-left">Insider</th>
+          <th class="th text-right">Value</th>
+          <th class="th text-right">When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in activity_feed %}
+        {% set is_buy = f.transaction_code == 'P' %}
+        <tr class="{{ 'row-buy' if is_buy else 'row-sell' }}">
+          <td class="td">
+            <a href="/chart/{{ f.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ f.issuer_ticker or '—' }}</a>
+          </td>
+          <td class="td" style="color:var(--text-2);">
+            {{ f.insider_name or '—' }}{% if f.insider_title %} <span style="color:var(--text-3);font-size:.8rem;">· {{ f.insider_title }}</span>{% endif %}
+          </td>
+          <td class="td num text-right" style="color:{{ 'var(--buy)' if is_buy else 'var(--sell)' }};font-weight:600;">
+            {{ '▲' if is_buy else '▼' }} {{ f.value_fmt }}
+          </td>
+          <td class="td num text-right" style="color:var(--text-3);font-size:.85rem;">
+            {{ 'Today' if f.days_ago == 0 else (f.days_ago ~ 'd ago') }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">
+    {% if watchlist.tickers or watchlist.insiders %}
+    No activity in the last 60 days for anything on your watchlist.
+    {% else %}
+    Nothing pinned yet — add a ticker or insider below to start tracking activity.
+    {% endif %}
+  </p>
+  {% endif %}
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -33,20 +102,23 @@
       {% if watchlist.tickers %}
       <ul style="list-style:none;padding:0;margin:0;">
         {% for item in watchlist.tickers %}
-        <li class="flex items-center gap-3" style="padding:8px 0;border-bottom:1px solid var(--border-dim);">
-          <span style="color:var(--amber);">★</span>
-          <a href="/chart/{{ item.value }}"
-             style="font-weight:700;color:var(--text-1);flex:1;text-decoration:none;">
-            ${{ item.value }}
-          </a>
-          {% if item.label and item.label != item.value %}
-          <span class="truncate" style="color:var(--text-3);font-size:.82rem;">{{ item.label }}</span>
-          {% endif %}
-          <form method="POST" action="/watchlist/remove" class="shrink-0">
-            <input type="hidden" name="watch_id" value="{{ item.id }}" />
-            <button type="submit"
-                    style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
-          </form>
+        <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
+          <div class="flex items-center gap-3">
+            <span style="color:var(--amber);">★</span>
+            <a href="/chart/{{ item.value }}"
+               style="font-weight:700;color:var(--text-1);flex:1;text-decoration:none;">
+              ${{ item.value }}
+            </a>
+            {% if item.label and item.label != item.value %}
+            <span class="truncate" style="color:var(--text-3);font-size:.82rem;">{{ item.label }}</span>
+            {% endif %}
+            <form method="POST" action="/watchlist/remove" class="shrink-0">
+              <input type="hidden" name="watch_id" value="{{ item.id }}" />
+              <button type="submit"
+                      style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
+            </form>
+          </div>
+          <div style="margin-left:22px;margin-top:2px;">{{ activity_line(item.last_activity) }}</div>
         </li>
         {% endfor %}
       </ul>
@@ -68,16 +140,24 @@
       {% if watchlist.insiders %}
       <ul style="list-style:none;padding:0;margin:0;">
         {% for item in watchlist.insiders %}
-        <li class="flex items-center gap-3" style="padding:8px 0;border-bottom:1px solid var(--border-dim);">
-          <span style="color:var(--amber);">★</span>
-          <a href="/insider/{{ item.value }}"
-             class="text-sm" style="color:var(--text-1);flex:1;text-decoration:none;">{{ item.label }}</a>
-          <span class="num" style="color:var(--text-3);font-size:.76rem;">{{ item.value[:12] }}…</span>
-          <form method="POST" action="/watchlist/remove" class="shrink-0">
-            <input type="hidden" name="watch_id" value="{{ item.id }}" />
-            <button type="submit"
-                    style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
-          </form>
+        <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
+          <div class="flex items-center gap-3">
+            <span style="color:var(--amber);">★</span>
+            <a href="/insider/{{ item.value }}"
+               class="text-sm" style="color:var(--text-1);flex:1;text-decoration:none;">{{ item.label }}</a>
+            <span class="num" style="color:var(--text-3);font-size:.76rem;">{{ item.value[:12] }}…</span>
+            <form method="POST" action="/watchlist/remove" class="shrink-0">
+              <input type="hidden" name="watch_id" value="{{ item.id }}" />
+              <button type="submit"
+                      style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
+            </form>
+          </div>
+          <div style="margin-left:22px;margin-top:2px;">
+            {{ activity_line(item.last_activity) }}
+            {% if item.last_activity and item.last_activity.issuer_ticker %}
+            <span style="color:var(--text-3);font-size:.76rem;margin-left:4px;">· ${{ item.last_activity.issuer_ticker }}</span>
+            {% endif %}
+          </div>
         </li>
         {% endfor %}
       </ul>
@@ -108,15 +188,18 @@
       {% if watchlist.congress_members %}
       <ul style="list-style:none;padding:0;margin:0;">
         {% for item in watchlist.congress_members %}
-        <li class="flex items-center gap-3" style="padding:8px 0;border-bottom:1px solid var(--border-dim);">
-          <span style="color:var(--amber);">★</span>
-          <a href="/congress?politician={{ item.value | urlencode }}"
-             style="color:var(--text-1);flex:1;font-size:.92rem;text-decoration:none;">{{ item.value }}</a>
-          <form method="POST" action="/watchlist/remove" class="shrink-0">
-            <input type="hidden" name="watch_id" value="{{ item.id }}" />
-            <button type="submit"
-                    style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
-          </form>
+        <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
+          <div class="flex items-center gap-3">
+            <span style="color:var(--amber);">★</span>
+            <a href="/congress?politician={{ item.value | urlencode }}"
+               style="color:var(--text-1);flex:1;font-size:.92rem;text-decoration:none;">{{ item.value }}</a>
+            <form method="POST" action="/watchlist/remove" class="shrink-0">
+              <input type="hidden" name="watch_id" value="{{ item.id }}" />
+              <button type="submit"
+                      style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
+            </form>
+          </div>
+          <div style="margin-left:22px;margin-top:2px;">{{ congress_activity_line(item.last_activity) }}</div>
         </li>
         {% endfor %}
       </ul>
