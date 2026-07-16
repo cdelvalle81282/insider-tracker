@@ -118,7 +118,7 @@ def send_health_alerts(conn: psycopg.Connection, slack_webhook_url: str | None) 
 
         try:
             payload = json.dumps({
-                "text": f":warning: *Insider Tracker — Ingest Health Alert*\n{finding['message']}"
+                "text": f":warning: *Insider Scanner — Ingest Health Alert*\n{finding['message']}"
             }).encode()
             req = urllib.request.Request(
                 slack_webhook_url,

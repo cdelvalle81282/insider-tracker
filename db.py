@@ -1,5 +1,5 @@
 """
-PostgreSQL connection pool for Insider Tracker.
+PostgreSQL connection pool for Insider Scanner.
 
 The pool is lazily initialized on first use.
 

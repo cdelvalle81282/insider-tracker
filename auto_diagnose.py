@@ -1,5 +1,5 @@
 """
-Autonomous diagnostic agent for Insider Tracker.
+Autonomous diagnostic agent for Insider Scanner.
 
 Called by the /webhook/alert endpoint when Healthchecks.io or BetterStack
 fires an alert. Collects system state, asks Claude to analyze it, applies
@@ -122,7 +122,7 @@ def analyze(diagnostics: dict, alert_info: dict) -> dict:
     import anthropic  # deferred — only installed on server
     client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
 
-    prompt = f"""You are an autonomous ops agent for the Insider Tracker application.
+    prompt = f"""You are an autonomous ops agent for the Insider Scanner application.
 Stack: FastAPI + PostgreSQL 16 + uvicorn (2 workers) on a DigitalOcean droplet.
 Key services: insider-tracker.service (uvicorn), insider-ingest-nightly.timer (03:00 UTC Mon-Sat), insider-prices.timer (01:00 UTC Mon-Fri ONLY — no weekend runs; a stale prices sentinel Sat/Sun/Mon-before-02:00 UTC is expected and not a failure).
 
@@ -212,7 +212,7 @@ def post_slack(analysis: dict, auto_fixed: list[str], alert_info: dict, webhook_
     manual_lines = "\n".join(f"  :small_red_triangle: {a}" for a in analysis.get("manual_actions", [])) or "  _none — all clear_"
 
     text = (
-        f"{emoji} *Insider Tracker — Auto-Diagnosis*\n"
+        f"{emoji} *Insider Scanner — Auto-Diagnosis*\n"
         f"*Alert:* {check}\n"
         f"*Root cause:* {analysis.get('root_cause', 'unknown')}\n\n"
         f"{analysis.get('diagnosis_summary', '')}\n\n"
@@ -246,7 +246,7 @@ def run_diagnostic(alert_info: dict) -> None:
     # Short-circuit known weekend false positive for the prices timer (Mon-Fri only).
     if _prices_weekend_gap(check_name):
         msg = (
-            ":white_check_mark: *Insider Tracker — Expected Weekend Gap*\n"
+            ":white_check_mark: *Insider Scanner — Expected Weekend Gap*\n"
             f"*Alert:* {check_name}\n"
             "insider-prices.timer runs Mon–Fri 01:00 UTC only. "
             "This staleness is expected over the weekend — no action needed."

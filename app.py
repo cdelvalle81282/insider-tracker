@@ -139,7 +139,7 @@ async def lifespan(app: FastAPI):
     yield  # nothing to set up/tear down at app level
 
 
-app = FastAPI(title="Insider Tracker", lifespan=lifespan)
+app = FastAPI(title="Insider Scanner", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

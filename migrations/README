@@ -1,4 +1,4 @@
-Alembic migrations for Insider Tracker.
+Alembic migrations for Insider Scanner.
 
 DATABASE_URL must be set in the environment before running migrations:
   export DATABASE_URL=postgresql://user:pass@localhost:5432/insider_tracker

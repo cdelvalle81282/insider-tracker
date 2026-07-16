@@ -826,7 +826,7 @@ def send_test_alert(webhook_url: str, base_url: str) -> bool:
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "🔔 Insider Tracker — Test Alert"},
+                "text": {"type": "plain_text", "text": "🔔 Insider Scanner — Test Alert"},
             },
             {
                 "type": "section",

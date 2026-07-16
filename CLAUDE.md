@@ -1,4 +1,4 @@
-# Insider Tracker
+# Insider Scanner
 
 SEC Form 4 insider trading dashboard for Option Pit Research editorial use.
 

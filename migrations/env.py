@@ -1,5 +1,5 @@
 """
-Alembic environment for Insider Tracker.
+Alembic environment for Insider Scanner.
 
 Uses SQLAlchemy 2 with the psycopg3 dialect (postgresql+psycopg).
 Reads DATABASE_URL from the environment.
