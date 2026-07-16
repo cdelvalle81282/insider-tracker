@@ -1246,6 +1246,36 @@ def get_recent_alerts(conn: psycopg.Connection, limit: int = 10) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_signal_alert_history(conn: psycopg.Connection, limit: int = 20) -> list[dict]:
+    """
+    Recent 'signal' alerts (technical signal fires). alert_key format is
+    'signal:{sig_code}:{issuer_cik}:{fire_date}' -- split it out and join to
+    filings for a ticker/company label, best-effort (issuer may have no
+    matching row if data has since changed).
+    """
+    rows = conn.execute(
+        """
+        SELECT
+            a.alert_key, a.sent_at::text AS sent_at,
+            split_part(a.alert_key, ':', 2) AS sig_code,
+            split_part(a.alert_key, ':', 3) AS issuer_cik,
+            split_part(a.alert_key, ':', 4) AS fire_date,
+            f.issuer_ticker, f.issuer_name
+        FROM alerts_sent a
+        LEFT JOIN LATERAL (
+            SELECT issuer_ticker, issuer_name FROM filings
+            WHERE issuer_cik = split_part(a.alert_key, ':', 3)
+            ORDER BY ingested_at DESC LIMIT 1
+        ) f ON true
+        WHERE a.alert_type = 'signal'
+        ORDER BY a.sent_at DESC
+        LIMIT %s
+        """,
+        [limit],
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_10b5_1_stats(conn: psycopg.Connection) -> dict:
     total = conn.execute("SELECT COUNT(*) AS n FROM filings").fetchone()["n"]
     flagged_xml = conn.execute(

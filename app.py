@@ -1427,6 +1427,52 @@ async def backtest(request: Request):
     })
 
 
+@app.get("/backtest-logic", response_class=HTMLResponse)
+async def backtest_logic_page(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+):
+    active_config = _load_config_cached()
+    rules = active_config.get("alert_rules", {})
+
+    signal_defs = [
+        {
+            "code": "gc", "label": "Golden Cross", "live_alert": True,
+            "what": "50-day MA crosses above the 200-day MA, having been below it at the time of the insider buy.",
+            "params": "50/200-day SMA",
+        },
+        {
+            "code": "rb", "label": "Resistance Break", "live_alert": False,
+            "what": "Close breaks above a resistance level (2+ local-high touches within ±2%, over the trailing 180 days) by more than 1%.",
+            "params": "180d lookback · ±2% cluster · 2+ touches · 1% break",
+        },
+        {
+            "code": "hhl", "label": "Higher Highs + Higher Lows", "live_alert": False,
+            "what": "Two consecutive confirmed swing highs and swing lows, each higher than the one before (pivots confirmed 3 bars later).",
+            "params": "3-bar pivot confirmation · 2 consecutive HH & HL",
+        },
+        {
+            "code": "cb", "label": "Channel Break", "live_alert": False,
+            "what": "Stock trades sideways for 90 days (high–low range ≤ 20%) then closes 1%+ above the channel's high.",
+            "params": "90d channel · ≤20% range · 1% break · 20+ bars",
+        },
+    ]
+    signal_stats = alert_module._SIGNAL_STATS
+
+    signal_history = queries.get_signal_alert_history(db, limit=20)
+
+    return templates.TemplateResponse(request, "backtest_logic.html", {
+        "signal_defs": signal_defs,
+        "signal_stats": signal_stats,
+        "signal_history": signal_history,
+        "signal_scan_min_value": rules.get("signal_scan_min_value", 500_000),
+        "signal_scan_lookback_days": rules.get("signal_scan_lookback_days", 90),
+        "signal_scan_max_signal_age_days": rules.get("signal_scan_max_signal_age_days", 5),
+        "polygon_configured": bool(active_config.get("polygon_api_key", "")),
+        "slack_configured": bool(os.getenv("SLACK_WEBHOOK_URL", "")),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Logic & Config
 # ---------------------------------------------------------------------------

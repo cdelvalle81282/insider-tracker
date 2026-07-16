@@ -407,8 +407,9 @@
             background:var(--bg-surface); border:1px solid var(--border);
             border-radius:8px; min-width:130px; padding:4px;
             box-shadow:0 8px 24px rgba(0,0,0,.4); z-index:200;">
-            <a href="/run-log" class="nav-link {% block nav_runlog %}{% endblock %}" style="display:block;padding:7px 12px;border-radius:5px;">Run Log</a>
-            <a href="/logic"   class="nav-link {% block nav_logic %}{% endblock %}"   style="display:block;padding:7px 12px;border-radius:5px;">Config</a>
+            <a href="/run-log"        class="nav-link {% block nav_runlog %}{% endblock %}"        style="display:block;padding:7px 12px;border-radius:5px;">Run Log</a>
+            <a href="/logic"          class="nav-link {% block nav_logic %}{% endblock %}"          style="display:block;padding:7px 12px;border-radius:5px;">Config</a>
+            <a href="/backtest-logic" class="nav-link {% block nav_backtest_logic %}{% endblock %}" style="display:block;padding:7px 12px;border-radius:5px;">Backtest Logic</a>
           </div>
         </div>
         <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode"

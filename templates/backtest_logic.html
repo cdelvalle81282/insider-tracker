@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Backtest Logic — Insider Tracker{% endblock %}
+{% block nav_backtest_logic %}active{% endblock %}
+
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────────── #}
+<div class="mb-6">
+  <h1 style="font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:.15em; color:var(--text-1);">
+    Backtest Logic
+  </h1>
+  <p style="font-size:.88rem; color:var(--text-2); margin-top:4px;">
+    What the 4 technical signals detect, and what actually triggers a Slack "Signal Fire" alert.
+  </p>
+</div>
+
+{# ── Status banner ───────────────────────────────────────────────── #}
+<div class="surface mb-6 px-4 py-3.5" style="border-left:3px solid var(--sky);">
+  <div style="font-size:.90rem; color:var(--text-1); font-weight:600; margin-bottom:4px;">
+    Only Golden Cross sends live Slack alerts
+  </div>
+  <div style="font-size:.83rem; color:var(--text-2); line-height:1.6;">
+    Resistance Break, Higher Highs + Higher Lows, and Channel Break are still computed every night
+    (feeds the <a href="/backtest" class="hover:underline" style="color:var(--sky);">Backtest tab</a>
+    and the colored circle markers on <a href="/chart/AAPL" class="hover:underline" style="color:var(--sky);">ticker charts</a>),
+    but they were intentionally removed from live Slack alerting on 2026-05-29 — backtest data showed
+    no consistent return edge measured <em>from the signal's fire date</em> for those three (only Golden
+    Cross held up: 87% win rate, avg +22.6% at 90d from fire). If it feels like triggers have gone quiet,
+    this is why — it's a deliberate narrowing, not a break. Golden Cross alerts are still firing normally
+    (see history below).
+  </div>
+</div>
+
+{# ── Signal definitions ──────────────────────────────────────────── #}
+<div class="sh mb-3" style="color:var(--text-2);">
+  <span class="sh-dot" style="background:var(--sky);"></span>
+  The 4 Signals
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+  {% for sig in signal_defs %}
+  {% set stat = signal_stats.get(sig.code) %}
+  <div class="surface px-4 py-3.5" style="position:relative; overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;
+                background:{% if sig.live_alert %}var(--buy){% else %}var(--text-3){% endif %};
+                opacity:{% if sig.live_alert %}.8{% else %}.4{% endif %};"></div>
+    <div class="flex items-center justify-between gap-2" style="padding-left:8px;">
+      <div style="font-size:.92rem; font-weight:600; color:var(--text-1);">{{ sig.label }}</div>
+      {% if sig.live_alert %}
+      <span style="font-size:.66rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+                    padding:2px 8px; border-radius:999px; color:var(--buy);
+                    background:rgba(15,206,160,.12); border:1px solid rgba(15,206,160,.3); white-space:nowrap;">
+        🔔 Live Alerts
+      </span>
+      {% else %}
+      <span style="font-size:.66rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+                    padding:2px 8px; border-radius:999px; color:var(--text-3);
+                    background:rgba(14,24,40,.5); border:1px solid var(--border); white-space:nowrap;">
+        Backtest / Chart Only
+      </span>
+      {% endif %}
+    </div>
+    <div style="padding-left:8px; margin-top:6px; font-size:.82rem; color:var(--text-2); line-height:1.55;">
+      {{ sig.what }}
+    </div>
+    <div style="padding-left:8px; margin-top:8px; font-family:'JetBrains Mono',monospace; font-size:.72rem; color:var(--text-3);">
+      {{ sig.params }}
+    </div>
+    {% if stat %}
+    <div style="padding-left:8px; margin-top:10px; display:flex; gap:14px; font-family:'JetBrains Mono',monospace; font-size:.78rem;">
+      <span style="color:var(--text-3);">win <span style="color:var(--text-1); font-weight:600;">{{ '%.0f' | format(stat[1]) }}%</span></span>
+      <span style="color:var(--text-3);">avg <span style="color:{% if stat[2] >= 0 %}var(--buy){% else %}var(--sell){% endif %}; font-weight:600;">{{ '%+.1f' | format(stat[2]) }}%</span></span>
+      <span style="color:var(--text-3);">at {{ stat[0] }}d · n={{ stat[3] }}</span>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Live alert criteria (GC) ────────────────────────────────────── #}
+<div class="sh mb-3" style="color:var(--text-2);">
+  <span class="sh-dot" style="background:var(--buy);"></span>
+  Live Alert Criteria — Golden Cross
+</div>
+<div class="surface mb-6 px-4 py-4">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+    <div>
+      <div class="detail-label">Qualifying Insider Buy</div>
+      <div class="detail-val" style="font-size:.85rem; line-height:1.7;">
+        Open-market buy (code P) · not a 10b5-1 sale/plan trade ·
+        value ≥ <span style="font-family:'JetBrains Mono',monospace;">${{ '{:,.0f}'.format(signal_scan_min_value) }}</span> ·
+        traded within the last {{ signal_scan_lookback_days }} days
+      </div>
+    </div>
+    <div>
+      <div class="detail-label">Signal Timing</div>
+      <div class="detail-val" style="font-size:.85rem; line-height:1.7;">
+        50-day MA must cross above the 200-day MA within <strong>15 days</strong> of the trade date, and
+        that crossover must still be fresh — fired within the last {{ signal_scan_max_signal_age_days }} days
+      </div>
+    </div>
+    <div>
+      <div class="detail-label">Deduplication</div>
+      <div class="detail-val" style="font-size:.85rem; line-height:1.7;">
+        One alert per (issuer, fire date). If several insiders bought ahead of the same crossover,
+        the largest qualifying buy is used as the representative trade in the message.
+      </div>
+    </div>
+    <div>
+      <div class="detail-label">System Requirements</div>
+      <div class="detail-val" style="font-size:.85rem; line-height:1.7;">
+        <span style="color:{% if polygon_configured %}var(--buy){% else %}var(--sell){% endif %};">
+          {% if polygon_configured %}✓{% else %}✗{% endif %} Polygon API key
+        </span>
+        &nbsp;&middot;&nbsp;
+        <span style="color:{% if slack_configured %}var(--buy){% else %}var(--sell){% endif %};">
+          {% if slack_configured %}✓{% else %}✗{% endif %} Slack webhook
+        </span>
+        — the scan silently skips (returns 0 alerts, no error) if either is missing.
+      </div>
+    </div>
+  </div>
+  <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border-dim); font-size:.76rem; color:var(--text-3);">
+    Runs after every ingest (3x/weekday + nightly catch-up) via <code>check_and_send_signals()</code> in
+    <code>alerts.py</code>. Thresholds above are editable on the <a href="/logic" class="hover:underline" style="color:var(--sky);">Config tab</a>.
+  </div>
+</div>
+
+{# ── Recent signal alert history ─────────────────────────────────── #}
+<div class="sh mb-3" style="color:var(--text-2);">
+  <span class="sh-dot" style="background:var(--sky);"></span>
+  Recent Signal Alerts
+</div>
+<div class="tbl-wrap mb-6">
+  <table class="w-full">
+    <thead>
+      <tr>
+        <th class="th text-left">Signal</th>
+        <th class="th text-left">Ticker</th>
+        <th class="th text-left">Company</th>
+        <th class="th text-left">Fire Date</th>
+        <th class="th text-right">Sent</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if signal_history %}
+        {% for a in signal_history %}
+        <tr>
+          <td class="td">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:.76rem; font-weight:700; letter-spacing:.04em;
+                         color:{% if a.sig_code == 'gc' %}var(--buy){% else %}var(--text-3){% endif %};">
+              {{ a.sig_code | upper }}
+            </span>
+          </td>
+          <td class="td">
+            {% if a.issuer_ticker %}
+            <a href="/chart/{{ a.issuer_ticker }}" class="hover:underline" style="color:var(--text-1); font-weight:600;">${{ a.issuer_ticker }}</a>
+            {% else %}
+            <span style="color:var(--text-3);">{{ a.issuer_cik }}</span>
+            {% endif %}
+          </td>
+          <td class="td" style="color:var(--text-2);">{{ a.issuer_name or '—' }}</td>
+          <td class="td" style="color:var(--text-2);">{{ a.fire_date }}</td>
+          <td class="td text-right" style="color:var(--text-3); white-space:nowrap;">{{ a.sent_at[:16].replace('T',' ') }}</td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td class="td text-center" colspan="5" style="color:var(--text-3); padding:20px;">No signal alerts sent yet.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
