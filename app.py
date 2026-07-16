@@ -991,12 +991,33 @@ async def chart_view(
             tx_date = tx_date.isoformat()
         marker_groups[(tx_date, f["transaction_code"])].append(f)
 
+    # A global count cap alone isn't enough: a handful of same-week clusters
+    # (e.g. 4 heavy sell days within a 5-day span) can stay under
+    # MAX_LABELED_MARKERS yet still stack full-text labels on top of each other,
+    # since the cap doesn't account for how close together the labeled dates
+    # are. Thin by minimum spacing (scaled to the visible window), greedily
+    # keeping the largest-dollar group in each too-close cluster so the
+    # biggest events stay labeled.
     show_labels = len(marker_groups) <= MAX_LABELED_MARKERS
+    labeled_keys: set[tuple[str, str]] = set()
+    if show_labels:
+        min_gap_days = max(1, days // MAX_LABELED_MARKERS)
+        shown_dates: list[date] = []
+        for key in sorted(
+            marker_groups.keys(),
+            key=lambda k: sum(g.get("total_value") or 0 for g in marker_groups[k]),
+            reverse=True,
+        ):
+            d = date.fromisoformat(key[0])
+            if all(abs((d - sd).days) >= min_gap_days for sd in shown_dates):
+                shown_dates.append(d)
+                labeled_keys.add(key)
+
     markers = []
     for (tx_date, code), group in marker_groups.items():
         is_buy = code == "P"
         text = ""
-        if show_labels:
+        if (tx_date, code) in labeled_keys:
             if len(group) == 1:
                 label_parts = [group[0].get("insider_name", "")]
                 if group[0].get("total_value_fmt"):
