@@ -469,12 +469,15 @@ _SORT_COLUMNS = {
 # Includes common foreign corporate suffixes (Mexican S.A. de C.V., Dutch N.V./B.V., Italian
 # S.p.A., German GmbH, UK PLC, Brazilian/Portuguese Ltda) alongside the English-only terms —
 # without these, foreign 10%-owner entities (e.g. "Control Empresarial de Capitales S.A. de
-# C.V.", PBF Energy's largest holder) slipped through "Individuals Only" undetected.
+# C.V.", PBF Energy's largest holder) slipped through "Individuals Only" undetected. Also
+# covers dotted "L.P."/"L.L.C." (the bare "lp"/"llc" keywords don't match these — periods
+# between each letter break the plain-word match) — PE/VC fund filers (Blackstone, KKR,
+# General Atlantic, Advent International, etc.) are almost always written this way.
 _ENTITY_FILER_RE = (
     r"\y(llc|lp|ltd|inc|corp|fund|trust|capital|partners|management|holdings|"
     r"investment|investments|advisors|advisor|group|equity|ventures|associates|"
     r"foundation|partnership|company|securities|financial|lending|realty|properties|"
-    r"gmbh|plc|ltda|s\.?a\.?(b\.?)?\s+de\s+c\.?v|s\.a|s\.p\.a|n\.v|b\.v)\y"
+    r"gmbh|plc|ltda|s\.?a\.?(b\.?)?\s+de\s+c\.?v|s\.a|s\.p\.a|n\.v|b\.v|l\.p|l\.l\.c)\y"
 )
 
 
