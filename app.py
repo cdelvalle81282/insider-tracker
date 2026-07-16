@@ -213,6 +213,8 @@ def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
         watched_tickers=queries.watched_tickers(db),
         watched_insiders=queries.watched_insiders(db),
         compute_conviction=True,
+        insider_baseline_cfg=active_config.get("insider_baseline"),
+        compute_insider_baseline=True,
     )
 
 
@@ -1522,6 +1524,10 @@ async def logic_save(
     conviction_value_5m_pts: int | None = Form(default=None, ge=0, le=10),
     conviction_pct_20_pts: int | None = Form(default=None, ge=0, le=10),
     conviction_pct_50_pts: int | None = Form(default=None, ge=0, le=10),
+    # Insider history baseline (all optional -- default None means "keep existing")
+    insider_baseline_min_prior_trades: int | None = Form(default=None, ge=1, le=20),
+    insider_baseline_size_multiplier: float | None = Form(default=None, ge=1.0, le=20.0),
+    insider_baseline_silence_days: int | None = Form(default=None, ge=30, le=3650),
 ):
     alert_rules = {
         "big_buy_threshold": big_buy_threshold,
@@ -1566,7 +1572,18 @@ async def logic_save(
         for key, val in submitted_tier_pts.items():
             conviction_flags[f"tier_pts_{key}"] = val
 
-    save_overrides(alert_rules, filter_defaults, conviction_flags=conviction_flags or None)
+    insider_baseline_map = {
+        "min_prior_trades": insider_baseline_min_prior_trades,
+        "size_multiplier":  insider_baseline_size_multiplier,
+        "silence_days":     insider_baseline_silence_days,
+    }
+    submitted_insider_baseline = {k: v for k, v in insider_baseline_map.items() if v is not None}
+
+    save_overrides(
+        alert_rules, filter_defaults,
+        conviction_flags=conviction_flags or None,
+        insider_baseline=submitted_insider_baseline or None,
+    )
     _config_cache.clear()
     return RedirectResponse(url="/logic?saved=1", status_code=303)
 

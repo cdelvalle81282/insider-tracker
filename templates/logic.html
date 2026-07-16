@@ -269,6 +269,40 @@
         </div>
       </section>
 
+      <!-- Insider History Baseline -->
+      <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-white font-semibold mb-1">Insider History Baseline</h2>
+        <p class="text-gray-500 text-xs mb-4">
+          Flags an open market buy as unusual vs. this insider's own trade history -- either the trade size
+          (well above their typical buy) or the timing (their first buy in a long time). Computed per-insider
+          from their full trade history at page load; each trade is only compared against trades that
+          happened before it.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="config-label">Min Prior Trades</label>
+            <input type="number" name="insider_baseline_min_prior_trades"
+                   value="{{ config.insider_baseline.min_prior_trades }}"
+                   step="1" min="1" max="20" class="config-input" form="logic-form" />
+            <p class="config-hint">Need at least this many earlier buys before flagging -- avoids false "outliers" from a thin history.</p>
+          </div>
+          <div>
+            <label class="config-label">Size Multiplier</label>
+            <input type="number" name="insider_baseline_size_multiplier"
+                   value="{{ config.insider_baseline.size_multiplier }}"
+                   step="0.5" min="1" max="20" class="config-input" form="logic-form" />
+            <p class="config-hint">Flag when a buy is at least this many times the insider's own median prior buy.</p>
+          </div>
+          <div>
+            <label class="config-label">Silence Threshold (days)</label>
+            <input type="number" name="insider_baseline_silence_days"
+                   value="{{ config.insider_baseline.silence_days }}"
+                   step="30" min="30" max="3650" class="config-input" form="logic-form" />
+            <p class="config-hint">Flag when it's been at least this many days since the insider's last open market buy.</p>
+          </div>
+        </div>
+      </section>
+
       <!-- Sortable columns -->
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <h2 class="text-white font-semibold mb-1">Sortable Columns</h2>
@@ -440,16 +474,16 @@
     <section class="bg-gray-900 border border-gray-800 rounded-xl p-5 opacity-70">
       <h2 class="text-gray-300 font-semibold mb-3">Phase 2 Roadmap</h2>
       <ul class="text-gray-500 text-xs space-y-2.5">
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Conviction score</strong> — 1–10 per trade combining role weight, % holdings change, cluster membership, 10b5-1 status. Research-backed weights.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Conviction score</strong> — live. 1–10 per trade combining role weight, % holdings change, cluster membership, 10b5-1 status.</span></li>
         <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Slack alerts</strong> — live. Big buy, C-suite buy, cluster detection. Dedup via alerts_sent table.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Insider history baseline</strong> — is this buy unusual vs. this insider's own past? Flag when size or frequency is an outlier.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Earnings proximity flag</strong> — mark trades within 10 days of earnings. Research shows these carry strongest info content.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Insider history baseline</strong> — live. Flags a buy as unusual vs. this insider's own trade history — size or timing outlier.</span></li>
+        <li class="flex gap-2"><span class="text-red-500 mt-0.5 shrink-0">⊘</span><span><strong class="text-gray-400">Earnings proximity flag</strong> — mark trades within 10 days of earnings. Research shows these carry strongest info content. <span class="text-red-400">Blocked:</span> requires Polygon's Benzinga Earnings add-on for real historical announcement dates (<code class="text-gray-500">period_of_report_date</code> from the existing financials endpoint is only a rough estimate, off by weeks). Tested 2026-07-16 — current API key gets <code class="text-gray-500">403 NOT_AUTHORIZED</code>. Needs a plan upgrade before this is worth building.</span></li>
         <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Sector enrichment</strong> — live. SIC codes fetched from EDGAR, mapped to 11 sectors. Sector filter in dashboard.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Watchlist</strong> — pin specific tickers or insiders to a personal watchlist tab.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Date range view</strong> — week/month aggregation alongside the daily view.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Amendment resolution</strong> — merge 4/A amendments with originals instead of storing as separate rows.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">CSV export</strong> — download filtered table as spreadsheet.</span></li>
-        <li class="flex gap-2"><span class="text-indigo-500 mt-0.5 shrink-0">○</span><span><strong class="text-gray-400">Issuer trend chart</strong> — rolling 90-day buy/sell ratio sparkline on issuer page.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Watchlist</strong> — live. Pin tickers or insiders to a personal watchlist tab.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Date range view</strong> — live. Week/month aggregation alongside the daily view.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Amendment resolution</strong> — live. 4/A amendments merged with originals via superseded_by.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">CSV export</strong> — live. Download filtered table as spreadsheet.</span></li>
+        <li class="flex gap-2"><span class="text-green-600 mt-0.5 shrink-0">✓</span><span><strong class="text-gray-400">Issuer trend chart</strong> — live. Rolling buy/sell ratio sparkline on issuer page.</span></li>
       </ul>
     </section>
 

@@ -146,6 +146,12 @@
             <td class="td" style="font-size:.85rem;color:var(--text-1);">
               <a href="/insider/{{ row.insider_cik }}" class="hover:underline hover:text-sky-400">{{ row.insider_name }}</a>
               {{ watch_star('insider', row.insider_cik, row.insider_name, row.is_watched, font_size='.65rem', margin='3px') }}
+              {% if row.baseline_flag %}
+              <span style="font-size:.68rem;color:var(--amber);margin-left:3px;"
+                    title="{% if row.baseline_flag.size_outlier %}{{ '%.1f' | format(row.baseline_flag.multiple) }}x their typical buy{% endif %}{% if row.baseline_flag.size_outlier and row.baseline_flag.silence_outlier %} · {% endif %}{% if row.baseline_flag.silence_outlier %}First buy in {{ (row.baseline_flag.gap_days / 30) | round(1) }} months{% endif %}">
+                {% if row.baseline_flag.size_outlier %}📈{% endif %}{% if row.baseline_flag.silence_outlier %}🕐{% endif %}
+              </span>
+              {% endif %}
             </td>
             <td class="td" style="font-size:.80rem;color:var(--text-2);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ row.insider_title or '—' }}</td>
             <td class="td num text-right" data-col="shares" style="color:var(--text-2);">{{ "{:,.0f}".format(row.shares) if row.shares else '—' }}</td>
@@ -194,6 +200,12 @@
         <div style="font-size:.82rem;color:var(--text-1);">
           <a href="/insider/{{ row.insider_cik }}" style="color:var(--text-1);">{{ row.insider_name }}</a>
           {% if row.insider_title %}<span style="color:var(--text-3);"> · {{ row.insider_title }}</span>{% endif %}
+          {% if row.baseline_flag %}
+          <span style="font-size:.68rem;color:var(--amber);margin-left:3px;"
+                title="{% if row.baseline_flag.size_outlier %}{{ '%.1f' | format(row.baseline_flag.multiple) }}x their typical buy{% endif %}{% if row.baseline_flag.size_outlier and row.baseline_flag.silence_outlier %} · {% endif %}{% if row.baseline_flag.silence_outlier %}First buy in {{ (row.baseline_flag.gap_days / 30) | round(1) }} months{% endif %}">
+            {% if row.baseline_flag.size_outlier %}📈{% endif %}{% if row.baseline_flag.silence_outlier %}🕐{% endif %}
+          </span>
+          {% endif %}
         </div>
         <div style="font-size:.74rem;color:var(--text-3);margin-top:4px;">
           <a href="/filing/{{ row.transaction_id }}" style="color:var(--text-3);">{{ row.filed_rel }}</a>

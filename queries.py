@@ -32,6 +32,8 @@ class EnrichContext:
     watched_tickers: set[str] = field(default_factory=set)     # Session 6
     watched_insiders: set[str] = field(default_factory=set)    # Session 6
     compute_conviction: bool = False
+    insider_baseline_cfg: dict | None = None    # INSIDER_BASELINE values
+    compute_insider_baseline: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,12 @@ MARKET_CAP_TIERS = {
 def _sanitize_codes(codes: list[str] | None) -> tuple[list[str], str]:
     result = [c for c in (codes or ["P", "S"]) if c in ("P", "S")] or ["P", "S"]
     return result, ",".join(["%s"] * len(result))
+
+
+def _iso_date(v) -> str | None:
+    if v is None:
+        return None
+    return v.isoformat() if isinstance(v, date) else str(v)
 
 
 def _fmt_value(v: float | None) -> str:
@@ -195,6 +203,87 @@ def _batch_cluster_counts(
     return result
 
 
+def _batch_insider_baseline(
+    conn: psycopg.Connection,
+    rows: list[dict],
+    baseline_cfg: dict,
+) -> dict[tuple, dict]:
+    """
+    Flag P-code buys that are unusual vs. this insider's own trade history --
+    either size (>= size_multiplier x their own median prior buy) or timing
+    (>= silence_days since their last P-trade). One query fetches each
+    insider's full P-trade history; the per-trade comparison happens in
+    Python so a trade is only measured against trades strictly before it in
+    that insider's own timeline (point-in-time correct, not all-time-inclusive).
+    """
+    min_prior  = baseline_cfg.get("min_prior_trades", 2)
+    multiplier = baseline_cfg.get("size_multiplier", 3.0)
+    silence    = baseline_cfg.get("silence_days", 365)
+
+    ciks = {
+        r.get("insider_cik") for r in rows
+        if r.get("insider_cik") and r.get("transaction_code") == "P"
+    }
+    if not ciks:
+        return {}
+
+    placeholders = ",".join(["%s"] * len(ciks))
+    history = conn.execute(
+        f"""SELECT insider_cik, transaction_date, total_value
+            FROM filings
+            WHERE insider_cik IN ({placeholders})
+              AND transaction_code = 'P'
+              AND superseded_by IS NULL
+              AND joint_filer_of IS NULL
+              AND table_type = 'ND'
+              AND total_value IS NOT NULL
+            ORDER BY insider_cik, transaction_date""",
+        list(ciks),
+    ).fetchall()
+
+    by_insider: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for h in history:
+        by_insider[h["insider_cik"]].append((_iso_date(h["transaction_date"]), h["total_value"]))
+
+    # Original (insider_cik, transaction_date) keys may carry date objects from
+    # the caller's rows -- key the output the same way _batch_cluster_counts
+    # does, so a lookup with the row's own (possibly non-string) value hits.
+    trade_date_by_key: dict[tuple[str, str], object] = {
+        (r.get("insider_cik"), _iso_date(r.get("transaction_date"))): r.get("transaction_date")
+        for r in rows
+    }
+
+    flags: dict[tuple, dict] = {}
+    for cik, trades in by_insider.items():
+        for i, (td, value) in enumerate(trades):
+            prior = trades[:i]
+            if len(prior) < min_prior:
+                continue
+            prior_values = sorted(v for _, v in prior)
+            mid = len(prior_values) // 2
+            median_val = (
+                prior_values[mid] if len(prior_values) % 2
+                else (prior_values[mid - 1] + prior_values[mid]) / 2
+            )
+            gap_days = (date.fromisoformat(td) - date.fromisoformat(prior[-1][0])).days
+
+            is_size_outlier = median_val > 0 and value >= median_val * multiplier
+            is_silence_outlier = gap_days >= silence
+            if not (is_size_outlier or is_silence_outlier):
+                continue
+            td_orig = trade_date_by_key.get((cik, td))
+            if td_orig is None:
+                continue  # this historical trade isn't in the current result set
+            flags[(cik, td_orig)] = {
+                "size_outlier": is_size_outlier,
+                "silence_outlier": is_silence_outlier,
+                "median_value": median_val,
+                "multiple": (value / median_val) if median_val > 0 else None,
+                "gap_days": gap_days,
+            }
+    return flags
+
+
 def _conviction_score(
     row: dict,
     tiers: dict,
@@ -280,6 +369,12 @@ def _enrich(rows: list[dict], ctx: EnrichContext | None = None) -> list[dict]:
         cluster_counts = _batch_cluster_counts(
             ctx.conn, raw_dicts, ctx.cluster_window_days
         )
+
+    baseline_flags: dict[tuple, dict] = {}
+    if ctx and ctx.compute_insider_baseline and ctx.conn and ctx.insider_baseline_cfg:
+        baseline_flags = _batch_insider_baseline(
+            ctx.conn, raw_dicts, ctx.insider_baseline_cfg
+        )
     rows_to_process = raw_dicts
 
     thresholds = (ctx.conviction_thresholds or {}) if ctx else {}
@@ -348,6 +443,8 @@ def _enrich(rows: list[dict], ctx: EnrichContext | None = None) -> list[dict]:
             )
         else:
             d["is_watched"] = False
+
+        d["baseline_flag"] = baseline_flags.get((d.get("insider_cik"), d.get("transaction_date")))
 
         result.append(d)
     return result

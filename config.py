@@ -46,6 +46,12 @@ CONVICTION_MAX = 10
 CONVICTION_CLUSTER_WINDOW_DAYS = 14  # separate from alert cluster_window_days
 CONVICTION_THRESHOLDS = {"high": 8, "medium": 5}  # tier labels for color coding
 
+INSIDER_BASELINE = {
+    "min_prior_trades": 2,     # need at least this many earlier P-trades before flagging
+    "size_multiplier": 3.0,    # flag when a buy is >= this many times the insider's own median prior buy
+    "silence_days": 365,       # flag when it's been at least this many days since their last P-trade
+}
+
 FILTER_DEFAULTS = {
     "min_value": 100_000,
     "transaction_codes": ["P", "S"],
@@ -140,6 +146,7 @@ def load_config() -> dict:
         "conviction_max": CONVICTION_MAX,
         "conviction_cluster_window_days": CONVICTION_CLUSTER_WINDOW_DAYS,
         "conviction_thresholds": dict(CONVICTION_THRESHOLDS),
+        "insider_baseline": dict(INSIDER_BASELINE),
         "sec_user_agent": SEC_USER_AGENT,
         "sec_rate_limit": SEC_RATE_LIMIT,
         "ticker_cache_days": TICKER_CACHE_DAYS,
@@ -148,7 +155,7 @@ def load_config() -> dict:
     if os.path.exists(OVERRIDES_PATH):
         with open(OVERRIDES_PATH) as f:
             overrides = json.load(f)
-        for section in ("alert_rules", "filter_defaults", "conviction_flags"):
+        for section in ("alert_rules", "filter_defaults", "conviction_flags", "insider_baseline"):
             if section in overrides:
                 cfg[section].update(overrides[section])
     return cfg
@@ -158,18 +165,24 @@ def save_overrides(
     alert_rules: dict,
     filter_defaults: dict,
     conviction_flags: dict | None = None,
+    insider_baseline: dict | None = None,
 ) -> None:
     """Persist edits made via the /logic page."""
-    # Merge with existing overrides so we don't clobber sections not being saved
+    # Merge with existing overrides so we don't clobber sections not being saved.
+    # Sections are updated key-by-key (not replaced wholesale) so fields with no
+    # form control yet (e.g. alert_rules.signal_scan_*) survive a save of other
+    # fields in the same section instead of silently reverting to the default.
     existing: dict = {}
     if os.path.exists(OVERRIDES_PATH):
         with open(OVERRIDES_PATH) as f:
             existing = json.load(f)
 
-    existing["alert_rules"] = alert_rules
-    existing["filter_defaults"] = filter_defaults
+    existing.setdefault("alert_rules", {}).update(alert_rules)
+    existing.setdefault("filter_defaults", {}).update(filter_defaults)
     if conviction_flags is not None:
-        existing["conviction_flags"] = conviction_flags
+        existing.setdefault("conviction_flags", {}).update(conviction_flags)
+    if insider_baseline is not None:
+        existing.setdefault("insider_baseline", {}).update(insider_baseline)
 
     with open(OVERRIDES_PATH, "w") as f:
         json.dump(existing, f, indent=2)
