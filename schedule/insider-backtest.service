@@ -1,0 +1,11 @@
+[Unit]
+Description=Insider Tracker — Daily backtest (insider buy trend signals)
+After=insider-backup.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+ExecStart=/home/deploy/insider-tracker/.venv/bin/python backtest.py
+MemoryMax=512M

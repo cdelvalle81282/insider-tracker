@@ -1,0 +1,9 @@
+[Unit]
+Description=Run insider backtest daily after backup completes
+
+[Timer]
+OnCalendar=*-*-* 06:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

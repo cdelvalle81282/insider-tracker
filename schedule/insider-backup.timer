@@ -1,8 +1,8 @@
 [Unit]
-Description=Insider Tracker — Daily SQLite backup (05:00 UTC, after nightly ingest)
+Description=Insider Tracker — Daily PostgreSQL backup (05:30 UTC, after nightly ingest + sync_job)
 
 [Timer]
-OnCalendar=*-*-* 05:00 UTC
+OnCalendar=*-*-* 05:30 UTC
 Persistent=true
 Unit=insider-backup.service
 
