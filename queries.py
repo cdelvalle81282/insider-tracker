@@ -466,10 +466,15 @@ _SORT_COLUMNS = {
 
 # Regex used by hide_entity_filers filter — drops entity-named filers (funds, institutions)
 # who are NOT officers. Keeps officers filing through personal LLCs/trusts (is_officer=1).
+# Includes common foreign corporate suffixes (Mexican S.A. de C.V., Dutch N.V./B.V., Italian
+# S.p.A., German GmbH, UK PLC, Brazilian/Portuguese Ltda) alongside the English-only terms —
+# without these, foreign 10%-owner entities (e.g. "Control Empresarial de Capitales S.A. de
+# C.V.", PBF Energy's largest holder) slipped through "Individuals Only" undetected.
 _ENTITY_FILER_RE = (
     r"\y(llc|lp|ltd|inc|corp|fund|trust|capital|partners|management|holdings|"
     r"investment|investments|advisors|advisor|group|equity|ventures|associates|"
-    r"foundation|partnership|company|securities|financial|lending|realty|properties)\y"
+    r"foundation|partnership|company|securities|financial|lending|realty|properties|"
+    r"gmbh|plc|ltda|s\.?a\.?(b\.?)?\s+de\s+c\.?v|s\.a|s\.p\.a|n\.v|b\.v)\y"
 )
 
 
