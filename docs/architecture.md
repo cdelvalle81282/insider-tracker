@@ -20,6 +20,7 @@ Other tables:
 | `watchlist` | Pinned tickers and insider CIKs |
 | `ticker_metadata` | `ticker → has_options (0/1), market_cap (float)` — populated by `--backfill-metadata` |
 | `congress_trades` | Congressional trades from AInvest API — `source, transaction_id (UNIQUE), politician_name, chamber, party, state, ticker, transaction_type, transaction_date, disclosure_date, amount_*` |
+| `insider_perf_profile` | Per-insider forward excess return vs. SPY at 30/60/90d, `win_*/avg_*/med_*/n_trades/peak_window/profile_label`. Research table, not in migrations — created and refreshed by `insider-perf-profile.timer` (`backtest_insiders.py` + `load_insider_profiles.py`), weekly. Feeds `/leaderboard` and Cluster Activity quality badges |
 
 ## Concurrency model
 
@@ -53,3 +54,7 @@ Other tables:
 - **Market Cap tiers** — multi-checkbox: Micro/Small/Mid/Large/Mega; defined in `queries.MARKET_CAP_TIERS`. Unenriched tickers remain visible.
 - **Congressional trades tab** — `/congress`; sourced from AInvest API (live 2024+ data); filterable by chamber, party, type, ticker, politician
 - **Executive branch trades** — `/congress` Source filter `open_cabinet`; OGE 278-T filings via Open Cabinet; `exec_ingest.py` refreshes weekly
+- **Leaderboard** — `/leaderboard`; ranks insiders from `insider_perf_profile` by forward excess return vs. SPY, sortable/filterable by role and min trades
+- **Insider Sentiment Index** — `/leaderboard`; market-wide weekly net $ bought vs. sold, 26-week diverging bar chart, same real-signal filters as the dashboard's Net Flow KPI
+- **Cross-Company Buying** — `/leaderboard`; flags individuals (not funds) who are insiders at 2+ companies, recently buying at one — reuses `_ENTITY_FILER_RE`
+- **Cluster quality rating** — Cluster Activity cards show a Strong/Mixed/Weak track-record badge weighted by the `insider_perf_profile` history of the specific insiders in that cluster

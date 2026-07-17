@@ -44,11 +44,14 @@ This file + the docs/ folder + the gitignored `private/` folder is the instituti
 | `health_check.py` | Nightly health check — queries `run_log` and posts Slack alert if nightly ingest missed |
 | `polygon_client.py` | Polygon.io: daily OHLCV bars, earnings, and `fetch_ticker_metadata()` (market cap + options) |
 | `congress_ingest.py` | Congressional trades ingester — AInvest API, ticker-by-ticker, run manually or on schedule |
+| `backtest_insiders.py` | Per-insider forward excess return vs. SPY, writes `data/insider_backtest.csv`. Runs weekly via `insider-perf-profile.timer` |
+| `load_insider_profiles.py` | Loads `data/insider_backtest.csv` into `insider_perf_profile`, auto-adds high-win-rate insiders to the watchlist. Runs weekly via `insider-perf-profile.timer`, right after `backtest_insiders.py` |
 | `exec_ingest.py` | Executive branch trades ingester — Open Cabinet JSON download, weekly refresh, no API key needed |
 | `templates/chart.html` | Candlestick chart page with insider markers (TradingView Lightweight Charts) |
 | `templates/logic.html` | Logic & Config tab — editable thresholds, conviction weights, research basis |
 | `templates/watchlist.html` | Watchlist management page |
 | `templates/insider.html` | Insider detail page — all trades by one person across all companies |
+| `templates/leaderboard.html` | Leaderboard tab — insider track-record ranking, sentiment index chart, cross-company buying |
 | `templates/congress.html` | Congressional trades tab — AInvest data, chamber/party/type filters |
 | `templates/base.html` | Shared nav; add new tabs here |
 

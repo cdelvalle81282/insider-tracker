@@ -1,0 +1,11 @@
+[Unit]
+Description=Insider Tracker — Weekly insider performance profile refresh
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+ExecStart=/home/deploy/insider-tracker/.venv/bin/python backtest_insiders.py
+ExecStart=/home/deploy/insider-tracker/.venv/bin/python load_insider_profiles.py
+MemoryMax=512M
