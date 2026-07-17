@@ -186,6 +186,7 @@ def main() -> None:
 
     print(f"\nWatchlist: {added} added, {already} already tracked")
 
+    conn.commit()
     conn.close()
     print("\nDone.")
 
