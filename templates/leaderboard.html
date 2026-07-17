@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Leaderboard — Insider Scanner{% endblock %}
+{% block nav_leaderboard %}active{% endblock %}
+
+{% macro sort_link(label, col) %}
+<a href="/leaderboard?{{ {'sort_by': col, 'min_trades': min_trades, 'role': role} | urlencode }}"
+   class="hover:text-sky-400" style="text-decoration:none;color:{% if sort_by == col %}var(--sky){% else %}var(--text-3){% endif %};">
+  {{ label }}{% if sort_by == col %} ↓{% endif %}
+</a>
+{% endmacro %}
+
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-xl font-bold" style="color:var(--text-1);">Leaderboard</h1>
+  <p style="color:var(--text-2);font-size:.90rem;margin-top:4px;">
+    Market-wide signals beyond a single stock — whose past buys actually predicted a move, whether insiders as a group are net bullish or bearish, and who's buying outside their own company.
+  </p>
+</div>
+
+<!-- ── Insider Sentiment Index ────────────────────────────────────── -->
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
+    Insider Sentiment Index <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— weekly net $ bought vs. sold, last 26 weeks</span>
+  </h2>
+  {% if sentiment_svg %}
+  <div style="margin-top:10px;">
+    {{ sentiment_svg | safe }}
+  </div>
+  <p style="font-size:.74rem;color:var(--text-3);margin-top:6px;">
+    <span style="color:var(--buy);">■</span> Net buying &nbsp;
+    <span style="color:var(--sell);">■</span> Net selling &nbsp;·&nbsp;
+    Excludes 10b5-1 plan sales and equity swaps (scheduled, non-discretionary) — same filters as the dashboard's Net Flow figure. Hover a bar for exact $.
+  </p>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">No data yet.</p>
+  {% endif %}
+</div>
+
+<!-- ── Cross-Company Buying ───────────────────────────────────────── -->
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
+    Cross-Company Buying <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— last 90 days</span>
+  </h2>
+  <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;">
+    Individuals (not funds) who are insiders at more than one company, caught buying. Rare — sometimes precedes a disclosed partnership or deal.
+  </p>
+  {% if cross_company %}
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">Insider</th>
+          <th class="th text-left">Bought Into</th>
+          <th class="th text-left">Role There</th>
+          <th class="th text-right">Companies</th>
+          <th class="th text-right">Value</th>
+          <th class="th text-right">When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in cross_company %}
+        <tr class="row-buy">
+          <td class="td">
+            <a href="/insider/{{ r.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);">{{ r.insider_name }}</a>
+          </td>
+          <td class="td">
+            <a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ r.issuer_ticker or '—' }}</a>
+            <span style="color:var(--text-3);font-size:.8rem;margin-left:4px;">{{ r.issuer_name }}</span>
+          </td>
+          <td class="td" style="color:var(--text-2);font-size:.85rem;">
+            {% if r.is_officer %}Officer{% elif r.is_director %}Director{% elif r.is_ten_percent_owner %}10% Owner{% else %}Other{% endif %}
+          </td>
+          <td class="td num text-right" style="color:var(--text-3);">{{ r.n_companies }}</td>
+          <td class="td num text-right" style="color:var(--buy);font-weight:600;">{{ r.value_fmt }}</td>
+          <td class="td num text-right" style="color:var(--text-3);font-size:.85rem;">
+            {{ 'Today' if r.days_ago == 0 else (r.days_ago ~ 'd ago') }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">No cross-company buys in the last 90 days.</p>
+  {% endif %}
+</div>
+
+<!-- ── Insider Leaderboard ────────────────────────────────────────── -->
+<div class="surface" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
+    Insider Leaderboard <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— forward return vs. SPY after each open-market buy</span>
+  </h2>
+
+  <form method="GET" action="/leaderboard" class="flex flex-wrap items-center gap-2" style="margin:12px 0;">
+    <input type="hidden" name="sort_by" value="{{ sort_by }}" />
+    <div class="fg">
+      <span class="fg-label">Min Trades</span>
+      <div class="fg-sep"></div>
+      <input type="number" name="min_trades" value="{{ min_trades }}" min="1" step="1" class="fg-in" style="width:56px;" onchange="this.form.submit()" />
+    </div>
+    <div class="fg">
+      <span class="fg-label">Role</span>
+      <div class="fg-sep"></div>
+      <select name="role" class="fg-in" style="cursor:pointer;" onchange="this.form.submit()">
+        <option value="">All roles</option>
+        {% for r in roles %}
+        <option value="{{ r }}" {% if role == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn-ghost">Apply</button>
+  </form>
+
+  {% if leaderboard %}
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">#</th>
+          <th class="th text-left">Insider</th>
+          <th class="th text-left">Role</th>
+          <th class="th text-right">{{ sort_link('Trades', 'n_trades') }}</th>
+          <th class="th text-right">{{ sort_link('Win 90d', 'win_90') }}</th>
+          <th class="th text-right">{{ sort_link('Med 90d', 'med_90') }}</th>
+          <th class="th text-right">{{ sort_link('Avg 90d', 'avg_90') }}</th>
+          <th class="th text-left">Peak</th>
+          <th class="th text-left">Profile</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in leaderboard %}
+        <tr>
+          <td class="td num" style="color:var(--text-3);">{{ loop.index }}</td>
+          <td class="td">
+            <a href="/insider/{{ p.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);font-weight:600;">{{ p.insider_name }}</a>
+          </td>
+          <td class="td" style="color:var(--text-2);font-size:.85rem;">{{ p.role or '—' }}</td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ p.n_trades }}</td>
+          <td class="td num text-right" style="color:{% if p.win_90 and p.win_90 >= 0.7 %}var(--buy){% elif p.win_90 and p.win_90 >= 0.5 %}var(--amber){% else %}var(--sell){% endif %};font-weight:600;">
+            {% if p.win_90 is not none %}{{ (p.win_90 * 100) | round | int }}%{% else %}—{% endif %}
+          </td>
+          <td class="td num text-right" style="color:{% if p.med_90 and p.med_90 > 0 %}var(--buy){% else %}var(--sell){% endif %};">
+            {% if p.med_90 is not none %}{% if p.med_90 > 0 %}+{% endif %}{{ "%.1f" | format(p.med_90) }}%{% else %}—{% endif %}
+          </td>
+          <td class="td num text-right" style="color:var(--text-3);">
+            {% if p.avg_90 is not none %}{% if p.avg_90 > 0 %}+{% endif %}{{ "%.1f" | format(p.avg_90) }}%{% else %}—{% endif %}
+          </td>
+          <td class="td num" style="color:var(--text-3);">{{ p.peak_window }}d</td>
+          <td class="td">
+            <span style="font-size:.72rem;padding:.1rem .4rem;border-radius:4px;background:rgba(255,255,255,.06);color:var(--text-2);">{{ p.profile_label }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:10px;font-size:.72rem;color:var(--text-3);">
+    "Win/Med/Avg 90d" = forward excess return vs. SPY, 90 days from each buy's transaction date. Positive median = outperformed the broad market more often than not.
+  </p>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">
+    No backtest data yet. Run <code>backtest_insiders.py</code> then <code>load_insider_profiles.py</code> to populate this leaderboard.
+  </p>
+  {% endif %}
+</div>
+
+{% endblock %}

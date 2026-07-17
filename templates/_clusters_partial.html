@@ -50,6 +50,16 @@
 
         <span style="font-size:.70rem;font-weight:700;padding:2px 8px;border-radius:20px;background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.22);flex-shrink:0;">{{ c.insider_count }} insiders</span>
 
+        {% if c.quality %}
+        <span title="{{ c.quality.coverage }}/{{ c.quality.total }} insiders profiled · avg {{ (c.quality.avg_win_90 * 100) | round | int }}% win rate · {% if c.quality.avg_med_90 > 0 %}+{% endif %}{{ '%.1f' | format(c.quality.avg_med_90) }}% median 90d excess vs. SPY"
+              style="font-size:.68rem;font-weight:700;padding:2px 7px;border-radius:20px;flex-shrink:0;
+              {% if c.quality.avg_win_90 >= 0.7 %}background:rgba(15,206,160,.12);color:var(--buy);border:1px solid rgba(15,206,160,.28);
+              {% elif c.quality.avg_win_90 >= 0.5 %}background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.22);
+              {% else %}background:rgba(246,75,110,.1);color:var(--sell);border:1px solid rgba(246,75,110,.22);{% endif %}">
+          {{ c.quality.label }} ({{ c.quality.coverage }}/{{ c.quality.total }})
+        </span>
+        {% endif %}
+
         <span class="num font-bold shrink-0" style="font-size:.94rem;color:{% if c.direction == 'buy' %}var(--buy){% elif c.direction == 'sell' %}var(--sell){% else %}var(--amber){% endif %};">{{ c.total_value_fmt or '—' }}</span>
       </summary>
 

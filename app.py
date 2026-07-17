@@ -200,6 +200,49 @@ def render_sparkline(series: list[dict]) -> str:
     )
 
 
+def render_sentiment_chart(series: list[dict]) -> str:
+    """Render market-wide weekly net insider buy/sell $ as a diverging bar chart --
+    green above the zero baseline (net buying that week), red below (net selling).
+    Native <title> tooltips give per-bar detail without a JS charting dependency.
+    Returns '' when every week nets to zero."""
+    if not series or all(p["net"] == 0 for p in series):
+        return ""
+
+    W, H, PAD_X, PAD_Y = 900, 200, 8, 20
+    n = len(series)
+    gap = 2
+    bar_w = max((W - 2 * PAD_X) / n - gap, 1)
+    mid_y = H / 2
+    max_abs = max(abs(p["net"]) for p in series) or 1
+    half_h = mid_y - PAD_Y
+
+    bars = []
+    for i, p in enumerate(series):
+        net = p["net"]
+        x = PAD_X + i * (bar_w + gap)
+        bar_h = abs(net) / max_abs * half_h
+        y = mid_y - bar_h if net >= 0 else mid_y
+        color = "#0fcea0" if net >= 0 else "#f64b6e"
+        label = "Net buying" if net >= 0 else "Net selling"
+        bars.append(
+            f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{max(bar_h, 0.5):.1f}" '
+            f'fill="{color}" rx="1.5">'
+            f'<title>Week of {p["week"]} — {label} {p["net_fmt"]} '
+            f'(bought {queries._fmt_value(p["buy_total"])}, sold {queries._fmt_value(p["sell_total"])})</title>'
+            f'</rect>'
+        )
+
+    first_label, last_label = series[0]["week"], series[-1]["week"]
+    return (
+        f'<svg viewBox="0 0 {W} {H}" class="w-full" style="height:180px;display:block;">'
+        f'<line x1="{PAD_X}" y1="{mid_y:.1f}" x2="{W-PAD_X}" y2="{mid_y:.1f}" stroke="#374151" stroke-width="1"/>'
+        + "".join(bars) +
+        f'<text x="{PAD_X}" y="{H-4}" font-size="11" fill="#6b7280">{first_label}</text>'
+        f'<text x="{W-PAD_X}" y="{H-4}" font-size="11" fill="#6b7280" text-anchor="end">{last_label}</text>'
+        f'</svg>'
+    )
+
+
 def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
     """Build an EnrichContext with conviction config and watchlist sets."""
     return EnrichContext(
@@ -659,6 +702,9 @@ async def htmx_clusters(
                 date_range=date_range_arg,
                 codes=effective_codes,
             )
+            clusters = await asyncio.to_thread(
+                queries.enrich_clusters_with_quality, db, clusters
+            )
         finally:
             put_db(db)
         html = templates.env.get_template("_clusters_partial.html").render({"clusters": clusters})
@@ -897,6 +943,33 @@ async def insider_view(
         "perf_profile": perf_profile,
         "name": name,
         "cik": cik,
+    })
+
+
+@app.get("/leaderboard", response_class=HTMLResponse)
+@limiter.limit("30/minute")
+async def leaderboard_view(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+    sort_by: str = Query(default="med_90"),
+    min_trades: int = Query(default=5, ge=1),
+    role: str | None = Query(default=None),
+):
+    leaderboard = queries.get_insider_leaderboard(
+        db, sort_by=sort_by, min_trades=min_trades, role=role or None, limit=50
+    )
+    roles = queries.get_insider_leaderboard_roles(db)
+    sentiment_series = queries.get_sentiment_index(db, weeks=26)
+    sentiment_svg = render_sentiment_chart(sentiment_series)
+    cross_company = queries.get_cross_company_buys(db, lookback_days=90, limit=25)
+    return templates.TemplateResponse(request, "leaderboard.html", {
+        "leaderboard": leaderboard,
+        "roles": roles,
+        "sort_by": sort_by,
+        "min_trades": min_trades,
+        "role": role or "",
+        "sentiment_svg": sentiment_svg,
+        "cross_company": cross_company,
     })
 
 

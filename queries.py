@@ -1214,6 +1214,60 @@ def get_cluster_activity(
     return result
 
 
+def enrich_clusters_with_quality(conn: psycopg.Connection, clusters: list[dict]) -> list[dict]:
+    """Attach a quality rating to each cluster card based on the historical track
+    record (insider_perf_profile) of the specific insiders involved -- a 5-insider
+    cluster of unproven buyers isn't the same signal as a 3-insider cluster where
+    two have a strong forward-return record. Sets clusters[i]['quality'] = None
+    when no involved insider is profiled, or the table doesn't exist yet."""
+    all_ciks = sorted({
+        tx["insider_cik"]
+        for c in clusters
+        for tx in c.get("transactions", [])
+        if tx.get("insider_cik")
+    })
+    if not all_ciks:
+        for c in clusters:
+            c["quality"] = None
+        return clusters
+
+    try:
+        rows = conn.execute(
+            "SELECT insider_cik, win_90, med_90 FROM insider_perf_profile WHERE insider_cik = ANY(%s)",
+            [all_ciks],
+        ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        for c in clusters:
+            c["quality"] = None
+        return clusters
+
+    profiles = {r["insider_cik"]: r for r in rows}
+
+    for c in clusters:
+        distinct_insiders = {tx["insider_cik"] for tx in c.get("transactions", []) if tx.get("insider_cik")}
+        matched = [profiles[cik] for cik in distinct_insiders if cik in profiles]
+        if not matched:
+            c["quality"] = None
+            continue
+        avg_win_90 = sum(m["win_90"] or 0 for m in matched) / len(matched)
+        avg_med_90 = sum(m["med_90"] or 0 for m in matched) / len(matched)
+        if avg_win_90 >= 0.70:
+            label = "Strong track record"
+        elif avg_win_90 >= 0.50:
+            label = "Mixed track record"
+        else:
+            label = "Weak track record"
+        c["quality"] = {
+            "coverage": len(matched),
+            "total": len(distinct_insiders),
+            "avg_win_90": avg_win_90,
+            "avg_med_90": avg_med_90,
+            "label": label,
+        }
+    return clusters
+
+
 def get_filing_detail(
     conn: psycopg.Connection,
     transaction_id: str,
@@ -1388,6 +1442,150 @@ def get_insider_perf_profile(conn: psycopg.Connection, insider_cik: str) -> dict
     except psycopg.errors.UndefinedTable:
         conn.rollback()
         return None
+
+
+_LEADERBOARD_SORT_COLUMNS = {
+    "win_90": "win_90", "avg_90": "avg_90", "med_90": "med_90",
+    "win_60": "win_60", "avg_60": "avg_60", "med_60": "med_60",
+    "win_30": "win_30", "avg_30": "avg_30", "med_30": "med_30",
+    "n_trades": "n_trades",
+}
+
+
+def get_insider_leaderboard(
+    conn: psycopg.Connection,
+    sort_by: str = "med_90",
+    min_trades: int = 5,
+    role: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Rank insiders by historical forward-return track record vs. SPY.
+    Table is optional (populated by backtest_insiders.py + load_insider_profiles.py)
+    — returns [] if absent, same as get_insider_perf_profile."""
+    col = _LEADERBOARD_SORT_COLUMNS.get(sort_by, "med_90")
+    role_filter = "AND role = %s" if role else ""
+    params: list = [min_trades]
+    if role:
+        params.append(role)
+    params.append(limit)
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT insider_cik, insider_name, role, n_trades,
+                   win_30, avg_30, med_30,
+                   win_60, avg_60, med_60,
+                   win_90, avg_90, med_90,
+                   peak_window, profile_label
+            FROM insider_perf_profile
+            WHERE n_trades >= %s
+              {role_filter}
+            ORDER BY {col} DESC NULLS LAST
+            LIMIT %s
+            """,
+            params,
+        ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return []
+    return [dict(r) for r in rows]
+
+
+def get_insider_leaderboard_roles(conn: psycopg.Connection) -> list[str]:
+    """Distinct roles in insider_perf_profile, for the leaderboard filter dropdown."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT role FROM insider_perf_profile WHERE role IS NOT NULL ORDER BY role"
+        ).fetchall()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return []
+    return [r["role"] for r in rows]
+
+
+def get_sentiment_index(conn: psycopg.Connection, weeks: int = 26) -> list[dict]:
+    """Market-wide weekly $ bought vs. $ sold, for the insider sentiment index chart.
+    Same 'real signal' filters as the dashboard KPI bar (excludes 10b5-1 plan sales
+    and equity swaps, which are scheduled/non-discretionary and would otherwise
+    dominate the sell side with noise unrelated to conviction)."""
+    today = date.today()
+    cutoff = (today - timedelta(weeks=weeks)).isoformat()
+
+    rows = conn.execute("""
+        SELECT date_trunc('week', filed_at)::date AS week_start,
+               COALESCE(SUM(CASE WHEN transaction_code='P' THEN total_value END), 0) AS buy_total,
+               COALESCE(SUM(CASE WHEN transaction_code='S' THEN total_value END), 0) AS sell_total
+        FROM filings
+        WHERE filed_at::date >= %s
+          AND table_type = 'ND'
+          AND superseded_by IS NULL AND joint_filer_of IS NULL
+          AND is_10b5_1 = 0 AND equity_swap = 0
+        GROUP BY week_start
+        ORDER BY week_start
+    """, [cutoff]).fetchall()
+
+    lookup = {}
+    for r in rows:
+        ws = r["week_start"]
+        key = ws.isoformat() if isinstance(ws, date) else str(ws)
+        lookup[key] = (r["buy_total"] or 0, r["sell_total"] or 0)
+
+    series = []
+    for i in range(weeks - 1, -1, -1):
+        key = _week_start(today - timedelta(weeks=i))
+        buy, sell = lookup.get(key, (0, 0))
+        series.append({
+            "week": key,
+            "buy_total": buy,
+            "sell_total": sell,
+            "net": buy - sell,
+            "net_fmt": _fmt_value(buy - sell),
+        })
+    return series
+
+
+def get_cross_company_buys(
+    conn: psycopg.Connection,
+    lookback_days: int = 90,
+    limit: int = 25,
+) -> list[dict]:
+    """Recent open-market buys by individuals (not funds/entities) who are also
+    filers at another, unrelated company -- rare, and sometimes precedes disclosed
+    partnerships/M&A. Reuses _ENTITY_FILER_RE so fund/VC filers who legitimately
+    sit on many boards (the common case) don't drown out genuine individuals."""
+    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    rows = conn.execute(
+        """
+        WITH multi_co AS (
+            SELECT insider_cik, COUNT(DISTINCT issuer_cik) AS n_companies
+            FROM filings
+            WHERE superseded_by IS NULL AND joint_filer_of IS NULL
+              AND NOT (insider_name ~* %s)
+            GROUP BY insider_cik
+            HAVING COUNT(DISTINCT issuer_cik) BETWEEN 2 AND 5
+        )
+        SELECT f.issuer_ticker, f.issuer_name, f.insider_cik, f.insider_name,
+               f.insider_title, f.is_officer, f.is_director, f.is_ten_percent_owner,
+               f.total_value, f.transaction_date, f.transaction_id,
+               m.n_companies
+        FROM filings f
+        JOIN multi_co m ON f.insider_cik = m.insider_cik
+        WHERE f.transaction_code = 'P'
+          AND f.table_type = 'ND'
+          AND f.transaction_date >= %s
+          AND f.superseded_by IS NULL AND f.joint_filer_of IS NULL
+        ORDER BY f.transaction_date DESC
+        LIMIT %s
+        """,
+        [_ENTITY_FILER_RE, cutoff, limit],
+    ).fetchall()
+    today = date.today()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["value_fmt"] = _fmt_value(d.get("total_value") or 0)
+        d["days_ago"] = (today - d["transaction_date"]).days if d.get("transaction_date") else None
+        result.append(d)
+    return result
 
 
 def get_insider_summary(conn: psycopg.Connection, insider_cik: str) -> dict:
