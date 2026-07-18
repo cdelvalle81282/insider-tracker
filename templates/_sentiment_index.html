@@ -1,0 +1,20 @@
+{% from "_macros.html" import info_tip %}
+{# Rendered by GET /htmx/sentiment-index — leaderboard's Insider Sentiment Index chart. No <html> wrapper. #}
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
+    Insider Sentiment Index <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— weekly net $ bought vs. sold, last 26 weeks</span>
+    {{ info_tip("Every open-market buy vs. sell dollar amount, summed by week, across all tracked filings — a read on whether insiders as a group are net bullish or bearish right now. Excludes scheduled 10b5-1 sales and equity swaps so it reflects discretionary conviction, not automatic selling.") }}
+  </h2>
+  {% if sentiment_svg %}
+  <div style="margin-top:10px;">
+    {{ sentiment_svg | safe }}
+  </div>
+  <p style="font-size:.74rem;color:var(--text-3);margin-top:6px;">
+    <span style="color:var(--buy);">■</span> Net buying &nbsp;
+    <span style="color:var(--sell);">■</span> Net selling &nbsp;·&nbsp;
+    Excludes 10b5-1 plan sales and equity swaps (scheduled, non-discretionary) — same filters as the dashboard's Net Flow figure. Hover a bar for exact $.
+  </p>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">No data yet.</p>
+  {% endif %}
+</div>

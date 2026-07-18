@@ -11,3 +11,7 @@
   onmouseover="this.style.color='var(--amber)'"
   onmouseout="this.style.color='{{ 'var(--amber)' if is_watched else 'var(--text-3)' }}'">{{ '★' if is_watched else '☆' }}</button>
 {%- endmacro %}
+
+{% macro info_tip(text) -%}
+<span class="info-tip" data-tip="{{ text }}">?</span>
+{%- endmacro %}

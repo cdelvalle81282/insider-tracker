@@ -1,0 +1,50 @@
+{% from "_macros.html" import info_tip %}
+{# Rendered by GET /htmx/cross-company — leaderboard's Cross-Company Buying panel. No <html> wrapper. #}
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
+    Cross-Company Buying <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— last 90 days</span>
+    {{ info_tip("Individuals who sit as an insider — officer, director, or 10%+ owner — at 2-5 different public companies, caught buying at one of them. Rare, and sometimes precedes a disclosed partnership, board appointment, or deal between the two companies. Funds/VCs that legitimately hold many board seats are excluded.") }}
+  </h2>
+  <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;">
+    Individuals (not funds) who are insiders at more than one company, caught buying. Rare — sometimes precedes a disclosed partnership or deal.
+  </p>
+  {% if cross_company %}
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">Insider</th>
+          <th class="th text-left">Bought Into</th>
+          <th class="th text-left">Role There</th>
+          <th class="th text-right">Companies</th>
+          <th class="th text-right">Value</th>
+          <th class="th text-right">When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in cross_company %}
+        <tr class="row-buy">
+          <td class="td">
+            <a href="/insider/{{ r.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);">{{ r.insider_name }}</a>
+          </td>
+          <td class="td">
+            <a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ r.issuer_ticker or '—' }}</a>
+            <span style="color:var(--text-3);font-size:.8rem;margin-left:4px;">{{ r.issuer_name }}</span>
+          </td>
+          <td class="td" style="color:var(--text-2);font-size:.85rem;">
+            {% if r.is_officer %}Officer{% elif r.is_director %}Director{% elif r.is_ten_percent_owner %}10% Owner{% else %}Other{% endif %}
+          </td>
+          <td class="td num text-right" style="color:var(--text-3);">{{ r.n_companies }}</td>
+          <td class="td num text-right" style="color:var(--buy);font-weight:600;">{{ r.value_fmt }}</td>
+          <td class="td num text-right" style="color:var(--text-3);font-size:.85rem;">
+            {{ 'Today' if r.days_ago == 0 else (r.days_ago ~ 'd ago') }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">No cross-company buys in the last 90 days.</p>
+  {% endif %}
+</div>

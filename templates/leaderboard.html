@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import info_tip %}
 {% block title %}Leaderboard — Insider Scanner{% endblock %}
 {% block nav_leaderboard %}active{% endblock %}
 
@@ -18,78 +19,27 @@
   </p>
 </div>
 
-<!-- ── Insider Sentiment Index ────────────────────────────────────── -->
-<div class="surface mb-6" style="padding:20px;">
-  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
-    Insider Sentiment Index <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— weekly net $ bought vs. sold, last 26 weeks</span>
-  </h2>
-  {% if sentiment_svg %}
-  <div style="margin-top:10px;">
-    {{ sentiment_svg | safe }}
-  </div>
-  <p style="font-size:.74rem;color:var(--text-3);margin-top:6px;">
-    <span style="color:var(--buy);">■</span> Net buying &nbsp;
-    <span style="color:var(--sell);">■</span> Net selling &nbsp;·&nbsp;
-    Excludes 10b5-1 plan sales and equity swaps (scheduled, non-discretionary) — same filters as the dashboard's Net Flow figure. Hover a bar for exact $.
-  </p>
-  {% else %}
-  <p style="color:var(--text-3);font-size:.90rem;">No data yet.</p>
-  {% endif %}
+<!-- ── Insider Sentiment Index — loaded async, non-blocking ────────── -->
+<div id="sentiment-index-container"
+     hx-get="/htmx/sentiment-index"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div class="surface mb-6" style="padding:20px;color:var(--text-3);font-size:.85rem;">Loading sentiment index…</div>
 </div>
 
-<!-- ── Cross-Company Buying ───────────────────────────────────────── -->
-<div class="surface mb-6" style="padding:20px;">
-  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
-    Cross-Company Buying <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— last 90 days</span>
-  </h2>
-  <p style="font-size:.78rem;color:var(--text-2);margin-bottom:12px;">
-    Individuals (not funds) who are insiders at more than one company, caught buying. Rare — sometimes precedes a disclosed partnership or deal.
-  </p>
-  {% if cross_company %}
-  <div class="tbl-wrap">
-    <table class="w-full">
-      <thead>
-        <tr>
-          <th class="th text-left">Insider</th>
-          <th class="th text-left">Bought Into</th>
-          <th class="th text-left">Role There</th>
-          <th class="th text-right">Companies</th>
-          <th class="th text-right">Value</th>
-          <th class="th text-right">When</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in cross_company %}
-        <tr class="row-buy">
-          <td class="td">
-            <a href="/insider/{{ r.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);">{{ r.insider_name }}</a>
-          </td>
-          <td class="td">
-            <a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ r.issuer_ticker or '—' }}</a>
-            <span style="color:var(--text-3);font-size:.8rem;margin-left:4px;">{{ r.issuer_name }}</span>
-          </td>
-          <td class="td" style="color:var(--text-2);font-size:.85rem;">
-            {% if r.is_officer %}Officer{% elif r.is_director %}Director{% elif r.is_ten_percent_owner %}10% Owner{% else %}Other{% endif %}
-          </td>
-          <td class="td num text-right" style="color:var(--text-3);">{{ r.n_companies }}</td>
-          <td class="td num text-right" style="color:var(--buy);font-weight:600;">{{ r.value_fmt }}</td>
-          <td class="td num text-right" style="color:var(--text-3);font-size:.85rem;">
-            {{ 'Today' if r.days_ago == 0 else (r.days_ago ~ 'd ago') }}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p style="color:var(--text-3);font-size:.90rem;">No cross-company buys in the last 90 days.</p>
-  {% endif %}
+<!-- ── Cross-Company Buying — loaded async, non-blocking ────────────── -->
+<div id="cross-company-container"
+     hx-get="/htmx/cross-company"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div class="surface mb-6" style="padding:20px;color:var(--text-3);font-size:.85rem;">Loading cross-company buying…</div>
 </div>
 
 <!-- ── Insider Leaderboard ────────────────────────────────────────── -->
 <div class="surface" style="padding:20px;">
   <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
     Insider Leaderboard <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— forward return vs. SPY after each open-market buy</span>
+    {{ info_tip("Ranks insiders with a track record: for every open-market buy they've made, how the stock performed vs. SPY afterward. Refreshed weekly. Requires at least 'Min Trades' qualifying buys — a small sample size is unreliable, so the default floor is 5.") }}
   </h2>
 
   <form method="GET" action="/leaderboard" class="flex flex-wrap items-center gap-2" style="margin:12px 0;">
@@ -155,8 +105,10 @@
       </tbody>
     </table>
   </div>
-  <p style="margin-top:10px;font-size:.72rem;color:var(--text-3);">
-    "Win/Med/Avg 90d" = forward excess return vs. SPY, 90 days from each buy's transaction date. Positive median = outperformed the broad market more often than not.
+  <p style="margin-top:10px;font-size:.72rem;color:var(--text-3);line-height:1.6;">
+    <strong style="color:var(--text-2);">Win/Med/Avg 90d</strong> — forward excess return vs. SPY, 90 days from each buy's transaction date. Win = % of buys that beat SPY; Med/Avg = median/average excess return. Positive median = outperformed the broad market more often than not.<br/>
+    <strong style="color:var(--text-2);">Peak</strong> — which forward window (30/60/90 days) shows this insider's strongest median excess return, i.e. roughly how long after their buy the edge tends to show up.<br/>
+    <strong style="color:var(--text-2);">Profile</strong> — a shorthand pattern across all three windows: <em>Consistent</em> (strong win rate at 30/60/90d, positive 90d median), <em>30d peak</em> (an early edge that fades), <em>60d peak</em>, <em>Late mover</em> (weak early, strong by 90d), <em>Positive</em> (positive 90d median without a strong shape), <em>Mixed</em> (no consistent edge).
   </p>
   {% else %}
   <p style="color:var(--text-3);font-size:.90rem;">

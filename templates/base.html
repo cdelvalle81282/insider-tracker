@@ -273,6 +273,29 @@
       transition: opacity .12s ease, transform .12s ease;
     }
     #chart-hover-popover.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
+
+    /* ── Info tooltip (hover ⓘ) ─────────────────────── */
+    .info-tip {
+      position: relative;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--bg-raised); border: 1px solid var(--border);
+      color: var(--text-3); font-size:.66rem; font-weight: 700;
+      cursor: help; vertical-align: middle; margin-left: 5px; flex-shrink: 0;
+    }
+    .info-tip::after {
+      content: attr(data-tip);
+      position: absolute; bottom: calc(100% + 7px); left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-raised); border: 1px solid var(--border); border-radius: 7px;
+      padding: 8px 11px; font-size:.74rem; font-weight: 400; line-height: 1.4;
+      color: var(--text-1); text-transform: none; letter-spacing: normal;
+      white-space: normal; width: max-content; max-width: 260px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.45);
+      opacity: 0; pointer-events: none; transition: opacity .12s ease;
+      z-index: 60;
+    }
+    .info-tip:hover::after { opacity: 1; }
     .watched-star { color: var(--amber); font-size:.70rem; vertical-align: super; margin-left: 2px; }
     .plan-badge {
       font-size:.68rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;

@@ -1013,18 +1013,55 @@ async def leaderboard_view(
         db, sort_by=sort_by, min_trades=min_trades, role=role or None, limit=50
     )
     roles = queries.get_insider_leaderboard_roles(db)
-    sentiment_series = queries.get_sentiment_index(db, weeks=26)
-    sentiment_svg = render_sentiment_chart(sentiment_series)
-    cross_company = queries.get_cross_company_buys(db, lookback_days=90, limit=25)
     return templates.TemplateResponse(request, "leaderboard.html", {
         "leaderboard": leaderboard,
         "roles": roles,
         "sort_by": sort_by,
         "min_trades": min_trades,
         "role": role or "",
-        "sentiment_svg": sentiment_svg,
-        "cross_company": cross_company,
     })
+
+
+@app.get("/htmx/sentiment-index", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_sentiment_index(request: Request):
+    """Insider Sentiment Index chart for /leaderboard. Loaded async + cached --
+    get_sentiment_index() scans ~26 weeks of filings (~350ms uncached), too
+    slow to compute inline on every page load."""
+    skey = "it:sentiment-index"
+    html_out = cache_module.cache_get(skey)
+    if html_out is None:
+        pre_mtime = cache_module._sentinel_mtime()
+        db = get_db()
+        try:
+            series = await asyncio.to_thread(queries.get_sentiment_index, db, 26)
+        finally:
+            put_db(db)
+        sentiment_svg = render_sentiment_chart(series)
+        html_out = templates.env.get_template("_sentiment_index.html").render({"sentiment_svg": sentiment_svg})
+        cache_module.cache_set(skey, pre_mtime, html_out)
+    return HTMLResponse(html_out)
+
+
+@app.get("/htmx/cross-company", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_cross_company(request: Request):
+    """Cross-Company Buying panel for /leaderboard. Loaded async + cached --
+    get_cross_company_buys()'s multi_co CTE scans all of filings with a
+    non-sargable regex predicate (~4.7s uncached) to find individuals who are
+    insiders at 2-5 companies; too slow to compute inline on every page load."""
+    skey = "it:cross-company"
+    html_out = cache_module.cache_get(skey)
+    if html_out is None:
+        pre_mtime = cache_module._sentinel_mtime()
+        db = get_db()
+        try:
+            cross_company = await asyncio.to_thread(queries.get_cross_company_buys, db, 90, 25)
+        finally:
+            put_db(db)
+        html_out = templates.env.get_template("_cross_company.html").render({"cross_company": cross_company})
+        cache_module.cache_set(skey, pre_mtime, html_out)
+    return HTMLResponse(html_out)
 
 
 _RANGE_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
