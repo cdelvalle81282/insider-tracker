@@ -263,6 +263,16 @@
       font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size:.85rem;
       letter-spacing: .03em; transition: color .12s; color: var(--text-1);
     }
+
+    /* ── Ticker hover chart preview ─────────────────── */
+    #chart-hover-popover {
+      position: fixed; z-index: 300; width: 300px; padding: 12px 14px;
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.45);
+      opacity: 0; pointer-events: none; transform: translateY(4px);
+      transition: opacity .12s ease, transform .12s ease;
+    }
+    #chart-hover-popover.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
     .watched-star { color: var(--amber); font-size:.70rem; vertical-align: super; margin-left: 2px; }
     .plan-badge {
       font-size:.68rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
@@ -440,6 +450,82 @@
     Built by <a href="https://optionpit.com" target="_blank" rel="noopener noreferrer"
                 style="color:var(--text-2);text-decoration:none;border-bottom:1px solid var(--border);">Option Pit</a>
   </footer>
+
+  <div id="chart-hover-popover"></div>
+
+  <script>
+    // Ticker hover chart preview -- delegated so it covers every .ticker-link
+    // sitewide without touching each table template.
+    (function () {
+      if (!window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+      const pop = document.getElementById('chart-hover-popover');
+      const cache = new Map();
+      let showTimer = null;
+      let hideTimer = null;
+      let currentTicker = null;
+
+      function clearTimers() {
+        if (showTimer) { clearTimeout(showTimer); showTimer = null; }
+        if (hideTimer)  { clearTimeout(hideTimer);  hideTimer  = null; }
+      }
+
+      function hide() {
+        pop.classList.remove('visible');
+        currentTicker = null;
+      }
+
+      function position(link) {
+        const r = link.getBoundingClientRect();
+        const popW = 300, margin = 10;
+        let left = Math.min(r.left, window.innerWidth - popW - margin);
+        left = Math.max(left, margin);
+        pop.style.left = left + 'px';
+        pop.style.top  = (r.bottom + 6) + 'px';
+      }
+
+      function showFor(link, ticker) {
+        currentTicker = ticker;
+        position(link);
+        pop.classList.add('visible');
+        if (cache.has(ticker)) {
+          pop.innerHTML = cache.get(ticker);
+          return;
+        }
+        pop.innerHTML = '<div style="padding:24px 0;text-align:center;color:var(--text-3);font-size:.76rem;">Loading…</div>';
+        fetch('/htmx/chart-preview/' + encodeURIComponent(ticker))
+          .then(r => r.ok ? r.text() : Promise.reject())
+          .then(text => {
+            cache.set(ticker, text);
+            if (currentTicker === ticker) pop.innerHTML = text;
+          })
+          .catch(() => {
+            if (currentTicker === ticker) hide();
+          });
+      }
+
+      document.addEventListener('mouseover', function (e) {
+        const link = e.target.closest('.ticker-link[href^="/chart/"]');
+        if (!link) return;
+        clearTimers();
+        const ticker = link.textContent.trim();
+        showTimer = setTimeout(() => showFor(link, ticker), 280);
+      });
+
+      document.addEventListener('mouseout', function (e) {
+        const link = e.target.closest('.ticker-link[href^="/chart/"]');
+        if (!link) return;
+        if (e.relatedTarget && pop.contains(e.relatedTarget)) return;
+        clearTimers();
+        hideTimer = setTimeout(hide, 200);
+      });
+
+      pop.addEventListener('mouseenter', clearTimers);
+      pop.addEventListener('mouseleave', function () {
+        hideTimer = setTimeout(hide, 150);
+      });
+    })();
+  </script>
 
   <script>
     // HTMX loading indicator

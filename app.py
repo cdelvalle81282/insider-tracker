@@ -4,6 +4,7 @@ import asyncio
 import csv
 import hashlib
 import hmac
+import html
 import io
 import json
 import logging
@@ -240,6 +241,59 @@ def render_sentiment_chart(series: list[dict]) -> str:
         f'<text x="{PAD_X}" y="{H-4}" font-size="11" fill="#6b7280">{first_label}</text>'
         f'<text x="{W-PAD_X}" y="{H-4}" font-size="11" fill="#6b7280" text-anchor="end">{last_label}</text>'
         f'</svg>'
+    )
+
+
+def render_price_preview_svg(bars: list[dict], filings: list[dict]) -> str:
+    """Compact price-line SVG for the ticker hover preview -- insider buy/sell
+    dates marked as dots on the line, native <title> tooltips for detail.
+    Returns '' when there are no bars (no Polygon key / no data for ticker)."""
+    if not bars:
+        return ""
+
+    W, H, PAD_X, PAD_Y = 300, 84, 3, 8
+    closes = [b["close"] for b in bars]
+    mn, mx = min(closes), max(closes)
+    span = mx - mn or 1
+    n = len(bars)
+    x_step = (W - 2 * PAD_X) / max(n - 1, 1)
+
+    def x_at(i: int) -> float:
+        return PAD_X + i * x_step
+
+    def y_at(v: float) -> float:
+        return H - PAD_Y - ((v - mn) / span) * (H - 2 * PAD_Y)
+
+    pts = " ".join(f"{x_at(i):.1f},{y_at(c):.1f}" for i, c in enumerate(closes))
+    line_color = "#0fcea0" if closes[-1] >= closes[0] else "#f64b6e"
+
+    bar_dates = [b["time"] for b in bars]
+    dots = []
+    for f in filings:
+        fd = f.get("transaction_date")
+        if hasattr(fd, "isoformat"):
+            fd = fd.isoformat()
+        if not fd:
+            continue
+        idx = next((i for i, d in enumerate(bar_dates) if d >= fd), None)
+        if idx is None:
+            continue
+        is_buy = f.get("transaction_code") == "P"
+        color = "#0fcea0" if is_buy else "#f64b6e"
+        label = html.escape(
+            f'{"Buy" if is_buy else "Sell"} · {f.get("insider_name", "")} · '
+            f'{f.get("total_value_fmt", "")} · {fd}'
+        )
+        dots.append(
+            f'<circle cx="{x_at(idx):.1f}" cy="{y_at(closes[idx]):.1f}" r="2.6" '
+            f'fill="{color}" stroke="#06090f" stroke-width="1"><title>{label}</title></circle>'
+        )
+
+    return (
+        f'<svg viewBox="0 0 {W} {H}" width="{W}" height="{H}" style="display:block;">'
+        f'<polyline points="{pts}" fill="none" stroke="{line_color}" stroke-width="1.6" stroke-linejoin="round"/>'
+        + "".join(dots) +
+        '</svg>'
     )
 
 
@@ -1125,6 +1179,51 @@ async def chart_view(
         "ranges": list(_RANGE_DAYS.keys()),
         "is_watched": ticker in watched,
     })
+
+
+@app.get("/htmx/chart-preview/{ticker}", response_class=HTMLResponse)
+@limiter.limit("120/minute")
+async def htmx_chart_preview(
+    request: Request,
+    ticker: str,
+    db: psycopg.Connection = Depends(get_request_db),
+):
+    """Small price-line + insider markers for the ticker hover card. Cached
+    per-ticker in Redis (~4h) since a hover can fire far more often than a
+    full /chart/{ticker} page load."""
+    ticker = ticker.upper()
+    if not _TICKER_RE.match(ticker):
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+
+    cache_key = f"it:chartpreview:{ticker}"
+    html_out = cache_module.cache_get(cache_key)
+    if html_out is None:
+        pre_mtime = cache_module._sentinel_mtime()
+        active_config = _load_config_cached()
+        api_key = active_config.get("polygon_api_key", "")
+        to_date = date.today()
+        from_date = to_date - timedelta(days=95)
+
+        bars = polygon_client.get_daily_bars(ticker, from_date, to_date, api_key, limit=100)
+        filings = queries.get_issuer_filings(db, ticker, days=95)
+        filings = [f for f in filings if f.get("table_type") == "ND"]
+
+        last_price = bars[-1]["close"] if bars else None
+        pct_change = (
+            (bars[-1]["close"] - bars[0]["close"]) / bars[0]["close"] * 100
+            if len(bars) >= 2 and bars[0]["close"] else None
+        )
+        svg = render_price_preview_svg(bars, filings)
+
+        html_out = templates.env.get_template("_chart_preview.html").render({
+            "ticker": ticker,
+            "svg": svg,
+            "last_price": last_price,
+            "pct_change": pct_change,
+        })
+        cache_module.cache_set(cache_key, pre_mtime, html_out, ttl=14400)
+
+    return HTMLResponse(html_out)
 
 
 # ---------------------------------------------------------------------------

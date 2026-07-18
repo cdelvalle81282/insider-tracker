@@ -1,0 +1,17 @@
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;">
+  <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:.92rem;color:var(--text-1);">{{ ticker }}</span>
+  {% if last_price %}
+  <span class="num" style="font-size:.82rem;color:var(--text-1);">
+    ${{ '%.2f'|format(last_price) }}
+    {% if pct_change is not none %}
+    <span style="margin-left:4px;color:{{ 'var(--buy)' if pct_change >= 0 else 'var(--sell)' }};">{{ '%+.1f'|format(pct_change) }}%</span>
+    {% endif %}
+  </span>
+  {% endif %}
+</div>
+{% if svg %}
+{{ svg | safe }}
+{% else %}
+<div style="padding:22px 0;text-align:center;color:var(--text-3);font-size:.76rem;">No price data available</div>
+{% endif %}
+<a href="/chart/{{ ticker }}" style="display:block;margin-top:8px;font-size:.71rem;font-weight:600;letter-spacing:.05em;color:var(--sky);text-decoration:none;">View full chart →</a>
