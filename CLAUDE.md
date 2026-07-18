@@ -149,7 +149,7 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 
 ## Future candidates
 
-- **Auth / CSRF on mutating endpoints** — `/logic/save`, `/watchlist/add`, `/watchlist/remove` have no auth. Low risk as internal tool, required before sharing more broadly.
+- **Auth / CSRF on mutating endpoints** — `/logic/save`, `/watchlist/add`, `/watchlist/remove` have no *application-level* auth. In production this is currently mitigated at the network layer: nginx's `location /` block on the live server already applies whole-site `auth_basic` (excluding only `/healthz`, `/webhook/alert`, `/robots.txt` — see `private/ops.md`), so these routes aren't actually reachable unauthenticated today. Still worth real app-level auth/CSRF before sharing more broadly or changing the nginx front door — don't rely on the network-layer gate as a permanent substitute.
 - **Earnings proximity flag** — mark trades within 10 days of earnings (needs earnings calendar source)
 - **Historical baseline signal** — flag when a buy is an outlier vs. this insider's own history
 - **Conviction weight tuning** — calibrate against actual forward returns

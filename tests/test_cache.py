@@ -1,11 +1,13 @@
-"""Unit tests for cache.py (Redis-backed cache with sentinel mtime invalidation).
+"""Unit tests for cache.py (Redis-backed cache with sentinel mtime invalidation
+and HMAC-signed pickle serialization).
 
 All Redis interaction is mocked — no real network calls are made.
 """
 from __future__ import annotations
 
 import os
-import pickle
+from datetime import date
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -80,7 +82,7 @@ class TestCacheGet:
         sentinel_mtime = 100.0
         stored_mtime = 200.0  # stored_mtime > sentinel_mtime → fresh
         value = [{"ticker": "AAPL", "total_value": 500_000}]
-        raw = pickle.dumps((stored_mtime, value))
+        raw = cache._serialize((stored_mtime, value))
         mock_client.get.return_value = raw
 
         with patch("cache._sentinel_mtime", return_value=sentinel_mtime):
@@ -92,11 +94,31 @@ class TestCacheGet:
         sentinel_mtime = 200.0
         stored_mtime = 100.0  # stored_mtime < sentinel_mtime → stale
         value = [{"ticker": "MSFT"}]
-        raw = pickle.dumps((stored_mtime, value))
+        raw = cache._serialize((stored_mtime, value))
         mock_client.get.return_value = raw
 
         with patch("cache._sentinel_mtime", return_value=sentinel_mtime):
             result = cache.cache_get("it:query:filings")
+
+        assert result is None
+
+    def test_tampered_signature_returns_none(self, mock_client):
+        raw = cache._serialize((0.0, "some value"))
+        tampered = raw[: cache._SIG_LEN] + b"x" + raw[cache._SIG_LEN + 1:]
+        mock_client.get.return_value = tampered
+
+        result = cache.cache_get("it:query:filings")
+
+        assert result is None
+
+    def test_unsigned_legacy_pickle_returns_none(self, mock_client):
+        """A pre-migration entry (raw pickle, no HMAC prefix) must be treated as
+        a miss, not crash — cold-cache repopulate is the expected behavior."""
+        import pickle
+        legacy_raw = pickle.dumps((0.0, "old value"))
+        mock_client.get.return_value = legacy_raw
+
+        result = cache.cache_get("it:query:filings")
 
         assert result is None
 
@@ -132,7 +154,7 @@ class TestCacheSet:
         call_args = mock_client.set.call_args
         key, raw = call_args.args
         assert key == "it:query:stats"
-        stored_mtime, stored_value = pickle.loads(raw)
+        stored_mtime, stored_value = cache._deserialize(raw)
         assert stored_mtime == pre_mtime
         assert stored_value == value
         assert call_args.kwargs["ex"] == ttl
@@ -148,15 +170,28 @@ class TestCacheSet:
         cache.cache_set("it:query:list", 1.0, value)
 
         raw = mock_client.set.call_args.args[1]
-        _, stored_value = pickle.loads(raw)
+        _, stored_value = cache._deserialize(raw)
         assert stored_value == value
 
     def test_stores_none_value(self, mock_client):
         cache.cache_set("it:query:empty", 1.0, None)
 
         raw = mock_client.set.call_args.args[1]
-        _, stored_value = pickle.loads(raw)
+        _, stored_value = cache._deserialize(raw)
         assert stored_value is None
+
+    def test_date_and_decimal_round_trip(self, mock_client):
+        """it:query:* entries cache enriched row dicts containing real date/
+        Decimal values (from PG rows) — HMAC-signing must not change pickle's
+        type-preserving round-trip behavior."""
+        value = [{"transaction_date": date(2026, 7, 18), "total_value": Decimal("1234.56")}]
+        cache.cache_set("it:query:typed", 1.0, value)
+
+        raw = mock_client.set.call_args.args[1]
+        _, stored_value = cache._deserialize(raw)
+        assert stored_value == value
+        assert isinstance(stored_value[0]["transaction_date"], date)
+        assert isinstance(stored_value[0]["total_value"], Decimal)
 
     def test_redis_connection_error_does_not_raise(self, mock_client):
         mock_client.set.side_effect = redis.ConnectionError("refused")

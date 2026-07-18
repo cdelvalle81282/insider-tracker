@@ -464,6 +464,13 @@ _SORT_COLUMNS = {
     "filed":   "filed_at",
 }
 
+# Conviction sort must pull ALL matching rows before Python can sort/slice by score
+# (see get_filings_for_date) — this caps the candidate pool as a safety valve against
+# unbounded memory/query cost on a wide date range, without limiting real page results.
+# Rows are pre-sorted by total_value DESC, so truncation only ever drops unbrowsed
+# page-depth, not anything a normal page size would reach.
+_CONVICTION_POOL_CAP = 20_000
+
 # Regex used by hide_entity_filers filter — drops entity-named filers (funds, institutions)
 # who are NOT officers. Keeps officers filing through personal LLCs/trusts (is_officer=1).
 # Includes common foreign corporate suffixes (Mexican S.A. de C.V., Dutch N.V./B.V., Italian
@@ -1046,12 +1053,17 @@ def get_filings_for_date(
         )
 
         # Pagination vs legacy limit:
-        #   - page_size provided => paginated path (LIMIT %s OFFSET %s), legacy limit ignored
-        #   - page_size None     => export/backtest path; legacy limit applied if set
+        #   - page_size provided, non-conviction sort => LIMIT %s OFFSET %s
+        #   - page_size provided, conviction sort      => no SQL OFFSET (Python sorts/slices
+        #     the full candidate pool), but capped by _CONVICTION_POOL_CAP as a safety valve
+        #   - page_size None                           => export/backtest path; legacy limit
         if page_size is not None and not use_conviction:
             sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT %s OFFSET %s"
             side_params.append(page_size)
             side_params.append((page - 1) * page_size)
+        elif page_size is not None and use_conviction:
+            sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT %s"
+            side_params.append(_CONVICTION_POOL_CAP)
         else:
             sql = f"{select_cols}\n{where_sql}\n{sql_sort}"
             if page_size is None and limit:
@@ -1771,13 +1783,17 @@ def get_signal_alert_history(conn: psycopg.Connection, limit: int = 20) -> list[
 
 
 def get_10b5_1_stats(conn: psycopg.Connection) -> dict:
-    total = conn.execute("SELECT COUNT(*) AS n FROM filings").fetchone()["n"]
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM filings WHERE superseded_by IS NULL AND joint_filer_of IS NULL"
+    ).fetchone()["n"]
     flagged_xml = conn.execute(
-        "SELECT COUNT(*) AS n FROM filings WHERE is_10b5_1=1"
+        """SELECT COUNT(*) AS n FROM filings
+           WHERE is_10b5_1=1 AND superseded_by IS NULL AND joint_filer_of IS NULL"""
     ).fetchone()["n"]
     footnote_only = conn.execute(
         """SELECT COUNT(*) AS n FROM filings
-           WHERE is_10b5_1=1 AND footnote_text ILIKE '%10b5-1%'"""
+           WHERE is_10b5_1=1 AND footnote_text ILIKE '%10b5-1%'
+             AND superseded_by IS NULL AND joint_filer_of IS NULL"""
     ).fetchone()["n"]
     return {
         "total_filings": total,

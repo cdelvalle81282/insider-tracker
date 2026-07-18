@@ -176,6 +176,9 @@ def main() -> None:
 
     # Baseline: flat 20% trail
     baseline = run_entries(entries, bars_cache, lambda fwd: simulate_flat(fwd, 0.20))
+    if not baseline:
+        print("No baseline trades for this entry set — nothing to summarize.")
+        return
     ba, bm, bw, bp = stats(baseline)
     print(f"BASELINE  flat 20% trail  — {len(baseline)} trades")
     print(f"  Avg {ba:+.1f}%  Median {bm:+.1f}%  Win {bw:.0f}%  AvgPeak {bp:+.1f}%\n")

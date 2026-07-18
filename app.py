@@ -832,6 +832,20 @@ _CSV_COLUMNS = [
 
 _CSV_MAX_ROWS = 10000
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _csv_safe(v):
+    """Neutralize CSV formula injection: a text cell (e.g. insider_name) starting
+    with =/+/-/@ would run as a formula when opened in Excel/Sheets. Only string
+    values are prefixed — numeric columns (shares, price, total_value, ...) must
+    stay numeric so spreadsheet sort/math on them still works."""
+    if v is None:
+        return ""
+    if isinstance(v, str) and v.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + v
+    return v
+
 
 @app.get("/export.csv")
 @limiter.limit("3/minute")
@@ -909,7 +923,7 @@ async def export_csv(
         buf.seek(0)
         buf.truncate()
         for r in rows:
-            writer.writerow(["" if (v := r.get(col)) is None else v for col in _CSV_COLUMNS])
+            writer.writerow([_csv_safe(r.get(col)) for col in _CSV_COLUMNS])
             yield buf.getvalue()
             buf.seek(0)
             buf.truncate()
@@ -1673,10 +1687,12 @@ async def webhook_alert(request: Request, background_tasks: BackgroundTasks):
     Intentionally exempt from Basic Auth and rate limiting (called by external services).
     """
     secret = os.getenv("WEBHOOK_SECRET", "")
-    if secret:
-        provided = request.headers.get("X-Webhook-Secret", "")
-        if not hmac.compare_digest(provided, secret):
-            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+    if not secret:
+        logging.getLogger("app").error("WEBHOOK_SECRET is not configured — rejecting /webhook/alert")
+        raise HTTPException(status_code=503, detail="Webhook not configured")
+    provided = request.headers.get("X-Webhook-Secret", "")
+    if not hmac.compare_digest(provided, secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
     try:
         body = await request.json()

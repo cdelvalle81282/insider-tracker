@@ -31,13 +31,19 @@ import alerts as alert_module
 from congress_ingest import _parse_amount_range
 from db import get_cli_db
 
+# Pinned to a specific commit (not `main`) — this data lands directly in the public
+# dashboard via congress_trades, and main is an unauthenticated third-party branch
+# with no integrity check otherwise. To pick up an upstream correction, review the
+# new commit's diff for trump_278T.csv/data/ticker-seed.json, then bump this SHA.
+PINNED_SHA = "5c439b55138713ba3d9f93688e1e688d5341ccab"
+
 CSV_URL = (
     "https://raw.githubusercontent.com/HerringtonDarkholme"
-    "/trump-portfolio-tracker/main/trump_278T.csv"
+    f"/trump-portfolio-tracker/{PINNED_SHA}/trump_278T.csv"
 )
 TICKER_SEED_URL = (
     "https://raw.githubusercontent.com/HerringtonDarkholme"
-    "/trump-portfolio-tracker/main/data/ticker-seed.json"
+    f"/trump-portfolio-tracker/{PINNED_SHA}/data/ticker-seed.json"
 )
 
 FILING_DATE     = "2026-05-08"   # OGE receipt date for this batch filing

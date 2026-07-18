@@ -187,6 +187,9 @@ def main() -> None:
         trade_data.append((bars[:end_idx], entry_idx, entry_price))
 
     print(f"Trades with price data: {len(trade_data)}\n")
+    if not trade_data:
+        print("No trades with price data for this entry set — nothing to summarize.")
+        return
 
     # Header
     print(f"{'System':>28}  {'Avg':>8}  {'Median':>8}  {'Win':>7}  "

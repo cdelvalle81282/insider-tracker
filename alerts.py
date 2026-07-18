@@ -76,11 +76,19 @@ def _fmt(v: float | None) -> str:
     return _fmt_money(v) or "?"
 
 
+def _slack_escape(s: str) -> str:
+    """Escape Slack mrkdwn special characters in external text (insider/issuer/
+    politician names, titles) so it can't be used to inject a live @channel-style
+    mention or a spoofed <url|label> link. & must be replaced first, or the
+    &lt;/&gt; entities produced below would themselves get double-escaped."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _format_buy_message(alert_type: str, row: dict, base_url: str) -> dict:
     ticker = row.get("issuer_ticker") or "?"
-    company = row.get("issuer_name") or ""
-    insider = row.get("insider_name") or "Unknown"
-    title = row.get("insider_title") or "Insider"
+    company = _slack_escape(row.get("issuer_name") or "")
+    insider = _slack_escape(row.get("insider_name") or "Unknown")
+    title = _slack_escape(row.get("insider_title") or "Insider")
     value = _fmt(row.get("total_value"))
     shares = f"{row.get('shares', 0):,.0f}" if row.get("shares") else "?"
     price = _fmt(row.get("price_per_share"))
@@ -128,9 +136,9 @@ def _format_buy_message(alert_type: str, row: dict, base_url: str) -> dict:
 
 def _format_watchlist_message(row: dict, base_url: str) -> dict:
     ticker = row.get("issuer_ticker") or "?"
-    company = row.get("issuer_name") or ""
-    insider = row.get("insider_name") or "Unknown"
-    title = row.get("insider_title") or "Insider"
+    company = _slack_escape(row.get("issuer_name") or "")
+    insider = _slack_escape(row.get("insider_name") or "Unknown")
+    title = _slack_escape(row.get("insider_title") or "Insider")
     value = _fmt(row.get("total_value"))
     shares = f"{row.get('shares', 0):,.0f}" if row.get("shares") else "?"
     price = _fmt(row.get("price_per_share"))
@@ -179,7 +187,7 @@ def _format_watchlist_message(row: dict, base_url: str) -> dict:
 
 def _format_cluster_message(row: dict, base_url: str) -> dict:
     ticker = row.get("issuer_ticker") or "?"
-    company = row.get("issuer_name") or ""
+    company = _slack_escape(row.get("issuer_name") or "")
     count = row.get("insider_count", 0)
     value = _fmt(row.get("total_value"))
     issuer_url = f"{base_url}/issuer/{ticker}"
@@ -452,9 +460,9 @@ def _format_signal_message(
     base_url: str,
 ) -> dict:
     ticker     = trade.get("issuer_ticker") or "?"
-    company    = trade.get("issuer_name") or ""
-    insider    = trade.get("insider_name") or "Unknown"
-    title      = trade.get("insider_title") or "Insider"
+    company    = _slack_escape(trade.get("issuer_name") or "")
+    insider    = _slack_escape(trade.get("insider_name") or "Unknown")
+    title      = _slack_escape(trade.get("insider_title") or "Insider")
     value      = _fmt(trade.get("total_value"))
     trade_date = trade.get("transaction_date", "")
     chart_url  = f"{base_url}/chart/{ticker}"
@@ -661,7 +669,7 @@ def _format_cobuy_message(cong_row: dict, corp_buys: list[dict], base_url: str) 
         btitle = b.get("insider_title") or ""
         bval   = _fmt(b.get("total_value"))
         bdate  = str(b.get("transaction_date") or "?")[:10]
-        corp_lines.append(f"• *{bname}* ({btitle}) — {bval} on {bdate}")
+        corp_lines.append(f"• *{_slack_escape(bname)}* ({_slack_escape(btitle)}) — {bval} on {bdate}")
 
     overflow = len(corp_buys) - 3
     if overflow > 0:
@@ -681,7 +689,7 @@ def _format_cobuy_message(cong_row: dict, corp_buys: list[dict], base_url: str) 
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"*{src_label}: {name}* bought *{amount}* (disclosed {disc})\n"
+                        f"*{src_label}: {_slack_escape(name)}* bought *{_slack_escape(amount)}* (disclosed {disc})\n"
                         f"*Corporate insider(s) also bought within ±{COBUY_WINDOW_DAYS}d:*\n"
                         + "\n".join(corp_lines)
                     ),
@@ -801,8 +809,8 @@ def _format_congress_message(row: dict, base_url: str) -> dict:
                 "text": {
                     "type": "mrkdwn",
                     "text": (
-                        f"*{name}* {party_emoji} {party}\n"
-                        f"*{amount}* · Traded {tx_date}{lag_note}"
+                        f"*{_slack_escape(name)}* {party_emoji} {_slack_escape(party)}\n"
+                        f"*{_slack_escape(amount)}* · Traded {tx_date}{lag_note}"
                     ),
                 },
                 "accessory": {

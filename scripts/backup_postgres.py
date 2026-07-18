@@ -15,6 +15,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 import boto3
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 S3_BUCKET    = os.environ.get("BACKUP_S3_BUCKET", "opi-insider-backups")
@@ -35,8 +36,21 @@ def main() -> None:
         dump_path = tmp.name
 
     try:
+        # Rebuild the DSN with the password removed so it goes via PGPASSWORD (env)
+        # instead of argv — the bare DATABASE_URL as a pg_dump argument would be
+        # visible to any local user via `ps aux` on this shared droplet. Passing
+        # every non-password param through (not just host/port/user/dbname) keeps
+        # sslmode/connect_timeout/etc. honored if DATABASE_URL ever gains them.
+        params = conninfo_to_dict(DATABASE_URL)
+        password = params.pop("password", None)
+        conninfo_no_password = make_conninfo("", **params)
+
+        env = os.environ.copy()
+        if password:
+            env["PGPASSWORD"] = password
+
         # Custom format (-Fc): compressed, supports pg_restore -j for parallel restore.
-        subprocess.run(["pg_dump", DATABASE_URL, "-Fc", "-f", dump_path], check=True)
+        subprocess.run(["pg_dump", conninfo_no_password, "-Fc", "-f", dump_path], check=True, env=env)
 
         s3 = boto3.client(
             "s3",

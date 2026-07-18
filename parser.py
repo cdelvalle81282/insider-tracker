@@ -121,6 +121,14 @@ def _detect_10b5_1(root: etree._Element, footnote_text: str) -> int:
     return 1 if "10b5-1" in footnote_text.lower() else 0
 
 
+def _clean_cik(raw: str | None) -> str:
+    """Zero-pad a CIK to 10 digits. Falls back to the all-zero sentinel if the
+    raw XML value isn't purely numeric, instead of zfill-ing garbage into the
+    padding (e.g. "ABC".zfill(10) -> "0000000ABC")."""
+    raw = (raw or "").strip()
+    return raw.zfill(10) if raw.isdigit() else "0000000000"
+
+
 def _parse_reporting_owner(root: etree._Element) -> dict[str, Any]:
     owner: dict[str, Any] = {}
     ro = root.find(".//reportingOwner")
@@ -128,7 +136,7 @@ def _parse_reporting_owner(root: etree._Element) -> dict[str, Any]:
         return owner
 
     owner_id = ro.find("reportingOwnerId")
-    owner["insider_cik"] = (_text(owner_id, "rptOwnerCik") or "").zfill(10)
+    owner["insider_cik"] = _clean_cik(_text(owner_id, "rptOwnerCik"))
     owner["insider_name"] = _text(owner_id, "rptOwnerName") or ""
 
     rel = ro.find("reportingOwnerRelationship")
@@ -144,7 +152,7 @@ def _parse_reporting_owner(root: etree._Element) -> dict[str, Any]:
 def _parse_issuer(root: etree._Element) -> dict[str, Any]:
     issuer = root.find(".//issuer")
     return {
-        "issuer_cik": (_text(issuer, "issuerCik") or "").zfill(10),
+        "issuer_cik": _clean_cik(_text(issuer, "issuerCik")),
         "issuer_name": _text(issuer, "issuerName") or "",
         "issuer_ticker": normalize_ticker(_text(issuer, "issuerTradingSymbol")),
     }

@@ -168,6 +168,9 @@ def main() -> None:
 
     # Baseline
     baseline = run_all(entries, bars_cache, simulate_flat_trail)
+    if not baseline:
+        print("No baseline trades for this entry set — nothing to summarize.")
+        return
     b = summarize(baseline)
     print("BASELINE  flat 20% trail, no time stop")
     print(f"  Avg {b['avg']:+.1f}%  Median {b['median']:+.1f}%  "

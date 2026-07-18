@@ -72,19 +72,29 @@ def _recent_run_log() -> str:
         return f"[DB unavailable: {e}]"
 
 
-def collect_diagnostics() -> dict:
-    db_url = os.getenv("DATABASE_URL", "")
-    pg_cmd = (
-        f'psql "{db_url}" -c '
-        f"\"SELECT state, count(*) FROM pg_stat_activity WHERE datname='insider_tracker' GROUP BY state;\" 2>&1"
-        if db_url else "DATABASE_URL not set"
-    )
+def _pg_connection_states() -> str:
+    try:
+        from db import get_cli_db
+        conn = get_cli_db()
+        try:
+            rows = conn.execute(
+                "SELECT state, count(*) AS n FROM pg_stat_activity "
+                "WHERE datname = current_database() GROUP BY state"
+            ).fetchall()
+            if not rows:
+                return "(no rows)"
+            return "\n".join(f"{r['state']} | {r['n']}" for r in rows)
+        finally:
+            conn.close()
+    except Exception as e:
+        return f"[DB unavailable: {e}]"
 
+
+def collect_diagnostics() -> dict:
     # Run independent subprocess calls in parallel to cut worst-case from ~160s to ~20s
     cmds = {
         "service_status": f"sudo systemctl status {SERVICE} --no-pager -l",
         "recent_logs":    f"sudo journalctl -u {SERVICE} -n 60 --no-pager",
-        "pg_connections": pg_cmd,
         "disk":           "df -h / /home",
         "memory":         "free -h",
         "nightly_timer":  "sudo systemctl status insider-ingest-nightly.timer --no-pager",
@@ -100,6 +110,7 @@ def collect_diagnostics() -> dict:
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "sentinel_age_hours": _sentinel_age_hours(),
         "recent_run_log": _recent_run_log(),
+        "pg_connections": _pg_connection_states(),
         **results,
     }
 
