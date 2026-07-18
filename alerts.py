@@ -500,31 +500,72 @@ def _signal_alert_key(sig_code: str, issuer_cik: str, fire_date: str) -> str:
     return f"signal:{sig_code}:{issuer_cik}:{fire_date}"
 
 
+def _log_signal_trigger(
+    conn: psycopg.Connection,
+    signal_code: str,
+    fire_date: date,
+    days_to_fire: int,
+    trade: dict,
+) -> None:
+    """Record a fired signal for the dashboard trigger feed / performance tracking.
+    Independent of Slack alerting -- logs regardless of whether a webhook is
+    configured or whether this signal type is live-alerted."""
+    conn.execute(
+        """
+        INSERT INTO signal_triggers
+            (issuer_ticker, issuer_cik, issuer_name, signal_code, trigger_date,
+             trade_transaction_id, insider_name, insider_title, trade_date,
+             trade_value, days_to_fire)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (issuer_ticker, signal_code, trigger_date) DO NOTHING
+        """,
+        [
+            trade.get("issuer_ticker"), trade.get("issuer_cik"), trade.get("issuer_name"),
+            signal_code, fire_date, trade.get("transaction_id"),
+            trade.get("insider_name"), trade.get("insider_title"),
+            trade.get("transaction_date"), trade.get("total_value"), days_to_fire,
+        ],
+    )
+    conn.commit()
+
+
 def check_and_send_signals(
     conn: psycopg.Connection,
     config: dict,
     polygon_api_key: str,
     suppress: bool = False,
+    send_alerts: bool = True,
+    max_age_override: int | None = None,
 ) -> int:
-    """Scan recent insider buys for technical signals firing post-trade. Returns alerts sent."""
+    """Scan recent insider buys for technical signals firing post-trade.
+
+    Logs every fired signal (all 4 types) to signal_triggers for the dashboard
+    trigger feed / performance tracking -- independent of Slack. Only Golden
+    Cross pushes a live Slack alert (see gotchas.md: backtest data showed no
+    consistent return edge for RB/HHL/CB measured from their own fire date).
+    Returns count of Slack alerts sent (not signals logged).
+
+    send_alerts=False logs signals without posting to Slack (used by the
+    one-time --backfill-signal-triggers CLI seed). max_age_override widens
+    the freshness cutoff for that same backfill so it can seed further back
+    than the live scan's default staleness window.
+    """
     if suppress or not polygon_api_key:
         return 0
 
-    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "")
-    if not webhook_url:
-        return 0
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL", "") if send_alerts else ""
 
     rules      = config.get("alert_rules", {})
     base_url   = config.get("alert_base_url", "https://opi-insider.duckdns.org")
     min_value  = rules.get("signal_scan_min_value", 500_000)
     lookback   = rules.get("signal_scan_lookback_days", 90)
-    max_age    = rules.get("signal_scan_max_signal_age_days", 5)
+    max_age    = max_age_override if max_age_override is not None else rules.get("signal_scan_max_signal_age_days", 5)
 
     today  = datetime.now(timezone.utc).date()
     cutoff = (today - timedelta(days=lookback)).isoformat()
 
     rows = conn.execute("""
-        SELECT issuer_ticker, issuer_cik, issuer_name,
+        SELECT transaction_id, issuer_ticker, issuer_cik, issuer_name,
                insider_cik, insider_name, insider_title,
                transaction_date::text AS transaction_date, total_value
         FROM filings
@@ -559,38 +600,45 @@ def check_and_send_signals(
         bars = [{**b, "date": b["time"]} for b in raw_bars]
         bar_dates = [b["date"] for b in bars]
 
-        # Find all trades where GC fired within 15 days and is still fresh.
-        # GC is a stock-level event — alert once per (ticker, fire date)
-        # using the largest buy as the representative trade.
-        qualifying: list[tuple[date, int, dict]] = []
-        for trade in trades:
-            trade_date = trade["transaction_date"]
-            trade_idx = next((i for i, d in enumerate(bar_dates) if d >= trade_date), None)
-            if trade_idx is None or trade_idx >= len(bars) - 1:
-                continue
-            _, gc_days = detect_golden_cross(bars, trade_idx)
-            if gc_days is None or gc_days > 15:
-                continue
-            fire_date = date.fromisoformat(trade_date) + timedelta(days=gc_days)
-            if (today - fire_date).days > max_age:
-                continue
-            qualifying.append((fire_date, gc_days, trade))
+        for sig_code, (label, detect_fn) in _SIGNAL_DETECTORS.items():
+            # Find all trades where this signal fired within 15 days and is
+            # still fresh. Signals are stock-level events — log/alert once per
+            # (ticker, signal, fire date) using the largest buy as the
+            # representative trade.
+            qualifying: list[tuple[date, int, dict]] = []
+            for trade in trades:
+                trade_date = trade["transaction_date"]
+                trade_idx = next((i for i, d in enumerate(bar_dates) if d >= trade_date), None)
+                if trade_idx is None or trade_idx >= len(bars) - 1:
+                    continue
+                _, days_to_fire = detect_fn(bars, trade_idx)
+                if days_to_fire is None or days_to_fire > 15:
+                    continue
+                fire_date = date.fromisoformat(trade_date) + timedelta(days=days_to_fire)
+                if (today - fire_date).days > max_age:
+                    continue
+                qualifying.append((fire_date, days_to_fire, trade))
 
-        if not qualifying:
-            continue
+            if not qualifying:
+                continue
 
-        # One alert per fire date; pick the largest buy as the representative
-        fire_date = min(fd for fd, _, _ in qualifying)
-        largest = max(qualifying, key=lambda x: x[2].get("total_value") or 0)
-        gc_days_to_fire, best_trade = largest[1], largest[2]
-        issuer_cik = best_trade.get("issuer_cik", "")
+            # One entry per fire date; pick the largest buy as the representative
+            fire_date = min(fd for fd, _, _ in qualifying)
+            largest = max(qualifying, key=lambda x: x[2].get("total_value") or 0)
+            days_to_fire_val, best_trade = largest[1], largest[2]
 
-        alert_key = _signal_alert_key("gc", issuer_cik, fire_date.isoformat())
-        if not _try_claim_alert(conn, alert_key, "signal"):
-            continue
-        payload = _format_signal_message("gc", _SIGNAL_DETECTORS["gc"][0], best_trade, gc_days_to_fire, base_url)
-        if _post_to_slack(webhook_url, payload):
-            sent += 1
+            _log_signal_trigger(conn, sig_code, fire_date, days_to_fire_val, best_trade)
+
+            if sig_code != "gc" or not webhook_url:
+                continue
+
+            issuer_cik = best_trade.get("issuer_cik", "")
+            alert_key = _signal_alert_key("gc", issuer_cik, fire_date.isoformat())
+            if not _try_claim_alert(conn, alert_key, "signal"):
+                continue
+            payload = _format_signal_message("gc", label, best_trade, days_to_fire_val, base_url)
+            if _post_to_slack(webhook_url, payload):
+                sent += 1
 
     return sent
 

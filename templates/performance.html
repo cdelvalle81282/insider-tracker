@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Performance — Insider Scanner{% endblock %}
+{% block nav_performance %}active{% endblock %}
+
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-xl font-bold" style="color:var(--text-1);">Performance</h1>
+  <p style="color:var(--text-2);font-size:.90rem;margin-top:4px;">
+    Tickers you've picked from the dashboard's Recent Signal Triggers feed, tracked live since the trigger date.
+  </p>
+</div>
+
+<div class="surface" style="padding:20px;">
+  {% if rows %}
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">Ticker</th>
+          <th class="th text-left">Signal</th>
+          <th class="th text-right">Trigger Date</th>
+          <th class="th text-right">Days Held</th>
+          <th class="th text-right">Entry</th>
+          <th class="th text-right">Current</th>
+          <th class="th text-right">Return</th>
+          <th class="th text-right"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="td">
+            <a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ r.issuer_ticker }}</a>
+            {% if r.issuer_name %}
+            <span style="color:var(--text-3);font-size:.78rem;margin-left:4px;">{{ r.issuer_name }}</span>
+            {% endif %}
+          </td>
+          <td class="td">
+            <span style="background:{{ r.style.color }}22;color:{{ r.style.color }};border:1px solid {{ r.style.color }}55;
+                          border-radius:4px;padding:0 5px;font-size:.68rem;font-weight:700;letter-spacing:.05em;">{{ r.style.short }}</span>
+            <span style="color:var(--text-3);font-size:.78rem;margin-left:4px;">{{ r.style.label }}</span>
+          </td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ r.trigger_date }}</td>
+          <td class="td num text-right" style="color:var(--text-2);">{{ r.days_held }}d</td>
+          <td class="td num text-right">{{ '$%.2f' | format(r.entry_price) if r.entry_price is not none else '—' }}</td>
+          <td class="td num text-right">{{ '$%.2f' | format(r.current_price) if r.current_price is not none else '—' }}</td>
+          <td class="td num text-right" style="font-weight:600;
+              color:{% if r.pct_return is none %}var(--text-3){% elif r.pct_return >= 0 %}var(--buy){% else %}var(--sell){% endif %};">
+            {{ '%+.1f%%' | format(r.pct_return) if r.pct_return is not none else '—' }}
+          </td>
+          <td class="td text-right">
+            <form method="POST" action="/performance/remove">
+              <input type="hidden" name="tracked_id" value="{{ r.id }}" />
+              <button type="submit"
+                      style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p style="color:var(--text-3);font-size:.90rem;">
+    Nothing tracked yet — add a ticker from the dashboard's Recent Signal Triggers feed using the "+ Track" button.
+  </p>
+  {% endif %}
+</div>
+
+{% endblock %}

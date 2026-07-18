@@ -1029,6 +1029,15 @@ async def leaderboard_view(
 
 _RANGE_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
 
+# Shared across chart markers, the dashboard trigger feed, and the Performance
+# tab so all three agree on signal labels/colors.
+_SIGNAL_STYLE = {
+    "gc":  {"label": "Golden Cross",      "short": "GC", "color": "#f59e0b", "detect": detect_golden_cross},
+    "rb":  {"label": "Resistance Break",  "short": "RB", "color": "#f97316", "detect": detect_resistance_break},
+    "hhl": {"label": "Higher Highs+Lows", "short": "HH", "color": "#22d3ee", "detect": detect_hhl},
+    "cb":  {"label": "Channel Break",     "short": "CB", "color": "#a855f7", "detect": detect_channel_break},
+}
+
 
 @app.get("/chart/{ticker}", response_class=HTMLResponse)
 @limiter.limit("30/minute")
@@ -1055,12 +1064,6 @@ async def chart_view(
     filings = [f for f in filings if f.get("table_type") == "ND"]
 
     # Signal detection (runs on the extended bar history for warmup)
-    _CHART_SIG_DETECTORS = [
-        ("gc",  "GC",  "#f59e0b", detect_golden_cross),
-        ("rb",  "RB",  "#f97316", detect_resistance_break),
-        ("hhl", "HH",  "#22d3ee", detect_hhl),
-        ("cb",  "CB",  "#a855f7", detect_channel_break),
-    ]
     signal_markers: list[dict] = []
     if bars and api_key:
         sig_bars = [{**b, "date": b["time"]} for b in bars]
@@ -1079,8 +1082,8 @@ async def chart_view(
             trade_idx = next((i for i, d in enumerate(sig_bar_dates) if d >= trade_date), None)
             if trade_idx is None or trade_idx >= len(sig_bars) - 1:
                 continue
-            for sig_code, label, color, detect_fn in _CHART_SIG_DETECTORS:
-                _, days_to_fire = detect_fn(sig_bars, trade_idx)
+            for sig_code, style in _SIGNAL_STYLE.items():
+                _, days_to_fire = style["detect"](sig_bars, trade_idx)
                 if days_to_fire is None:
                     continue
                 fire_date = (date.fromisoformat(trade_date) + timedelta(days=days_to_fire)).isoformat()
@@ -1091,9 +1094,9 @@ async def chart_view(
                 signal_markers.append({
                     "time":     fire_date,
                     "position": "aboveBar",
-                    "color":    color,
+                    "color":    style["color"],
                     "shape":    "circle",
-                    "text":     label,
+                    "text":     style["short"],
                 })
 
     # Build marker list for Lightweight Charts.
@@ -1224,6 +1227,121 @@ async def htmx_chart_preview(
         cache_module.cache_set(cache_key, pre_mtime, html_out, ttl=14400)
 
     return HTMLResponse(html_out)
+
+
+# ---------------------------------------------------------------------------
+# Signal triggers / performance tracking
+# ---------------------------------------------------------------------------
+
+@app.get("/htmx/recent-triggers", response_class=HTMLResponse)
+@limiter.limit("60/minute")
+async def htmx_recent_triggers(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+):
+    """Dashboard feed of recently fired GC/RB/HHL/CB signals. Not Redis-cached
+    -- signal_triggers is small/indexed and this keeps the is_tracked flag
+    always accurate without cache-invalidation bookkeeping."""
+    triggers = queries.get_recent_signal_triggers(db, days=14, limit=40)
+    for t in triggers:
+        t["style"] = _SIGNAL_STYLE.get(t["signal_code"], {})
+    html_out = templates.env.get_template("_recent_triggers.html").render({"triggers": triggers})
+    return HTMLResponse(html_out)
+
+
+@app.post("/performance/add", response_class=HTMLResponse)
+async def performance_add(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+    ticker: str = Form(...),
+    issuer_name: str = Form(default=""),
+    signal_code: str = Form(...),
+    trigger_date: str = Form(...),
+):
+    ticker = ticker.upper()
+    if not _TICKER_RE.match(ticker):
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    if signal_code not in _SIGNAL_STYLE:
+        raise HTTPException(status_code=400, detail="Invalid signal_code")
+    try:
+        trigger_date_obj = date.fromisoformat(trigger_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid trigger_date")
+    queries.add_tracked_signal(db, ticker, issuer_name.strip() or None, signal_code, trigger_date_obj)
+    return HTMLResponse(
+        '<span style="color:var(--buy);font-size:.74rem;font-weight:600;letter-spacing:.05em;">✓ Tracking</span>'
+    )
+
+
+@app.post("/performance/remove")
+async def performance_remove(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+    tracked_id: int = Form(...),
+):
+    queries.remove_tracked_signal(db, tracked_id)
+    return RedirectResponse(url="/performance", status_code=303)
+
+
+@app.get("/performance", response_class=HTMLResponse)
+@limiter.limit("30/minute")
+async def performance_view(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+):
+    tracked = queries.get_tracked_signals(db)
+    active_config = _load_config_cached()
+    api_key = active_config.get("polygon_api_key", "")
+    today = date.today()
+
+    # Fetch Polygon bars once per distinct ticker, from that ticker's earliest
+    # tracked trigger_date, so multiple tracked signals on the same ticker
+    # share one API call.
+    earliest_by_ticker: dict[str, date] = {}
+    for t in tracked:
+        td = t["trigger_date"]
+        td_obj = date.fromisoformat(td.isoformat() if hasattr(td, "isoformat") else td)
+        if t["issuer_ticker"] not in earliest_by_ticker or td_obj < earliest_by_ticker[t["issuer_ticker"]]:
+            earliest_by_ticker[t["issuer_ticker"]] = td_obj
+
+    def _fetch_bars(ticker: str, from_date: date) -> list[dict]:
+        cache_key = f"it:perfbars:{ticker}:{from_date.isoformat()}"
+        bars = cache_module.cache_get(cache_key)
+        if bars is None:
+            pre_mtime = cache_module._sentinel_mtime()
+            bars = polygon_client.get_daily_bars(ticker, from_date, today, api_key, limit=700)
+            cache_module.cache_set(cache_key, pre_mtime, bars, ttl=1800)
+        return bars
+
+    def _compute_all() -> dict[str, list[dict]]:
+        return {ticker: _fetch_bars(ticker, from_date) for ticker, from_date in earliest_by_ticker.items()}
+
+    bars_by_ticker = await asyncio.to_thread(_compute_all)
+
+    rows = []
+    for t in tracked:
+        td = t["trigger_date"]
+        td_iso = td.isoformat() if hasattr(td, "isoformat") else td
+        bars = bars_by_ticker.get(t["issuer_ticker"]) or []
+        entry_bar = next((b for b in bars if b["time"] >= td_iso), None)
+        current_bar = bars[-1] if bars else None
+        entry_price = entry_bar["close"] if entry_bar else None
+        current_price = current_bar["close"] if current_bar else None
+        pct_return = (
+            (current_price - entry_price) / entry_price * 100
+            if entry_price and current_price else None
+        )
+        rows.append({
+            **t,
+            "trigger_date": td_iso,
+            "style": _SIGNAL_STYLE.get(t["signal_code"], {}),
+            "entry_price": entry_price,
+            "current_price": current_price,
+            "pct_return": pct_return,
+            "days_held": (today - date.fromisoformat(td_iso)).days,
+        })
+
+    return templates.TemplateResponse(request, "performance.html", {"rows": rows})
 
 
 # ---------------------------------------------------------------------------

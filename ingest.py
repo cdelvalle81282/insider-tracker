@@ -461,7 +461,10 @@ def mark_joint_filers(conn: psycopg.Connection) -> int:
               help="Fetch latest close for tickers in ticker_metadata where last_close_at < today or NULL")
 @click.option("--normalize-tickers", "do_normalize_tickers", is_flag=True, default=False,
               help="Clean malformed issuer_ticker values in existing rows (NONE→NULL, NYSE:X→X, etc.)")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices, do_normalize_tickers):
+@click.option("--backfill-signal-triggers", "do_backfill_signal_triggers", is_flag=True, default=False,
+              help="One-time scan of recent insider buys for GC/RB/HHL/CB signal triggers (30d freshness "
+                   "window, no Slack alerts) to seed the dashboard trigger feed / performance tab")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices, do_normalize_tickers, do_backfill_signal_triggers):
     conn = get_cli_db()
     try:
         config = load_config()
@@ -598,6 +601,20 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             if updated:
                 conn.commit()
             click.echo(f"Done. Normalized {updated} distinct ticker values.")
+            _write_sentinel()
+            return
+
+        if do_backfill_signal_triggers:
+            if not POLYGON_API_KEY:
+                click.echo("Error: POLYGON_API_KEY is not set.", err=True)
+                return
+            before = conn.execute("SELECT COUNT(*) AS n FROM signal_triggers").fetchone()["n"]
+            click.echo("Scanning recent insider buys for signal triggers (alerts suppressed) ...")
+            alert_module.check_and_send_signals(
+                conn, config, POLYGON_API_KEY, send_alerts=False, max_age_override=30,
+            )
+            after = conn.execute("SELECT COUNT(*) AS n FROM signal_triggers").fetchone()["n"]
+            click.echo(f"Done — logged {after - before} new signal trigger(s) ({after} total)")
             _write_sentinel()
             return
 

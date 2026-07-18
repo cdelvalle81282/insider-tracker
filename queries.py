@@ -548,6 +548,75 @@ def watched_congress_members(conn: psycopg.Connection) -> set[str]:
     return {r["value"].lower() for r in rows}
 
 
+# ---------------------------------------------------------------------------
+# Signal triggers / performance tracking
+# ---------------------------------------------------------------------------
+
+def get_recent_signal_triggers(
+    conn: psycopg.Connection,
+    days: int = 14,
+    limit: int = 40,
+) -> list[dict]:
+    """Recent GC/RB/HHL/CB signal fires for the dashboard trigger feed, newest
+    first. is_tracked flags rows already opted into the Performance tab."""
+    since = (date.today() - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT st.*, (ts.id IS NOT NULL) AS is_tracked
+        FROM signal_triggers st
+        LEFT JOIN tracked_signals ts
+          ON ts.issuer_ticker = st.issuer_ticker
+         AND ts.signal_code   = st.signal_code
+         AND ts.trigger_date  = st.trigger_date
+        WHERE st.trigger_date >= %s
+        ORDER BY st.trigger_date DESC, st.trade_value DESC NULLS LAST
+        LIMIT %s
+        """,
+        [since, limit],
+    ).fetchall()
+    today = date.today()
+    result = [dict(r) for r in rows]
+    for r in result:
+        r["trade_value_fmt"] = _fmt_value(r.get("trade_value"))
+        r["days_ago"] = (today - r["trigger_date"]).days if r.get("trigger_date") else None
+        if hasattr(r.get("trigger_date"), "isoformat"):
+            r["trigger_date"] = r["trigger_date"].isoformat()
+        if hasattr(r.get("trade_date"), "isoformat"):
+            r["trade_date"] = r["trade_date"].isoformat()
+    return result
+
+
+def get_tracked_signals(conn: psycopg.Connection) -> list[dict]:
+    """All performance-tracked signal picks, newest first."""
+    rows = conn.execute(
+        "SELECT * FROM tracked_signals ORDER BY added_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_tracked_signal(
+    conn: psycopg.Connection,
+    ticker: str,
+    issuer_name: str | None,
+    signal_code: str,
+    trigger_date: date,
+) -> None:
+    assert conn.autocommit, "add_tracked_signal requires an autocommit connection"
+    conn.execute(
+        """
+        INSERT INTO tracked_signals (issuer_ticker, issuer_name, signal_code, trigger_date)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT DO NOTHING
+        """,
+        [ticker, issuer_name, signal_code, trigger_date],
+    )
+
+
+def remove_tracked_signal(conn: psycopg.Connection, tracked_id: int) -> None:
+    assert conn.autocommit, "remove_tracked_signal requires an autocommit connection"
+    conn.execute("DELETE FROM tracked_signals WHERE id = %s", [tracked_id])
+
+
 def get_watchlist_feed(
     conn: psycopg.Connection,
     watched_tickers,

@@ -18,6 +18,13 @@
      hx-swap="innerHTML">
 </div>
 
+<!-- Recent signal triggers (GC/RB/HHL/CB) — loaded async, non-blocking -->
+<div id="recent-triggers-container"
+     hx-get="/htmx/recent-triggers"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+</div>
+
 <!-- Filter bar -->
 <form id="filter-form"
   hx-get="/htmx/filings"

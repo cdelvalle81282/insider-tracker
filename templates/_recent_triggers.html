@@ -1,0 +1,43 @@
+{# Rendered by GET /htmx/recent-triggers — recent GC/RB/HHL/CB signal fires. No <html> wrapper. #}
+{% if triggers %}
+<div class="animate-in" style="margin-bottom:1rem;">
+  <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;">
+    <span class="sh" style="color:var(--sky);">
+      <span class="sh-dot" style="background:var(--sky);box-shadow:0 0 6px rgba(56,189,248,.5);"></span>
+      Recent Signal Triggers
+    </span>
+    <a href="/performance"
+       style="font-size:.70rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);"
+       class="hover:text-sky-400">Performance tab →</a>
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+    {% for t in triggers %}
+    <div style="background:var(--bg-raised);border:1px solid {{ t.style.color }}3d;border-radius:7px;
+                padding:.4rem .7rem;white-space:nowrap;font-size:.85rem;display:flex;align-items:center;gap:.4rem;">
+      <span style="background:{{ t.style.color }}22;color:{{ t.style.color }};border:1px solid {{ t.style.color }}55;
+                    border-radius:4px;padding:0 5px;font-size:.68rem;font-weight:700;letter-spacing:.05em;">{{ t.style.short }}</span>
+      <a href="/chart/{{ t.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">{{ t.issuer_ticker }}</a>
+      <span style="color:var(--text-3);font-size:.76rem;">{{ 'today' if t.days_ago == 0 else (t.days_ago ~ 'd ago') }}</span>
+      {% if t.insider_name %}
+      <span style="color:var(--text-2);font-size:.78rem;">· {{ t.insider_name }}</span>
+      {% endif %}
+      {% if t.trade_value_fmt %}
+      <span class="num" style="color:var(--buy);font-size:.78rem;">{{ t.trade_value_fmt }}</span>
+      {% endif %}
+      {% if t.is_tracked %}
+      <span style="color:var(--buy);font-size:.72rem;font-weight:600;letter-spacing:.05em;">✓ Tracking</span>
+      {% else %}
+      <button
+        hx-post="/performance/add"
+        hx-vals='{{ {"ticker": t.issuer_ticker, "issuer_name": t.issuer_name or "", "signal_code": t.signal_code, "trigger_date": t.trigger_date} | tojson }}'
+        hx-swap="outerHTML"
+        style="background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;
+               color:var(--text-2);font-size:.70rem;font-weight:600;letter-spacing:.05em;padding:1px 6px;"
+        onmouseover="this.style.color='var(--sky)';this.style.borderColor='var(--sky)';"
+        onmouseout="this.style.color='var(--text-2)';this.style.borderColor='var(--border)';">+ Track</button>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
