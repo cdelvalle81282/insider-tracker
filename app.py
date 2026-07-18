@@ -1381,6 +1381,11 @@ async def performance_view(
     return templates.TemplateResponse(request, "performance.html", {"rows": rows})
 
 
+@app.get("/guide", response_class=HTMLResponse)
+async def guide_view(request: Request):
+    return templates.TemplateResponse(request, "guide.html", {})
+
+
 # ---------------------------------------------------------------------------
 # Run log
 # ---------------------------------------------------------------------------

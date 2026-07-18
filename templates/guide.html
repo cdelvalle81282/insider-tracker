@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Guide — Insider Scanner{% endblock %}
+{% block nav_guide %}active{% endblock %}
+
+{% macro sec(title, subtitle) %}
+<details class="surface mb-4" style="padding:0;" open>
+  <summary style="cursor:pointer;padding:16px 20px;display:flex;align-items:center;gap:8px;">
+    <span class="caret">▶</span>
+    <span style="color:var(--text-1);font-weight:600;font-size:1.02rem;">{{ title }}</span>
+    {% if subtitle %}<span style="color:var(--text-3);font-weight:400;font-size:.82rem;">— {{ subtitle }}</span>{% endif %}
+  </summary>
+  <div style="padding:0 20px 20px;color:var(--text-2);font-size:.88rem;line-height:1.65;">
+    {{ caller() }}
+  </div>
+</details>
+{% endmacro %}
+
+{% macro term(name) %}<strong style="color:var(--text-1);">{{ name }}</strong>{% endmacro %}
+
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-xl font-bold" style="color:var(--text-1);">Guide</h1>
+  <p style="color:var(--text-2);font-size:.90rem;margin-top:4px;max-width:760px;">
+    What this tool does and how to read every tab. Insider Scanner pulls Form 4 filings (insider buys/sells) from
+    SEC EDGAR every day, scores and enriches them, and layers on technical-signal and track-record research —
+    built for "what happened today, ranked by dollar value and conviction." Each section below covers one tab.
+  </p>
+</div>
+
+{% call sec("Dashboard", "the main feed of insider buys and sells") %}
+<p>Each row is one <em>transaction</em>, not one filing — a single Form 4 can report several transactions, and each becomes its own row. Buys are marked ▲ and shaded green; sells are ▼ and shaded red.</p>
+
+<p style="margin-top:10px;">{{ term("Conviction Score") }} (badge in the leftmost columns, 1–10, colored
+<span class="score score-high" style="margin:0 2px;">9</span> green ≥8,
+<span class="score score-medium" style="margin:0 2px;">6</span> amber ≥5,
+<span class="score score-low" style="margin:0 2px;">3</span> gray below that)
+is a research-backed weighting of how meaningful a single buy looks, added up from:</p>
+<ul style="margin:8px 0 0 18px;list-style:disc;">
+  <li>+3 base, for any open-market purchase (non-purchase transactions score 0 and show no badge)</li>
+  <li>+2 if the insider is a CEO/CFO, +1 if a director, +1 if a 10%+ owner</li>
+  <li>+2 if it's part of a cluster (3+ distinct insiders buying the same company within 14 days)</li>
+  <li>+1 if it's an open-market buy outside a scheduled 10b5-1 plan</li>
+  <li>up to +3 more for the dollar size of the buy, and up to +3 more for how much of the insider's existing stake it represents</li>
+</ul>
+<p style="margin-top:8px;">All weights are editable on the admin <a href="/logic" style="color:var(--sky);">Config</a> page.</p>
+
+<p style="margin-top:10px;">{{ term("10b5-1 plan") }} — a pre-arranged, scheduled trading plan set up in advance (often for tax/diversification reasons), not a same-day discretionary decision. Hidden by default since it's a weaker signal; toggle "Hide 10b5-1" off to see them.
+{{ term("Equity swap") }} — similarly scheduled/non-discretionary, hidden by default alongside 10b5-1s.</p>
+
+<p style="margin-top:10px;">{{ term("Cluster") }} cards appear when 3+ different insiders buy the same company within a rolling window — expand a card to see who. A quality badge (Strong/Mixed/Weak) on each card is weighted by the buyers' own track records from the Leaderboard, when available.</p>
+
+<p style="margin-top:10px;">{{ term("Recent Signal Triggers") }} strip — technical patterns (see the Backtest section below) that fired recently, system-wide, on a buy of at least $500K. Click "+ Track" on one to start following its price performance on the new <a href="/performance" style="color:var(--sky);">Performance</a> tab.</p>
+
+<p style="margin-top:10px;">{{ term("Filters") }} — date range (single day, 7d/30d presets, or a custom range); Buy/Sell/Both; minimum $ value; ★ Watched-only; and an expandable panel with Hide 10b5-1, Hide equity swaps, Hide Funds/ETFs/REITs, Has Options Only, Individuals Only (excludes fund/entity filers), C-Suite only, role (Director/Officer/10%-owner), and market-cap tier (Micro/Small/Mid/Large/Mega). Search by ticker, company, or insider name — press Enter on a ticker to jump straight to its chart. Export CSV downloads the current filtered view.</p>
+
+<p style="margin-top:10px;">{{ term("Held After") }} column shows how many shares the insider owned immediately after the transaction — useful for judging whether a buy is a small top-up or a large chunk of their total position.</p>
+
+<p style="margin-top:10px;">Hover any ticker anywhere in the app for a quick price-chart preview (recent price line + insider buy/sell markers) without leaving the page — click through for the full chart.</p>
+{% endcall %}
+
+{% call sec("Watchlist", "pin tickers, insiders, and politicians you care about") %}
+<p>Pin a ticker, an insider (tracked by CIK, so it stays correct even if their name changes on a later filing), or a congressional member. Watched tickers get a ⭐ everywhere they appear across the app, and a "★ Watched" filter on the Dashboard shows only their activity. The Watchlist page itself shows recent activity (last 60 days) for everything you've pinned, newest first.</p>
+{% endcall %}
+
+{% call sec("Congress", "congressional and executive-branch trades") %}
+<p>Two data sources, both required by the STOCK Act / ethics disclosure rules, distinct from SEC Form 4:</p>
+<ul style="margin:8px 0 0 18px;list-style:disc;">
+  <li>{{ term("Congress") }} — sitting House/Senate members' trades, sourced live from the AInvest API (2024+ coverage).</li>
+  <li>{{ term("Executive") }} — federal executive-branch officials' holdings/trades from OGE 278-T filings via Open Cabinet, refreshed weekly.</li>
+</ul>
+<p style="margin-top:10px;">Filter by chamber, transaction type, source, ticker, politician name, or lookback window. A ★ button lets you watch a specific politician the same way you'd watch a ticker.</p>
+<p style="margin-top:10px;">When a congressional or executive purchase and a corporate insider buy land on the same ticker within a couple weeks of each other, that's flagged as a co-buy — visible as a Slack alert (see below), not yet a dedicated dashboard panel.</p>
+{% endcall %}
+
+{% call sec("Backtest", "do these technical patterns actually work, historically?") %}
+<p>Four chart patterns are tracked for how often they show up <em>after</em> an insider's open-market buy, and whether the stock actually outperformed in the weeks that followed:</p>
+<ul style="margin:8px 0 0 18px;list-style:disc;">
+  <li><span style="color:#f59e0b;font-weight:700;">GC</span> Golden Cross — the 50-day moving average crosses above the 200-day</li>
+  <li><span style="color:#f97316;font-weight:700;">RB</span> Resistance Break — price closes above a level it had bounced off of before</li>
+  <li><span style="color:#22d3ee;font-weight:700;">HH</span> Higher Highs + Higher Lows — two confirmed upward swing points in a row</li>
+  <li><span style="color:#a855f7;font-weight:700;">CB</span> Channel Break — price breaks out of a sideways range</li>
+</ul>
+<p style="margin-top:10px;">A ✓ with "<strong>Nd</strong>" next to it means the pattern fired <strong>N days after the insider's buy</strong> — not N days ago. It only shows a checkmark if that happened within whichever forward window (15/30/45/60/90d) is currently selected at the top of the page.</p>
+<p style="margin-top:10px;">The most recent ~90 days of trades are intentionally absent from this table — each row needs a full 90-day-forward price window to score the 90-day return column, so very recent buys simply haven't had time to qualify yet. That's by design, not missing data; the live <a href="/" style="color:var(--sky);">Dashboard</a> feed and Recent Signal Triggers cover what's happened lately.</p>
+<p style="margin-top:10px;">Only Golden Cross currently pushes a live Slack alert — backtesting showed the other three don't have a consistent return edge measured from their own fire date. All four are still tracked here and shown as chart markers.</p>
+{% endcall %}
+
+{% call sec("Leaderboard", "whose past buys actually predicted a move?") %}
+<p>{{ term("Insider Leaderboard") }} ranks individual insiders by their own forward excess return vs. SPY, averaged across every open-market buy they've made (min. trade count filter, default 5, since a small sample is unreliable). Refreshed weekly.</p>
+<ul style="margin:8px 0 0 18px;list-style:disc;">
+  <li><strong>Win/Med/Avg 90d</strong> — % of their buys that beat SPY over the following 90 days, and the median/average excess return.</li>
+  <li><strong>Peak</strong> — which window (30/60/90d) shows their strongest median return, i.e. how long after their buy the edge tends to show up.</li>
+  <li><strong>Profile</strong> — a shorthand pattern: <em>Consistent</em>, <em>30d peak</em>, <em>60d peak</em>, <em>Late mover</em>, <em>Positive</em>, or <em>Mixed</em>.</li>
+</ul>
+<p style="margin-top:10px;">{{ term("Insider Sentiment Index") }} — every open-market buy vs. sell dollar amount, summed by week across the whole dataset, as a read on whether insiders in aggregate are net bullish or bearish.</p>
+<p style="margin-top:10px;">{{ term("Cross-Company Buying") }} — flags the rare case of someone who's an insider (officer/director/10%+ owner) at 2–5 different public companies, caught buying at one of them. Sometimes precedes a disclosed partnership or deal between the two.</p>
+{% endcall %}
+
+{% call sec("Performance", "track a fired signal's price move since it triggered") %}
+<p>An opt-in watchlist for technical-signal triggers: click "+ Track" on any row in the Dashboard's Recent Signal Triggers feed, and it lands here with its entry price (the close on/after the trigger date), current price, and live % return computed on every page load. Remove a pick with the ✕ button whenever you're done watching it.</p>
+{% endcall %}
+
+{% call sec("Chart page", "candlestick chart with insider activity overlaid") %}
+<p>Click any ticker to open its chart — daily candles (via Polygon.io) with insider buy (green ▲) and sell (red ▼) markers, plus small colored circles for any of the four technical signals above that fired. Same-day/same-direction trades from multiple filers are grouped into one marker so heavily-traded names stay readable. Switch timeframe (1m/3m/6m/1y) and Buy/Sell/Both at the top.</p>
+{% endcall %}
+
+{% call sec("Slack alerts", "what gets pushed, and when") %}
+<ul style="margin:0 0 0 18px;list-style:disc;">
+  <li>{{ term("Big Buy") }} — any open-market purchase ≥ $1,000,000</li>
+  <li>{{ term("C-Suite Buy") }} — a CEO/CFO purchase ≥ $250,000 (lower bar than Big Buy)</li>
+  <li>{{ term("Cluster") }} — 3+ distinct insiders buying the same company within 10 days</li>
+  <li>{{ term("Watchlist") }} — any buy or sell, any size, on something you've pinned</li>
+  <li>{{ term("Signal") }} — Golden Cross firing within 15 days of a ≥$500K buy (see Backtest above)</li>
+  <li>{{ term("Congress/Exec co-buy") }} — a political trade and a corporate insider buy landing on the same ticker close together</li>
+</ul>
+<p style="margin-top:10px;">Every threshold above is editable on the admin <a href="/logic" style="color:var(--sky);">Config</a> page (gear icon, top right) without touching code.</p>
+{% endcall %}
+
+{% endblock %}
