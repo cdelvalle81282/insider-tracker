@@ -1,3 +1,4 @@
+{% from "_macros.html" import info_tip %}
 {# Rendered by GET /htmx/recent-triggers — recent GC/RB/HHL/CB signal fires. No <html> wrapper. #}
 {% if triggers %}
 <div class="animate-in" style="margin-bottom:1rem;">
@@ -6,6 +7,7 @@
       <span class="sh-dot" style="background:var(--sky);box-shadow:0 0 6px rgba(56,189,248,.5);"></span>
       Recent Signal Triggers
     </span>
+    {{ info_tip("A technical chart pattern (Golden Cross, Resistance Break, Higher-Highs+Lows, or Channel Break) firing after an insider bought at least $500K — system-wide, not limited to your watchlist. Hover a badge to see which pattern. Click \"+ Track\" to follow its price performance on the Performance tab. Full definitions on the Guide page.") }}
     <a href="/performance"
        style="font-size:.70rem;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);"
        class="hover:text-sky-400">Performance tab →</a>
@@ -14,8 +16,8 @@
     {% for t in triggers %}
     <div style="background:var(--bg-raised);border:1px solid {{ t.style.color }}3d;border-radius:7px;
                 padding:.4rem .7rem;white-space:nowrap;font-size:.85rem;display:flex;align-items:center;gap:.4rem;">
-      <span style="background:{{ t.style.color }}22;color:{{ t.style.color }};border:1px solid {{ t.style.color }}55;
-                    border-radius:4px;padding:0 5px;font-size:.68rem;font-weight:700;letter-spacing:.05em;">{{ t.style.short }}</span>
+      <span title="{{ t.style.label }}" style="background:{{ t.style.color }}22;color:{{ t.style.color }};border:1px solid {{ t.style.color }}55;
+                    border-radius:4px;padding:0 5px;font-size:.68rem;font-weight:700;letter-spacing:.05em;cursor:help;">{{ t.style.short }}</span>
       <a href="/chart/{{ t.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">{{ t.issuer_ticker }}</a>
       <span style="color:var(--text-3);font-size:.76rem;">{{ 'today' if t.days_ago == 0 else (t.days_ago ~ 'd ago') }}</span>
       {% if t.insider_name %}

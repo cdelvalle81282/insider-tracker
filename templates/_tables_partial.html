@@ -68,11 +68,12 @@
 {% endif %}
 
 <!-- ── Sort macro ─────────────────────────────────────────────────── -->
-{% macro sort_th(label, col, align="right", data_col="") %}
+{% macro sort_th(label, col, align="right", data_col="", title="") %}
 <th class="th sort {% if filters and filters.sort_by == col %}sorted{% endif %}"
     style="text-align:{{ align }};"
     onclick="sortBy('{{ col }}')"
-    {% if data_col %}data-col="{{ data_col }}"{% endif %}>
+    {% if data_col %}data-col="{{ data_col }}"{% endif %}
+    {% if title %}title="{{ title }}"{% endif %}>
   {{ label }}
   {% if filters and filters.sort_by == col %}
     <span style="color:var(--sky);">{{ '↑' if filters.sort_order == 'asc' else '↓' }}</span>
@@ -81,6 +82,9 @@
   {% endif %}
 </th>
 {% endmacro %}
+
+{% set score_tip = "Conviction Score (1-10) — weighted for buy size, insider role (CEO/CFO/director/10%-owner), cluster activity, and more. Green ≥ 8, amber ≥ 5. Full rubric on the Guide page." %}
+{% set pct_held_tip = "What this transaction represents as a % of the insider's total holdings immediately after it." %}
 
 <!-- ── Buys & Sells tables ────────────────────────────────────────── -->
 <div style="display:flex;justify-content:flex-end;margin-bottom:4px;gap:4px;">
@@ -108,16 +112,16 @@
       <table class="w-full">
         <thead>
           <tr>
-            {{ sort_th("Score", "conviction") }}
+            {{ sort_th("Score", "conviction", title=score_tip) }}
             {{ sort_th("Ticker", "ticker", "left") }}
             <th class="th text-left">Company</th>
             {{ sort_th("Insider", "insider", "left") }}
             <th class="th text-left">Title</th>
             {{ sort_th("Shares", "shares", data_col="shares") }}
-            <th class="th text-right" data-col="held-after">Held After</th>
+            <th class="th text-right" data-col="held-after" title="Shares the insider owned immediately after this transaction.">Held After</th>
             {{ sort_th("Price", "price") }}
             {{ sort_th("$ Value", "value") }}
-            <th class="th text-right" data-col="pct-held">% Held</th>
+            <th class="th text-right" data-col="pct-held" title="{{ pct_held_tip }}">% Held</th>
             {{ sort_th("Filed", "filed") }}
           </tr>
         </thead>
@@ -126,7 +130,7 @@
           <tr class="row-buy {% if row.conviction_tier == 'high' %}conviction-high{% endif %}">
             <td class="td text-right" style="width:36px;">
               {% if row.conviction %}
-              <span class="score score-{{ row.conviction_tier }}">{{ row.conviction }}</span>
+              <span class="score score-{{ row.conviction_tier }}" title="{{ score_tip }}">{{ row.conviction }}</span>
               {% else %}
               <span style="color:var(--text-3);font-size:.76rem;">—</span>
               {% endif %}
@@ -192,7 +196,7 @@
             {% if row.issuer_ticker and row.issuer_ticker not in ('NONE','N/A') %}
             <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link" style="font-size:.9rem;">{{ row.issuer_ticker }}</a>
             {% endif %}
-            {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;">{{ row.conviction }}</span>{% endif %}
+            {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;" title="{{ score_tip }}">{{ row.conviction }}</span>{% endif %}
           </div>
           <span class="num" style="color:var(--buy);font-weight:700;font-size:.94rem;">{{ row.total_value_fmt or '—' }}</span>
         </div>
@@ -232,17 +236,17 @@
       <table class="w-full">
         <thead>
           <tr>
-            <th class="th text-right">Score</th>
+            <th class="th text-right" title="Conviction scoring only applies to buys.">Score</th>
             {{ sort_th("Ticker", "ticker", "left") }}
             <th class="th text-left">Company</th>
             {{ sort_th("Insider", "insider", "left") }}
             <th class="th text-left">Title</th>
             {{ sort_th("Shares", "shares") }}
-            <th class="th text-right">Held After</th>
+            <th class="th text-right" title="Shares the insider owned immediately after this transaction.">Held After</th>
             {{ sort_th("Price", "price") }}
             {{ sort_th("$ Value", "value") }}
-            <th class="th text-right">% Held</th>
-            <th class="th text-right">10b5-1</th>
+            <th class="th text-right" title="{{ pct_held_tip }}">% Held</th>
+            <th class="th text-right" title="Pre-arranged 10b5-1 trading plan — scheduled in advance, not a same-day discretionary decision.">10b5-1</th>
             {{ sort_th("Filed", "filed") }}
           </tr>
         </thead>
@@ -272,7 +276,7 @@
             <td class="td num text-right font-bold" style="color:var(--sell);">{{ row.total_value_fmt or '—' }}</td>
             <td class="td num text-right {% if row.pct_holdings and row.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ row.pct_holdings or '—' }}</td>
             <td class="td text-center">
-              {% if row.is_10b5_1 %}<span class="plan-badge">Plan</span>{% endif %}
+              {% if row.is_10b5_1 %}<span class="plan-badge" title="Pre-arranged 10b5-1 trading plan — scheduled in advance, not a same-day discretionary decision.">Plan</span>{% endif %}
             </td>
             <td class="td text-right" style="white-space:nowrap;">
               <a href="/filing/{{ row.transaction_id }}" class="num hover:text-sky-400 transition-colors" style="font-size:.80rem;color:var(--text-3);">{{ row.filed_rel }}</a>
@@ -300,7 +304,7 @@
             {% if row.issuer_ticker and row.issuer_ticker not in ('NONE','N/A') %}
             <a href="/chart/{{ row.issuer_ticker }}" class="ticker-link" style="font-size:.9rem;">{{ row.issuer_ticker }}</a>
             {% endif %}
-            {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;">{{ row.conviction }}</span>{% endif %}
+            {% if row.conviction %}<span class="score score-{{ row.conviction_tier }}" style="margin-left:6px;" title="{{ score_tip }}">{{ row.conviction }}</span>{% endif %}
           </div>
           <span class="num" style="color:var(--sell);font-weight:700;font-size:.94rem;">{{ row.total_value_fmt or '—' }}</span>
         </div>

@@ -164,7 +164,7 @@
           <td class="td num text-right {% if f.pct_holdings and f.pct_holdings|replace('%','')|replace('<','')|replace('>','')|float > 20 %}pct-hot{% else %}pct-dim{% endif %}">{{ f.pct_holdings or '—' }}</td>
           <td class="td text-center">
             {% if f.conviction %}
-            <span class="score score-{{ f.conviction_tier }}">{{ f.conviction }}</span>
+            <span class="score score-{{ f.conviction_tier }}" title="Conviction Score (1-10) — weighted for buy size, insider role, cluster activity, and more. Full rubric on the Guide page.">{{ f.conviction }}</span>
             {% else %}
             <span style="color:var(--text-3);">—</span>
             {% endif %}

@@ -210,7 +210,7 @@
 
           <td class="td text-right" style="width:36px;">
             {% if row.conviction %}
-            <span class="score score-{{ row.conviction_tier }}">{{ row.conviction }}</span>
+            <span class="score score-{{ row.conviction_tier }}" title="Conviction Score (1-10) — weighted for buy size, insider role, cluster activity, and more. Full rubric on the Guide page.">{{ row.conviction }}</span>
             {% else %}
             <span style="color:var(--text-3);font-size:.76rem;">—</span>
             {% endif %}

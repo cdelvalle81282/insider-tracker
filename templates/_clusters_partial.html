@@ -1,3 +1,4 @@
+{% from "_macros.html" import info_tip %}
 {# Rendered by GET /htmx/clusters — cluster activity only. No <html> wrapper. #}
 {% if clusters %}
 <details class="mb-6" open>
@@ -6,6 +7,9 @@
     <span class="sh" style="color:var(--amber);">
       <span class="sh-dot" style="background:var(--amber);"></span>
       Cluster Activity
+    </span>
+    <span onclick="event.stopPropagation()">
+      {{ info_tip("2+ different insiders bought (or sold) this company within your currently selected date range. Expand a card to see who. The colored badge, when shown, rates the buyers' historical track record from the Leaderboard. Tighter thresholds apply elsewhere: the conviction score's cluster bonus and the Slack cluster alert both require 3+ insiders within a fixed 10-14 day window.") }}
     </span>
     <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:2px;">
       {{ clusters | length }} ticker{{ 's' if clusters | length != 1 }} · 2+ insiders
