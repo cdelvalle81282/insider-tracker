@@ -227,6 +227,7 @@ def _match_big_buy(
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
+          AND issuer_ticker IS NOT NULL
         ORDER BY total_value DESC
         """,
         [threshold, since_ts],
@@ -254,6 +255,7 @@ def _match_watchlist_activity(
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
+          AND issuer_ticker IS NOT NULL
           AND (issuer_ticker = ANY(%s) OR insider_cik = ANY(%s))
         ORDER BY total_value DESC NULLS LAST
         """,
@@ -281,6 +283,7 @@ def _match_insider_buy(
           AND superseded_by IS NULL
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
+          AND issuer_ticker IS NOT NULL
           AND ({kw_clauses})
         ORDER BY total_value DESC
         """,
