@@ -207,14 +207,17 @@ def _batch_insider_baseline(
     conn: psycopg.Connection,
     rows: list[dict],
     baseline_cfg: dict,
-) -> dict[tuple, dict]:
+) -> dict[str, dict]:
     """
     Flag P-code buys that are unusual vs. this insider's own trade history --
     either size (>= size_multiplier x their own median prior buy) or timing
     (>= silence_days since their last P-trade). One query fetches each
     insider's full P-trade history; the per-trade comparison happens in
-    Python so a trade is only measured against trades strictly before it in
-    that insider's own timeline (point-in-time correct, not all-time-inclusive).
+    Python so a trade is only measured against trades on strictly earlier dates
+    in that insider's own timeline (point-in-time correct, not
+    all-time-inclusive, and not counting same-day siblings as prior history).
+
+    Returned dict is keyed by transaction_id.
     """
     min_prior  = baseline_cfg.get("min_prior_trades", 2)
     multiplier = baseline_cfg.get("size_multiplier", 3.0)
@@ -229,7 +232,7 @@ def _batch_insider_baseline(
 
     placeholders = ",".join(["%s"] * len(ciks))
     history = conn.execute(
-        f"""SELECT insider_cik, transaction_date, total_value
+        f"""SELECT transaction_id, insider_cik, transaction_date, total_value
             FROM filings
             WHERE insider_cik IN ({placeholders})
               AND transaction_code = 'P'
@@ -237,44 +240,52 @@ def _batch_insider_baseline(
               AND joint_filer_of IS NULL
               AND table_type = 'ND'
               AND total_value IS NOT NULL
-            ORDER BY insider_cik, transaction_date""",
+            ORDER BY insider_cik, transaction_date, transaction_id""",
         list(ciks),
     ).fetchall()
 
-    by_insider: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    by_insider: dict[str, list[tuple[str, str, float]]] = defaultdict(list)
     for h in history:
-        by_insider[h["insider_cik"]].append((_iso_date(h["transaction_date"]), h["total_value"]))
+        by_insider[h["insider_cik"]].append(
+            (h["transaction_id"], _iso_date(h["transaction_date"]), h["total_value"])
+        )
 
-    # Original (insider_cik, transaction_date) keys may carry date objects from
-    # the caller's rows -- key the output the same way _batch_cluster_counts
-    # does, so a lookup with the row's own (possibly non-string) value hits.
-    trade_date_by_key: dict[tuple[str, str], object] = {
-        (r.get("insider_cik"), _iso_date(r.get("transaction_date"))): r.get("transaction_date")
-        for r in rows
+    # Only trades present in the caller's result set need a flag.
+    wanted = {
+        r.get("transaction_id") for r in rows
+        if r.get("insider_cik") and r.get("transaction_code") == "P"
     }
 
-    flags: dict[tuple, dict] = {}
-    for cik, trades in by_insider.items():
-        for i, (td, value) in enumerate(trades):
-            prior = trades[:i]
+    # Keyed by transaction_id. Keying by (insider_cik, transaction_date) meant an
+    # insider with several buys on one day had all but the last flag overwritten,
+    # and it needed an extra date-object/ISO-string reconciliation map to look up.
+    flags: dict[str, dict] = {}
+    for trades in by_insider.values():
+        for i, (txid, td, value) in enumerate(trades):
+            if txid not in wanted:
+                continue
+            # Strictly earlier dates only. Walking back over same-date siblings is
+            # what stops a same-day trade from counting as its own prior history,
+            # which also used to yield a nonsensical gap_days of 0.
+            j = i
+            while j > 0 and trades[j - 1][1] == td:
+                j -= 1
+            prior = trades[:j]
             if len(prior) < min_prior:
                 continue
-            prior_values = sorted(v for _, v in prior)
+            prior_values = sorted(v for _, _, v in prior)
             mid = len(prior_values) // 2
             median_val = (
                 prior_values[mid] if len(prior_values) % 2
                 else (prior_values[mid - 1] + prior_values[mid]) / 2
             )
-            gap_days = (date.fromisoformat(td) - date.fromisoformat(prior[-1][0])).days
+            gap_days = (date.fromisoformat(td) - date.fromisoformat(prior[-1][1])).days
 
             is_size_outlier = median_val > 0 and value >= median_val * multiplier
             is_silence_outlier = gap_days >= silence
             if not (is_size_outlier or is_silence_outlier):
                 continue
-            td_orig = trade_date_by_key.get((cik, td))
-            if td_orig is None:
-                continue  # this historical trade isn't in the current result set
-            flags[(cik, td_orig)] = {
+            flags[txid] = {
                 "size_outlier": is_size_outlier,
                 "silence_outlier": is_silence_outlier,
                 "median_value": median_val,
@@ -444,7 +455,7 @@ def _enrich(rows: list[dict], ctx: EnrichContext | None = None) -> list[dict]:
         else:
             d["is_watched"] = False
 
-        d["baseline_flag"] = baseline_flags.get((d.get("insider_cik"), d.get("transaction_date")))
+        d["baseline_flag"] = baseline_flags.get(d.get("transaction_id"))
 
         result.append(d)
     return result
@@ -1235,9 +1246,30 @@ def get_cluster_activity(
     swap_f = "AND equity_swap = 0" if hide_equity_swap else ""
     codes_list, codes_ph = _sanitize_codes(codes)
 
+    # ONE predicate shared verbatim by the aggregate and the per-transaction
+    # follow-up. They used to drift: the follow-up omitted the superseded and
+    # joint-filer exclusions, so a card's transaction list could contain rows that
+    # were excluded from its own insider_count / tx_count / total_value, and
+    # enrich_clusters_with_quality then rated the cluster off that inflated set.
+    base_where = f"""
+            {date_condition}
+              AND transaction_code IN ({codes_ph})
+              AND superseded_by IS NULL
+              AND joint_filer_of IS NULL
+              {ten_b}
+              {swap_f}
+              AND issuer_ticker IS NOT NULL
+    """
+    base_params: list = [*date_params, *codes_list]
+
+    # Grouped by issuer_cik rather than the ticker string: two different issuers
+    # can share a ticker (reuse after a delisting, or a rename), which previously
+    # merged their filings into one cluster card.
     rows = conn.execute(f"""
         SELECT
-            issuer_ticker, issuer_name,
+            issuer_cik,
+            MAX(issuer_ticker) AS issuer_ticker,
+            MAX(issuer_name)   AS issuer_name,
             MAX(sector) AS sector,
             CASE WHEN SUM(CASE WHEN transaction_code='P' THEN 1 ELSE 0 END) > 0
                   AND SUM(CASE WHEN transaction_code='S' THEN 1 ELSE 0 END) > 0
@@ -1251,46 +1283,39 @@ def get_cluster_activity(
             STRING_AGG(DISTINCT insider_name, ', ') AS insider_names,
             STRING_AGG(DISTINCT COALESCE(insider_title, ''), ', ') AS insider_titles
         FROM filings
-        WHERE {date_condition}
-          AND transaction_code IN ({codes_ph})
-          AND superseded_by IS NULL
-          AND joint_filer_of IS NULL
-          {ten_b}
-          {swap_f}
-          AND issuer_ticker IS NOT NULL
-        GROUP BY issuer_ticker, issuer_name
+        WHERE {base_where}
+        GROUP BY issuer_cik
         HAVING COUNT(DISTINCT insider_cik) >= %s
         ORDER BY total_value DESC
-    """, [*date_params, *codes_list, min_insiders]).fetchall()
+    """, [*base_params, min_insiders]).fetchall()
 
     if not rows:
         return []
 
-    cluster_tickers = [r["issuer_ticker"] for r in rows]
-    ticker_placeholders = ",".join(["%s"] * len(cluster_tickers))
+    cluster_ciks = [r["issuer_cik"] for r in rows]
+    cik_placeholders = ",".join(["%s"] * len(cluster_ciks))
     all_tx = conn.execute(f"""
         SELECT transaction_id, insider_cik, insider_name, insider_title,
                transaction_code, shares, price_per_share, total_value, is_10b5_1,
-               issuer_ticker
+               issuer_cik
         FROM filings
-        WHERE {date_condition}
-          AND issuer_ticker IN ({ticker_placeholders})
-          AND transaction_code IN ({codes_ph}) {ten_b} {swap_f}
+        WHERE {base_where}
+          AND issuer_cik IN ({cik_placeholders})
         ORDER BY total_value DESC NULLS LAST
-    """, [*date_params, *cluster_tickers, *codes_list]).fetchall()
+    """, [*base_params, *cluster_ciks]).fetchall()
 
-    tx_by_ticker: dict[str, list[dict]] = defaultdict(list)
+    tx_by_cik: dict[str, list[dict]] = defaultdict(list)
     for tx in all_tx:
         tx_d = dict(tx)
         tx_d["total_value_fmt"] = _fmt_value(tx_d["total_value"])
         tx_d["price_fmt"] = _fmt_value(tx_d["price_per_share"])
-        tx_by_ticker[tx_d["issuer_ticker"]].append(tx_d)
+        tx_by_cik[tx_d["issuer_cik"]].append(tx_d)
 
     result = []
     for r in rows:
         d_row = dict(r)
         d_row["total_value_fmt"] = _fmt_value(d_row["total_value"])
-        d_row["transactions"] = tx_by_ticker.get(d_row["issuer_ticker"], [])
+        d_row["transactions"] = tx_by_cik.get(d_row["issuer_cik"], [])
         result.append(d_row)
     return result
 
