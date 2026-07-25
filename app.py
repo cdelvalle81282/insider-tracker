@@ -321,13 +321,32 @@ def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
 
 @app.get("/healthz")
 async def healthz():
-    from datetime import datetime
+    """Liveness plus ingest freshness.
+
+    Always returns 200, even when the ingest is stale. The uptime monitor owns
+    the staleness threshold, and failing this endpoint on stale data would make a
+    late ingest indistinguishable from the process being down.
+
+    `last_ingest` was previously computed here and then thrown away, so a caller
+    had no way to see staleness at all.
+    """
+    from datetime import datetime, timezone
+    last_ingest = None
+    ingest_age_hours = None
     try:
         mtime = cache_module._sentinel_mtime()
-        last_ingest = datetime.utcfromtimestamp(mtime).isoformat() + "Z" if mtime else None
+        if mtime:
+            stamp = datetime.fromtimestamp(mtime, tz=timezone.utc)
+            last_ingest = stamp.isoformat().replace("+00:00", "Z")
+            age = (datetime.now(timezone.utc) - stamp).total_seconds()
+            ingest_age_hours = round(age / 3600, 2)
     except Exception:
-        last_ingest = None
-    return {"ok": True}
+        pass  # health check must never 500 on its own bookkeeping
+    return {
+        "ok": True,
+        "last_ingest": last_ingest,
+        "ingest_age_hours": ingest_age_hours,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -977,7 +996,9 @@ async def issuer_view(
     request: Request,
     ticker: str,
     db: psycopg.Connection = Depends(get_request_db),
-    days: int = Query(default=90),
+    # Bounded: this feeds timedelta(days=...) in queries.get_issuer_filings, and a
+    # large enough value raises OverflowError (a 500) rather than returning nothing.
+    days: int = Query(default=90, ge=1, le=3650),
 ):
     if not _TICKER_RE.match(ticker.upper()):
         raise HTTPException(status_code=400, detail="Invalid ticker")
@@ -1583,7 +1604,8 @@ async def congress_view(
     chamber: str = Query(default=""),
     tx_type: str = Query(default=""),
     source: str = Query(default=""),
-    days: int = Query(default=0),
+    # 0 is the existing "all time" sentinel, so the floor is 0 rather than 1.
+    days: int = Query(default=0, ge=0, le=3650),
     sort_by: str = Query(default="transaction_date"),
     sort_order: str = Query(default="desc"),
 ):
@@ -1626,7 +1648,8 @@ async def htmx_congress_trades(
     chamber: str = Query(default=""),
     tx_type: str = Query(default=""),
     source: str = Query(default=""),
-    days: int = Query(default=0),
+    # 0 is the existing "all time" sentinel, so the floor is 0 rather than 1.
+    days: int = Query(default=0, ge=0, le=3650),
     sort_by: str = Query(default="transaction_date"),
     sort_order: str = Query(default="desc"),
 ):

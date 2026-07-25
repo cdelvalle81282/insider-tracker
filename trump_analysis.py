@@ -99,7 +99,6 @@ def show(label, subset, w):
     if not vals: return
     wins = sum(1 for v in vals if v > 0)
     avg  = sum(vals)/len(vals)
-    med  = sorted(vals)[len(vals)//2]
     eavg = sum(exc)/len(exc) if exc else float('nan')
     print(f"  {label:<35} n={len(vals):>4}  win={wins/len(vals)*100:.0f}%  avg={avg:+.1f}%  exc={eavg:+.1f}%")
 
