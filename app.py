@@ -19,7 +19,13 @@ from pathlib import Path
 import psycopg
 from cachetools import TTLCache
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -31,6 +37,7 @@ import cache as cache_module
 import config as cfg
 import polygon_client
 import queries
+import wisepub_sso
 from backtest import (
     PRICE_WARMUP_DAYS,
     detect_channel_break,
@@ -379,6 +386,83 @@ async def healthz():
         "last_ingest": last_ingest,
         "ingest_age_hours": ingest_age_hours,
     }
+
+
+# ---------------------------------------------------------------------------
+# Wisepub SSO — lets a logged-in subscriber into the dashboard when it is
+# embedded in an iframe on vip.optionpit.com, without a second login.
+#
+# nginx keeps whole-site Basic Auth as the staff/direct path and calls
+# /internal/sso-authz via auth_request with `satisfy any`, so either credential
+# is enough. /sso itself is excluded from Basic Auth in the nginx site config —
+# it authenticates itself with the signed token.
+# ---------------------------------------------------------------------------
+
+WISEPUB_SSO_SECRET = os.environ.get("WISEPUB_SSO_SECRET", "")
+
+# Redis-backed (db=3, same client as the query cache) so one-time-use holds
+# across both uvicorn workers. An in-process guard would let a token be spent
+# once per worker.
+_sso_replay_guard = wisepub_sso.ReplayGuard(cache_module._client())
+
+_SSO_DENIED_HTML = (
+    '<!DOCTYPE html><html><body style="background:#06090f;color:#e6edf3;'
+    'font-family:system-ui,sans-serif;padding:2rem"><h3>Sign-in link expired</h3>'
+    "<p>Please return to the Option Pit VIP site and open this page again.</p>"
+    "</body></html>"
+)
+
+
+def _wisepub_session(request: Request) -> dict | None:
+    """The Wisepub identity carried by this request, or None."""
+    if not WISEPUB_SSO_SECRET:
+        return None
+    return wisepub_sso.read_session(
+        request.cookies.get(wisepub_sso.SESSION_COOKIE), WISEPUB_SSO_SECRET
+    )
+
+
+@app.get("/sso")
+@limiter.limit("30/minute")
+async def wisepub_sso_landing(
+    request: Request,
+    token: str = "",
+    next_path: str = Query("", alias="next"),
+):
+    """Verify Wisepub's signed handover token and start a session."""
+    try:
+        identity = wisepub_sso.verify_wisepub_token(token, WISEPUB_SSO_SECRET)
+    except wisepub_sso.SsoError as exc:
+        logging.getLogger("app").warning("Wisepub SSO rejected: %s", exc)
+        return HTMLResponse(_SSO_DENIED_HTML, status_code=403)
+
+    if not _sso_replay_guard.claim(identity["fingerprint"]):
+        logging.getLogger("app").warning(
+            "Wisepub SSO token replayed for %s", identity["email"]
+        )
+        return HTMLResponse(_SSO_DENIED_HTML, status_code=403)
+
+    # 303 to a token-free URL: with no exp claim on the JWT, the less time it
+    # spends in history, referrers, and logs the better.
+    response = RedirectResponse(
+        url=wisepub_sso.safe_next_path(next_path, "/"), status_code=303
+    )
+    wisepub_sso.set_session_cookie(
+        response, wisepub_sso.issue_session(identity, WISEPUB_SSO_SECRET)
+    )
+    logging.getLogger("app").info(
+        "Wisepub SSO session issued for %s (staff=%s)",
+        identity["email"], identity["staff"],
+    )
+    return response
+
+
+@app.get("/internal/sso-authz")
+async def wisepub_sso_authz(request: Request):
+    """nginx auth_request target: 204 when a valid Wisepub session is present."""
+    if _wisepub_session(request) is None:
+        return Response(status_code=401)
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
