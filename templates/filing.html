@@ -105,6 +105,7 @@
       <div class="flex items-start justify-between mb-3">
         <h3 class="text-gray-400 text-xs uppercase tracking-widest">Insider</h3>
         <form method="POST" action="/watchlist/add">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
           <input type="hidden" name="watch_type" value="insider" />
           <input type="hidden" name="value" value="{{ filing.insider_cik }}" />
           <input type="hidden" name="label" value="{{ filing.insider_name }}" />

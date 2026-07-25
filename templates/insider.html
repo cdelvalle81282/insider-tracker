@@ -9,6 +9,7 @@
     <p class="num mt-1" style="font-size:.76rem;color:var(--text-3);">CIK {{ cik }}</p>
   </div>
   <form method="POST" action="/watchlist/add">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
     <input type="hidden" name="watch_type" value="insider" />
     <input type="hidden" name="value" value="{{ cik }}" />
     <input type="hidden" name="label" value="{{ name }}" />

@@ -11,6 +11,7 @@
       📈 Chart
     </a>
     <form method="POST" action="/watchlist/add">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="watch_type" value="ticker" />
       <input type="hidden" name="value" value="{{ ticker }}" />
       <input type="hidden" name="label" value="{{ ticker }}" />

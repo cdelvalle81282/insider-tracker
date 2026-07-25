@@ -24,6 +24,10 @@
   <div class="xl:col-span-2 space-y-6">
 
     <form id="logic-form" method="POST" action="/logic/save" class="space-y-6">
+      {# Inside the form element, so it is also submitted by the inputs scattered
+         elsewhere on this page that attach via form="logic-form": form
+         serialization follows form ownership, not DOM position. #}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 
       <!-- Alert Rules -->
       <section class="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -589,7 +593,13 @@ async function sendTestAlert() {
   btn.disabled = true;
   result.textContent = 'Sending...';
   try {
-    const resp = await fetch('/logic/test-alert', {method: 'POST'});
+    // Plain fetch, so the sitewide htmx:configRequest hook does not apply.
+    // Read the token from the meta tag base.html renders.
+    const csrf = document.querySelector('meta[name="csrf-token"]');
+    const resp = await fetch('/logic/test-alert', {
+      method: 'POST',
+      headers: csrf ? {'X-CSRF-Token': csrf.getAttribute('content')} : {},
+    });
     const data = await resp.json();
     if (data.ok) {
       result.textContent = '✓ Sent!';

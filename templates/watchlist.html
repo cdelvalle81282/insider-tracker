@@ -91,6 +91,7 @@
       <h2 style="color:var(--text-1);font-weight:600;margin-bottom:16px;">Watched Tickers</h2>
 
       <form method="POST" action="/watchlist/add" class="flex gap-2 mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <input type="hidden" name="watch_type" value="ticker" />
         <input type="text" name="value" placeholder="e.g. AAPL" maxlength="10" required
                class="fg-in flex-1"
@@ -116,6 +117,7 @@
             <span class="truncate" style="color:var(--text-3);font-size:.82rem;">{{ item.label }}</span>
             {% endif %}
             <form method="POST" action="/watchlist/remove" class="shrink-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
               <input type="hidden" name="watch_id" value="{{ item.id }}" />
               <button type="submit"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
@@ -150,6 +152,7 @@
                class="text-sm" style="color:var(--text-1);flex:1;text-decoration:none;">{{ item.label }}</a>
             <span class="num" style="color:var(--text-3);font-size:.76rem;">{{ item.value[:12] }}…</span>
             <form method="POST" action="/watchlist/remove" class="shrink-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
               <input type="hidden" name="watch_id" value="{{ item.id }}" />
               <button type="submit"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
@@ -180,6 +183,7 @@
       </p>
 
       <form method="POST" action="/watchlist/add" class="flex gap-2 mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <input type="hidden" name="watch_type" value="congress_member" />
         <input type="text" name="value" placeholder="e.g. Nancy Pelosi" maxlength="128" required
                class="fg-in flex-1"
@@ -197,6 +201,7 @@
             <a href="/congress?politician={{ item.value | urlencode }}"
                style="color:var(--text-1);flex:1;font-size:.92rem;text-decoration:none;">{{ item.value }}</a>
             <form method="POST" action="/watchlist/remove" class="shrink-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
               <input type="hidden" name="watch_id" value="{{ item.id }}" />
               <button type="submit"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>

@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}Insider Scanner{% endblock %}</title>
 
+  {# Read by the htmx hook below and by the plain fetch() on the Logic page. #}
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
+  <script>
+    // One sitewide hook rather than hx-headers on <body>. Both would work, but
+    // this has no server-side rendering dependency at all: fragment routes that
+    // render templates directly (bypassing TemplateResponse) need no CSRF
+    // plumbing, now or in future, because the token is read from the meta tag of
+    // the already-loaded page at request time.
+    document.addEventListener('htmx:configRequest', function (evt) {
+      var meta = document.querySelector('meta[name="csrf-token"]');
+      if (meta) evt.detail.headers['X-CSRF-Token'] = meta.getAttribute('content');
+    });
+  </script>
+
   <script>if(localStorage.getItem('theme')==='light')document.documentElement.classList.add('light');</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

@@ -50,6 +50,7 @@
           <span style="color:#facc15; font-size:.80rem; margin-right:3px;" title="Watched">★</span>
           {% else %}
           <form method="POST" action="/watchlist/add" style="display:inline; margin-right:3px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="hidden" name="watch_type" value="congress_member" />
             <input type="hidden" name="value" value="{{ trade.politician_name }}" />
             <input type="hidden" name="next" value="/congress" />

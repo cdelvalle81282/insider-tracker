@@ -51,6 +51,7 @@
           </td>
           <td class="td text-right">
             <form method="POST" action="/performance/remove">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
               <input type="hidden" name="tracked_id" value="{{ r.id }}" />
               <button type="submit"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>

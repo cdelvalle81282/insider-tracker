@@ -37,6 +37,7 @@ import cache as cache_module
 import config as cfg
 import polygon_client
 import queries
+import security
 import wisepub_sso
 from backtest import (
     PRICE_WARMUP_DAYS,
@@ -179,10 +180,23 @@ async def lifespan(app: FastAPI):
     yield  # nothing to set up/tear down at app level
 
 
-app = FastAPI(title="Insider Scanner", lifespan=lifespan)
+# verify_mutation is registered on the app, not per route, so any POST added
+# later gets CSRF and staff authorization without anyone remembering to opt in.
+app = FastAPI(
+    title="Insider Scanner",
+    lifespan=lifespan,
+    dependencies=[Depends(security.verify_mutation)],
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Authentication wraps everything below it. Exemptions live in
+# security.EXEMPT_PATHS and are kept in lockstep with the nginx config.
+app.add_middleware(security.AuthMiddleware)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+# Callable Jinja global, so every template can mint a token with no per-route
+# context changes and fragment renders that bypass TemplateResponse still work.
+templates.env.globals["csrf_token"] = security.make_csrf_token
 
 
 def _parse_date(d: str | None) -> date:
