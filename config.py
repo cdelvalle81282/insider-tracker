@@ -98,6 +98,15 @@ TRANSACTION_CODES = {
 
 ALERT_BASE_URL = "https://opi-insider.duckdns.org"
 
+# --- /webhook/alert auto-diagnosis guards ------------------------------------
+# The webhook is authenticated by a static shared header, and the providers
+# (Healthchecks.io / BetterStack) send no timestamp or nonce, so signature-based
+# replay protection is not available. These bound the damage instead: a replayed
+# or flapping alert cannot drive a restart loop or stack up Claude API calls.
+WEBHOOK_DIAG_COOLDOWN_SECONDS = 600   # per check name, across both workers
+WEBHOOK_MAX_BODY_BYTES = 64 * 1024    # reject larger payloads with 413
+WEBHOOK_PAYLOAD_PROMPT_CHARS = 2000   # truncation before the body enters the prompt
+
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
 
 SEC_USER_AGENT = "Option Pit Research charlie@optionpit.com"

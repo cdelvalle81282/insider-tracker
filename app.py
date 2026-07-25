@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import statistics
+import threading
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
@@ -1867,8 +1868,16 @@ async def webhook_alert(request: Request, background_tasks: BackgroundTasks):
     if not hmac.compare_digest(provided, secret):
         raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
+    # Bound the body before parsing it. The payload ends up inside a Claude
+    # prompt, so an unbounded one is both a cost and an injection-surface issue.
+    raw = await request.body()
+    if len(raw) > cfg.WEBHOOK_MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
+
     try:
-        body = await request.json()
+        body = json.loads(raw) if raw else {}
+        if not isinstance(body, dict):
+            body = {}
     except Exception:
         body = {}
 
@@ -1878,17 +1887,45 @@ async def webhook_alert(request: Request, background_tasks: BackgroundTasks):
         or body.get("monitor_friendly_name")
         or "unknown"
     )
+
+    # Cooldown per check name. The providers send a static header with no
+    # timestamp or nonce, so a captured request is replayable indefinitely and a
+    # flapping check can fire repeatedly. This is what stops either from driving
+    # a restart loop or stacking up Claude API calls. Redis-backed so it holds
+    # across both workers, and it fails open so a Redis outage cannot suppress
+    # diagnosis of that very outage.
+    cooldown_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(check_name))[:120]
+    if not cache_module.acquire_cooldown(cooldown_key, cfg.WEBHOOK_DIAG_COOLDOWN_SECONDS):
+        logging.getLogger("app").info(
+            "Suppressing duplicate diagnostic for %r (cooldown)", check_name
+        )
+        # 200, not 429: providers retry non-2xx, which would defeat the cooldown.
+        return JSONResponse({"ok": True, "suppressed": "cooldown"})
+
     alert_info = {"check_name": check_name, "source": "webhook", "payload": body}
     background_tasks.add_task(_run_diagnostic_bg, alert_info)
     return JSONResponse({"ok": True})
 
 
+# Single-flight guard. Two diagnostics at once would run overlapping shell
+# probes and could each decide to restart the service. Non-blocking acquire, so
+# a concurrent request is dropped rather than queued behind a 60s API call.
+_diagnostic_lock = threading.Lock()
+
+
 def _run_diagnostic_bg(alert_info: dict) -> None:
+    if not _diagnostic_lock.acquire(blocking=False):
+        logging.getLogger("auto_diagnose").info(
+            "Diagnostic already running; skipping this one"
+        )
+        return
     try:
         import auto_diagnose
         auto_diagnose.run_diagnostic(alert_info)
     except Exception as e:
         logging.getLogger("auto_diagnose").error("Diagnostic failed: %s", e)
+    finally:
+        _diagnostic_lock.release()
 
 
 @app.get("/run-log", response_class=HTMLResponse)

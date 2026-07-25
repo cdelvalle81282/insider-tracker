@@ -119,6 +119,27 @@ def collect_diagnostics() -> dict:
 # Claude analysis
 # ---------------------------------------------------------------------------
 
+def _truncate_for_prompt(alert_info: dict) -> str:
+    """Serialise the alert for the prompt, bounding the attacker-controlled part.
+
+    `payload` is the raw webhook body. Anyone who knows WEBHOOK_SECRET can put
+    arbitrary text there, and it goes straight into the prompt, so cap it. The
+    available actions are already allowlisted in apply_fixes, so this bounds the
+    injection surface rather than being the only defence.
+    """
+    import config as _cfg
+
+    limit = getattr(_cfg, "WEBHOOK_PAYLOAD_PROMPT_CHARS", 2000)
+    trimmed = dict(alert_info)
+    payload = trimmed.get("payload")
+    if payload is not None:
+        as_text = json.dumps(payload, default=str)
+        if len(as_text) > limit:
+            as_text = as_text[:limit] + f"... [truncated, {len(as_text)} chars total]"
+        trimmed["payload"] = as_text
+    return json.dumps(trimmed, indent=2, default=str)
+
+
 def analyze(diagnostics: dict, alert_info: dict) -> dict:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -137,7 +158,7 @@ def analyze(diagnostics: dict, alert_info: dict) -> dict:
 Stack: FastAPI + PostgreSQL 16 + uvicorn (2 workers) on a DigitalOcean droplet.
 Key services: insider-tracker.service (uvicorn), insider-ingest-nightly.timer (03:00 UTC Mon-Sat), insider-prices.timer (01:00 UTC Mon-Fri ONLY — no weekend runs; a stale prices sentinel Sat/Sun/Mon-before-02:00 UTC is expected and not a failure).
 
-An alert fired: {json.dumps(alert_info, indent=2)}
+An alert fired: {_truncate_for_prompt(alert_info)}
 
 Current system diagnostics:
 {json.dumps(diagnostics, indent=2, default=str)}
@@ -188,18 +209,23 @@ _VALID_FIXES = {"service_restart", "cache_clear"}
 
 def apply_fixes(fixes: list[str]) -> list[str]:
     done = []
+    # Filter, rather than warn and then test membership against the unfiltered
+    # list. The old loop logged unrecognised actions and then went on to check
+    # `"service_restart" in fixes` against the original input, so the warning was
+    # decorative. Behaviour was safe by accident; make it safe by construction.
+    recognised = [fix for fix in fixes if fix in _VALID_FIXES]
     for fix in fixes:
         if fix not in _VALID_FIXES:
             _LOG.warning("Ignoring unrecognised fix action: %r", fix)
 
-    if "service_restart" in fixes:
+    if "service_restart" in recognised:
         _cmd(f"sudo systemctl restart {SERVICE}")
         # Allow systemd time to settle before checking active state
         time.sleep(_RESTART_SETTLE)
         status = _cmd(f"systemctl is-active {SERVICE}")
         done.append(f"Restarted {SERVICE} → now: {status}")
 
-    if "cache_clear" in fixes:
+    if "cache_clear" in recognised:
         try:
             INGEST_SENTINEL.touch()
             done.append("Touched ingest sentinel — all worker caches will invalidate on next request")

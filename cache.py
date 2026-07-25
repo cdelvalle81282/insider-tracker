@@ -95,6 +95,27 @@ def cache_set(key: str, pre_mtime: float, value, ttl: int = 86400) -> None:
         logger.debug("Redis set %r failed: %s", key, exc)
 
 
+def acquire_cooldown(name: str, ttl_seconds: int) -> bool:
+    """Return True if the caller may proceed, False while a cooldown is active.
+
+    Backed by Redis SET NX EX rather than an in-process guard because the service
+    runs two uvicorn workers, and a per-process cooldown would allow one firing
+    per worker.
+
+    Fails OPEN: if Redis is unreachable the caller proceeds. This gates
+    auto-diagnosis, which exists precisely to investigate outages, and a Redis
+    outage is exactly when you most want it to run.
+    """
+    try:
+        acquired = _client().set(
+            f"it:cooldown:{name}".encode(), b"1", nx=True, ex=ttl_seconds
+        )
+    except redis.RedisError as exc:
+        logger.debug("Redis acquire_cooldown %r failed, proceeding: %s", name, exc)
+        return True
+    return bool(acquired)
+
+
 def invalidate_query_cache() -> None:
     """Delete all cached query results. Call on watchlist changes."""
     try:
