@@ -9,6 +9,7 @@ Usage:
   python ingest.py --since-last-run
   python ingest.py --mark-joint-filers     # one-time backfill: dedup joint-filer pairs
   python ingest.py --update-prices
+  python ingest.py --drain-alerts          # retry undelivered Slack alerts
 """
 from __future__ import annotations
 
@@ -523,10 +524,19 @@ def mark_joint_filers(conn: psycopg.Connection) -> int:
 @click.option("--backfill-signal-triggers", "do_backfill_signal_triggers", is_flag=True, default=False,
               help="One-time scan of recent insider buys for GC/RB/HHL/CB signal triggers (30d freshness "
                    "window, no Slack alerts) to seed the dashboard trigger feed / performance tab")
-def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices, do_normalize_tickers, do_backfill_signal_triggers):
+@click.option("--drain-alerts", "do_drain_alerts", is_flag=True, default=False,
+              help="Retry Slack alerts that were claimed but never delivered, then exit")
+def main(target_date, backfill, backfill_days, since_last_run, resolve_amendments, backfill_sectors, do_joint_filers, do_backfill_metadata, metadata_limit, metadata_stale_days, do_update_prices, do_normalize_tickers, do_backfill_signal_triggers, do_drain_alerts):
     conn = get_cli_db()
     try:
         config = load_config()
+
+        if do_drain_alerts:
+            # Normal runs drain at the top of check_and_send; this flag is for
+            # forcing a retry out of band, e.g. right after a Slack outage ends.
+            n = alert_module.drain_pending_alerts(conn, os.getenv("SLACK_WEBHOOK_URL", ""))
+            click.echo(f"Redelivered {n} pending alert(s)")
+            return
 
         # Backfills suppress alerts — only real-time runs fire Slack
         suppress_alerts = bool(backfill or backfill_days)

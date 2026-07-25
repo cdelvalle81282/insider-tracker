@@ -6,9 +6,7 @@ Called by ingest.py after --since-last-run completes.
 """
 from __future__ import annotations
 
-import json
 import os
-import urllib.request
 from datetime import date, datetime
 from pathlib import Path
 
@@ -102,33 +100,25 @@ def send_health_alerts(conn: psycopg.Connection, slack_webhook_url: str | None) 
     if not findings:
         return 0
 
+    # Routed through the shared outbox helper rather than a private copy of the
+    # claim-then-post dance. The old local version had the same permanent-loss
+    # bug (row committed before the POST) and additionally never checked the
+    # response status, so a Slack 4xx counted as a successful send.
+    import alerts
+
     sent = 0
     today = date.today().isoformat()
 
     for finding in findings:
         alert_key = f"health:{finding['kind']}:{today}"
-
-        cur = conn.execute(
-            "INSERT INTO alerts_sent (alert_key, alert_type) VALUES (%s, %s) ON CONFLICT (alert_key) DO NOTHING",
-            (alert_key, "ingest_health"),
-        )
-        conn.commit()
-        if cur.rowcount == 0:
-            continue  # already sent today
-
-        try:
-            payload = json.dumps({
-                "text": f":warning: *Insider Scanner — Ingest Health Alert*\n{finding['message']}"
-            }).encode()
-            req = urllib.request.Request(
-                slack_webhook_url,
-                data=payload,
-                headers={"Content-Type": "application/json"},
+        payload = {
+            "text": (
+                ":warning: *Insider Scanner: Ingest Health Alert*\n"
+                f"{finding['message']}"
             )
-            urllib.request.urlopen(req, timeout=10)
+        }
+        if alerts.claim_and_send(conn, alert_key, "ingest_health", payload, slack_webhook_url):
             sent += 1
-        except Exception as e:
-            print(f"Health alert send failed: {e}")
 
     return sent
 

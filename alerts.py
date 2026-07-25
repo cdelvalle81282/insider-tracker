@@ -8,6 +8,7 @@ to Slack, so multiple concurrent runs never double-fire.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.parse
@@ -15,6 +16,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 import polygon_client
 from backtest import (
@@ -27,33 +29,168 @@ from backtest import (
 import queries
 from queries import _fmt_value as _fmt_money
 
+_LOG = logging.getLogger("alerts")
+
 
 # ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
 
-def _try_claim_alert(conn: psycopg.Connection, alert_key: str, alert_type: str) -> bool:
+MAX_DELIVERY_ATTEMPTS = 5
+GIVE_UP_AFTER_HOURS = 48
+
+
+def _try_claim_alert(
+    conn: psycopg.Connection,
+    alert_key: str,
+    alert_type: str,
+    payload: dict | None = None,
+) -> bool:
     """
     Attempt to claim an alert slot. Returns True only if this process
     is the first to claim it (INSERT succeeded). Uses rowcount before commit
     to avoid the changes() race condition.
+
+    The row is claimed as 'pending' and the commit still happens BEFORE any HTTP
+    call, which is what stops two overlapping runs double-firing. The difference
+    from the original is that a claim is no longer a claim of *delivery*: only a
+    2xx from Slack promotes the row to 'sent'. See claim_and_send.
+
+    The rendered payload is stored on the row so a retry never has to re-derive
+    it from the matchers, whose `since_ts` window will have moved on by then.
     """
     cur = conn.execute(
-        "INSERT INTO alerts_sent (alert_key, alert_type) VALUES (%s, %s)"
-        " ON CONFLICT DO NOTHING",
-        [alert_key, alert_type],
+        "INSERT INTO alerts_sent (alert_key, alert_type, status, payload)"
+        " VALUES (%s, %s, 'pending', %s) ON CONFLICT DO NOTHING",
+        [alert_key, alert_type, Jsonb(payload) if payload is not None else None],
     )
     claimed = cur.rowcount == 1
     conn.commit()
     return claimed
 
 
+def _mark_sent(conn: psycopg.Connection, alert_key: str) -> None:
+    conn.execute(
+        "UPDATE alerts_sent SET status = 'sent', attempts = attempts + 1,"
+        " last_attempt_at = CURRENT_TIMESTAMP, last_error = NULL,"
+        " payload = NULL WHERE alert_key = %s",
+        [alert_key],
+    )
+    conn.commit()
+
+
+def _mark_attempt_failed(conn: psycopg.Connection, alert_key: str, error: str) -> None:
+    """Leave the row pending so the next drain retries it."""
+    conn.execute(
+        "UPDATE alerts_sent SET attempts = attempts + 1,"
+        " last_attempt_at = CURRENT_TIMESTAMP, last_error = %s"
+        " WHERE alert_key = %s",
+        [error[:500], alert_key],
+    )
+    conn.commit()
+
+
+def claim_and_send(
+    conn: psycopg.Connection,
+    alert_key: str,
+    alert_type: str,
+    payload: dict,
+    webhook_url: str,
+) -> bool:
+    """Claim the dedup slot, then deliver. Returns True only if Slack accepted it.
+
+    A False return means either "someone else already owns this key" or "the POST
+    failed and the row is queued for retry". Callers only use it to count
+    deliveries, so the distinction does not matter to them.
+    """
+    if not _try_claim_alert(conn, alert_key, alert_type, payload):
+        return False
+    ok, error = _post_to_slack(webhook_url, payload)
+    if ok:
+        _mark_sent(conn, alert_key)
+        return True
+    _mark_attempt_failed(conn, alert_key, error or "unknown error")
+    _LOG.warning("Slack delivery failed for %s (queued for retry): %s", alert_key, error)
+    return False
+
+
+def drain_pending_alerts(conn: psycopg.Connection, webhook_url: str) -> int:
+    """Retry alerts whose delivery failed earlier. Returns the number delivered.
+
+    Called at the top of each check_and_send run, and exposed as
+    `ingest.py --drain-alerts`. No new systemd unit: the ingest timer already
+    runs several times per weekday. The known gap is that a Friday evening
+    failure waits until Monday, which is acceptable for a market-hours tool.
+    """
+    if not webhook_url:
+        return 0
+
+    # Retire rows that will never succeed, so the pending set cannot grow without
+    # bound. payload IS NULL covers rows claimed by the pre-outbox code path.
+    conn.execute(
+        f"""UPDATE alerts_sent
+               SET status = 'failed',
+                   last_error = COALESCE(last_error, 'gave up: no payload or too old')
+             WHERE status = 'pending'
+               AND (attempts >= %s
+                    OR payload IS NULL
+                    OR sent_at < CURRENT_TIMESTAMP - INTERVAL '{GIVE_UP_AFTER_HOURS} hours')""",
+        [MAX_DELIVERY_ATTEMPTS],
+    )
+    conn.commit()
+
+    rows = conn.execute(
+        "SELECT id, alert_key, attempts, payload FROM alerts_sent"
+        " WHERE status = 'pending' ORDER BY id"
+    ).fetchall()
+
+    sent = 0
+    for row in rows:
+        # Optimistic claim on (id, attempts): if a concurrent drain already
+        # bumped this row, rowcount is 0 and we skip it. No lock is held across
+        # the HTTP call, so a slow Slack cannot block the other run.
+        cur = conn.execute(
+            "UPDATE alerts_sent SET attempts = attempts + 1,"
+            " last_attempt_at = CURRENT_TIMESTAMP"
+            " WHERE id = %s AND status = 'pending' AND attempts = %s",
+            [row["id"], row["attempts"]],
+        )
+        conn.commit()
+        if cur.rowcount != 1:
+            continue
+
+        ok, error = _post_to_slack(webhook_url, row["payload"])
+        if ok:
+            conn.execute(
+                "UPDATE alerts_sent SET status = 'sent', last_error = NULL,"
+                " payload = NULL WHERE id = %s",
+                [row["id"]],
+            )
+            conn.commit()
+            sent += 1
+        else:
+            conn.execute(
+                "UPDATE alerts_sent SET last_error = %s WHERE id = %s",
+                [(error or "unknown error")[:500], row["id"]],
+            )
+            conn.commit()
+    if sent:
+        _LOG.info("Redelivered %d previously failed alert(s)", sent)
+    return sent
+
+
 # ---------------------------------------------------------------------------
 # Slack HTTP POST
 # ---------------------------------------------------------------------------
 
-def _post_to_slack(webhook_url: str, payload: dict, timeout: float = 5.0) -> bool:
-    """POST a Block Kit payload to a Slack incoming webhook. Returns True on success."""
+def _post_to_slack(
+    webhook_url: str, payload: dict, timeout: float = 5.0
+) -> tuple[bool, str | None]:
+    """POST a Block Kit payload to a Slack incoming webhook.
+
+    Returns (ok, error). The error string is recorded on the outbox row, so a
+    failure is diagnosable later instead of just being a False.
+    """
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         webhook_url,
@@ -63,9 +200,15 @@ def _post_to_slack(webhook_url: str, payload: dict, timeout: float = 5.0) -> boo
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300
-    except (urllib.error.HTTPError, urllib.error.URLError):
-        return False
+            if 200 <= resp.status < 300:
+                return True, None
+            return False, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        return False, f"URLError: {exc.reason}"
+    except TimeoutError:
+        return False, "timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +530,11 @@ def check_and_send(
     rules = config.get("alert_rules", {})
     base_url = config.get("alert_base_url", "https://opi-insider.duckdns.org")
     keywords = rules.get("insider_title_keywords", [])
-    sent = 0
+
+    # Retry anything a previous run claimed but failed to deliver, before looking
+    # for new matches. Piggybacking on this run rather than adding a systemd
+    # timer: the ingest timer already fires several times each weekday.
+    sent = drain_pending_alerts(conn, webhook_url)
 
     # 0. Watchlist activity — any size, buy or sell. Claimed under the same
     # shared key as big_buy/insider_buy, so a watched trade that also clears
@@ -395,38 +542,30 @@ def check_and_send(
     watched_tickers = list(queries.watched_tickers(conn))
     watched_insiders = list(queries.watched_insiders(conn))
     for row in _match_watchlist_activity(conn, since_ts, watched_tickers, watched_insiders):
-        key = _buy_alert_key(row)
-        if _try_claim_alert(conn, key, "watchlist"):
-            payload = _format_watchlist_message(row, base_url)
-            if _post_to_slack(webhook_url, payload):
-                sent += 1
+        payload = _format_watchlist_message(row, base_url)
+        if claim_and_send(conn, _buy_alert_key(row), "watchlist", payload, webhook_url):
+            sent += 1
 
     # 1. Big buy
     big_threshold = rules.get("big_buy_threshold", 1_000_000)
     for row in _match_big_buy(conn, since_ts, big_threshold):
-        key = _buy_alert_key(row)
-        if _try_claim_alert(conn, key, "big_buy"):
-            payload = _format_buy_message("big_buy", row, base_url)
-            if _post_to_slack(webhook_url, payload):
-                sent += 1
+        payload = _format_buy_message("big_buy", row, base_url)
+        if claim_and_send(conn, _buy_alert_key(row), "big_buy", payload, webhook_url):
+            sent += 1
 
     # 2. C-suite buy (lower threshold)
     insider_threshold = rules.get("insider_buy_threshold", 250_000)
     for row in _match_insider_buy(conn, since_ts, insider_threshold, keywords):
-        key = _buy_alert_key(row)
-        if _try_claim_alert(conn, key, "insider_buy"):
-            payload = _format_buy_message("insider_buy", row, base_url)
-            if _post_to_slack(webhook_url, payload):
-                sent += 1
+        payload = _format_buy_message("insider_buy", row, base_url)
+        if claim_and_send(conn, _buy_alert_key(row), "insider_buy", payload, webhook_url):
+            sent += 1
 
     # 3. Cluster
     min_insiders = rules.get("cluster_min_insiders", 3)
     window_days = rules.get("cluster_window_days", 10)
     for row in _match_cluster(conn, since_ts, min_insiders, window_days):
-        key = _cluster_alert_key(row)
-        if _try_claim_alert(conn, key, "cluster"):
-            payload = _format_cluster_message(row, base_url)
-            if _post_to_slack(webhook_url, payload):
+        payload = _format_cluster_message(row, base_url)
+        if claim_and_send(conn, _cluster_alert_key(row), "cluster", payload, webhook_url):
                 sent += 1
 
     # 4. Congress / executive co-buy stacking
@@ -642,10 +781,8 @@ def check_and_send_signals(
 
             issuer_cik = best_trade.get("issuer_cik", "")
             alert_key = _signal_alert_key("gc", issuer_cik, fire_date.isoformat())
-            if not _try_claim_alert(conn, alert_key, "signal"):
-                continue
             payload = _format_signal_message("gc", label, best_trade, days_to_fire_val, base_url)
-            if _post_to_slack(webhook_url, payload):
+            if claim_and_send(conn, alert_key, "signal", payload, webhook_url):
                 sent += 1
 
     return sent
@@ -777,10 +914,9 @@ def check_congress_cobuy_alerts(
         if not corp_buys:
             continue
 
-        if _try_claim_alert(conn, alert_key, "congress_cobuy"):
-            payload = _format_cobuy_message(cong, [dict(r) for r in corp_buys], base_url)
-            if _post_to_slack(webhook_url, payload):
-                sent += 1
+        payload = _format_cobuy_message(cong, [dict(r) for r in corp_buys], base_url)
+        if claim_and_send(conn, alert_key, "congress_cobuy", payload, webhook_url):
+            sent += 1
 
     return sent
 
@@ -870,10 +1006,8 @@ def check_congress_alerts(
     for r in rows:
         row      = dict(r)
         alert_key = f"congress:{row['transaction_id']}"
-        if not _try_claim_alert(conn, alert_key, "congress_buy"):
-            continue
         payload = _format_congress_message(row, base_url)
-        if _post_to_slack(webhook_url, payload):
+        if claim_and_send(conn, alert_key, "congress_buy", payload, webhook_url):
             sent += 1
 
     return sent
@@ -899,4 +1033,7 @@ def send_test_alert(webhook_url: str, base_url: str) -> bool:
             },
         ]
     }
-    return _post_to_slack(webhook_url, payload)
+    # Not an outbox path: a test alert is fire-and-forget and has no dedup key,
+    # so there is nothing to retry. app.py only needs the boolean.
+    ok, _error = _post_to_slack(webhook_url, payload)
+    return ok
