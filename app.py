@@ -193,6 +193,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Authentication wraps everything below it. Exemptions live in
 # security.EXEMPT_PATHS and are kept in lockstep with the nginx config.
 app.add_middleware(security.AuthMiddleware)
+# Added last, so it is OUTERMOST: Starlette applies user middleware in reverse
+# registration order. That matters because the 401 and 503 responses produced by
+# AuthMiddleware must carry the security headers too.
+app.add_middleware(security.SecurityHeadersMiddleware)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 # Callable Jinja global, so every template can mint a token with no per-route

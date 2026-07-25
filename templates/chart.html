@@ -180,7 +180,9 @@
 </div>
 
 {% if has_api_key %}
-<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+{# Self-hosted; see the note in base.html. Also keeps the chart page working
+   under a CSP that does not allow unpkg.com. #}
+<script src="/static/vendor/lightweight-charts-4.2.0.standalone.production.js"></script>
 <script>
 (function () {
   const bars          = {{ bars | tojson }};

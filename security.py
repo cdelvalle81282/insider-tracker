@@ -270,6 +270,80 @@ async def _send_plain(send, status: int, body: bytes, extra_headers=()) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+# Origins allowed to frame the dashboard. The whole point of the Wisepub SSO work
+# is the embed on the paid site, so 'none' would break the product. X-Frame-Options
+# is deliberately NOT sent: it has no multi-origin form, and DENY would override
+# this in browsers that support both.
+FRAME_ANCESTORS = "https://vip.optionpit.com"
+
+CONTENT_SECURITY_POLICY = "; ".join([
+    "default-src 'self'",
+    # 'unsafe-inline' and 'unsafe-eval' are both required today: the templates are
+    # full of inline onclick/onmouseover handlers that a nonce cannot cover, and
+    # the Tailwind Play CDN is a runtime compiler that evals. Removing either
+    # means a Tailwind build step plus a handler refactor.
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    f"frame-ancestors {FRAME_ANCESTORS}",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+])
+
+
+class SecurityHeadersMiddleware:
+    """Attach response headers to every response, including error responses.
+
+    Added outermost so 401 and 503 bodies from AuthMiddleware carry them too.
+
+    Even with the unsafe-inline/unsafe-eval concessions this is worth having: it
+    still blocks script and connect to foreign origins, restricts form targets,
+    pins the frame parent to the one site that is meant to embed us, and kills
+    plugin content. The app previously sent no security headers whatsoever.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        # HSTS only when the request actually arrived over TLS. Sending it on
+        # plain HTTP is meaningless, and during the pre-certbot window in
+        # deploy.sh it would pin a host to HTTPS that cannot serve it yet.
+        is_https = False
+        for key, value in scope.get("headers") or []:
+            if key == b"x-forwarded-proto":
+                is_https = value.decode("latin-1").split(",")[0].strip() == "https"
+                break
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = message.setdefault("headers", [])
+                existing = {k.lower() for k, _ in headers}
+                additions = [
+                    (b"content-security-policy", CONTENT_SECURITY_POLICY.encode()),
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"referrer-policy", b"same-origin"),
+                    (b"permissions-policy", b"geolocation=(), microphone=(), camera=()"),
+                ]
+                if is_https:
+                    additions.append(
+                        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+                    )
+                for name, value in additions:
+                    # Never clobber a header a route set deliberately.
+                    if name not in existing:
+                        headers.append((name, value))
+            await send(message)
+
+        return await self.app(scope, receive, send_with_headers)
+
+
 class AuthMiddleware:
     """Require staff Basic Auth or a valid Wisepub session for every request.
 
