@@ -14,6 +14,16 @@ from lxml import etree
 
 from config import PRICE_CORRUPTION_ALLOWLIST, PRICE_CORRUPTION_THRESHOLD
 
+
+class Form4ParseError(ValueError):
+    """This filing cannot be turned into trustworthy rows, so reject it.
+
+    Raised instead of substituting a placeholder. ingest_date's per-filing
+    handler counts it as an error and records the reason in run_log, which is
+    strictly better than writing a row that looks real and is not.
+    """
+
+
 _EXCHANGE_PREFIXES = frozenset({"NYSE", "NASDAQ", "AMEX", "ASX", "LSE", "TSX", "OTC", "OTCBB", "CBOE"})
 _INVALID_TICKERS = frozenset({"NONE", "N/A", "NA", "N A", "-", "--", "TBD", "UNKNOWN", "N/A."})
 _VALID_TICKER_RE = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2})?$")
@@ -121,12 +131,25 @@ def _detect_10b5_1(root: etree._Element, footnote_text: str) -> int:
     return 1 if "10b5-1" in footnote_text.lower() else 0
 
 
-def _clean_cik(raw: str | None) -> str:
-    """Zero-pad a CIK to 10 digits. Falls back to the all-zero sentinel if the
-    raw XML value isn't purely numeric, instead of zfill-ing garbage into the
-    padding (e.g. "ABC".zfill(10) -> "0000000ABC")."""
-    raw = (raw or "").strip()
-    return raw.zfill(10) if raw.isdigit() else "0000000000"
+def _clean_cik(raw: str | None, field: str = "CIK") -> str:
+    """Zero-pad a CIK to 10 digits, or reject the filing.
+
+    Raises Form4ParseError when the value is missing, non-numeric, or too long.
+
+    This used to return an all-zero sentinel, which merged every malformed filer
+    in the database into one fake entity: unrelated issuers and unrelated
+    insiders all collapsed onto CIK 0000000000, and the dashboard then rendered
+    them as a single company or a single person. A rejected filing is visible in
+    run_log; a silently merged one is not.
+    """
+    cleaned = (raw or "").strip()
+    if not cleaned.isdigit():
+        raise Form4ParseError(f"{field} is missing or not numeric: {raw!r}")
+    if len(cleaned) > 10:
+        # A real CIK is at most 10 digits; zfill would have passed this through
+        # unchanged and produced an over-long key.
+        raise Form4ParseError(f"{field} is longer than 10 digits: {raw!r}")
+    return cleaned.zfill(10)
 
 
 def _parse_reporting_owner(root: etree._Element) -> dict[str, Any]:
@@ -136,7 +159,7 @@ def _parse_reporting_owner(root: etree._Element) -> dict[str, Any]:
         return owner
 
     owner_id = ro.find("reportingOwnerId")
-    owner["insider_cik"] = _clean_cik(_text(owner_id, "rptOwnerCik"))
+    owner["insider_cik"] = _clean_cik(_text(owner_id, "rptOwnerCik"), "rptOwnerCik")
     owner["insider_name"] = _text(owner_id, "rptOwnerName") or ""
 
     rel = ro.find("reportingOwnerRelationship")
@@ -152,7 +175,7 @@ def _parse_reporting_owner(root: etree._Element) -> dict[str, Any]:
 def _parse_issuer(root: etree._Element) -> dict[str, Any]:
     issuer = root.find(".//issuer")
     return {
-        "issuer_cik": _clean_cik(_text(issuer, "issuerCik")),
+        "issuer_cik": _clean_cik(_text(issuer, "issuerCik"), "issuerCik"),
         "issuer_name": _text(issuer, "issuerName") or "",
         "issuer_ticker": normalize_ticker(_text(issuer, "issuerTradingSymbol")),
     }
