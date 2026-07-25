@@ -102,10 +102,20 @@ python congress_ingest.py --stale-days 30  # change freshness threshold
 
 ## Deploy
 
+`alembic upgrade head` is not optional: this recipe used to omit it, so a commit
+that added a migration deployed code against the old schema.
+
 ```bash
 git push
-ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull && sudo systemctl restart insider-tracker.service"
+ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull \
+  && .venv/bin/pip install -q -r requirements.txt \
+  && set -a && . ./.env && set +a \
+  && .venv/bin/alembic upgrade head \
+  && sudo systemctl restart insider-tracker.service"
 ```
+
+`bash deploy.sh <domain>` does the same thing, and `--setup` bootstraps a fresh
+box (venv, .env gate, migrations, all 12 systemd units, nginx htpasswd, certbot).
 
 ## Config / Logic tab
 

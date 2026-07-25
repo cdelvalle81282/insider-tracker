@@ -13,3 +13,6 @@ sqlalchemy>=2.0
 alembic>=1.13
 anthropic>=0.40.0
 redis>=5.0
+# scripts/backup_postgres.py imports boto3 for the nightly DigitalOcean Spaces
+# upload. It was missing here, so a rebuilt server had no working backups.
+boto3>=1.34
