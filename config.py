@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,19 @@ CONVICTION_FLAGS = {
     "cluster_bonus":           2,   # 3+ distinct insiders at same issuer within window
     "non_10b5_1_buy":          1,
 }
+
+def conviction_tier_labels() -> list[str]:
+    """Every tier label, in declaration order.
+
+    The label is the canonical identity of a tier. templates/logic.html builds
+    its input names as `conviction_{label}_pts` and app.logic_save declares
+    matching Form params, so this function is the single place the two agree.
+    They previously disagreed (`value_over_5m` versus `value_5m`), and because
+    FastAPI silently drops unmatched form fields, every tier control on /logic
+    was dead: the params were always None and nothing was ever saved.
+    """
+    return [label for tiers in CONVICTION_TIERS.values() for (_, _, label) in tiers]
+
 
 CONVICTION_MAX = 10
 CONVICTION_CLUSTER_WINDOW_DAYS = 14  # separate from alert cluster_window_days
@@ -158,7 +172,48 @@ def load_config() -> dict:
         for section in ("alert_rules", "filter_defaults", "conviction_flags", "insider_baseline"):
             if section in overrides:
                 cfg[section].update(overrides[section])
+        # conviction_tiers is stored flat as {label: points} because the tier
+        # structure (thresholds and their order) is code, not configuration. Only
+        # the point values are editable, so overriding by label leaves the
+        # descending-threshold invariant above impossible to break from the UI.
+        tier_points = overrides.get("conviction_tiers") or {}
+        if tier_points:
+            cfg["conviction_tiers"] = {
+                group: [
+                    (threshold, tier_points.get(label, points), label)
+                    for (threshold, points, label) in tiers
+                ]
+                for group, tiers in cfg["conviction_tiers"].items()
+            }
     return cfg
+
+
+# Sections whose values change query RESULTS. Credentials and paths are excluded
+# on purpose: they cannot change what a query returns, and folding a secret into
+# a cache key buys nothing.
+_RESULT_AFFECTING_SECTIONS = (
+    "alert_rules",
+    "filter_defaults",
+    "conviction_flags",
+    "conviction_tiers",
+    "conviction_max",
+    "conviction_thresholds",
+    "conviction_cluster_window_days",
+    "insider_baseline",
+)
+
+
+def config_version(cfg: dict) -> str:
+    """Short hash of the config values that affect query results.
+
+    Mixed into Redis query-cache keys. Cached entries hold already-computed
+    conviction scores and CEO/CFO filtering, and cache.py only treats an entry as
+    stale when the ingest sentinel moves, so before this a config edit stayed
+    invisible until the next nightly ingest touched that sentinel.
+    """
+    subset = {key: cfg.get(key) for key in _RESULT_AFFECTING_SECTIONS}
+    blob = json.dumps(subset, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
 
 
 def save_overrides(
@@ -166,8 +221,14 @@ def save_overrides(
     filter_defaults: dict,
     conviction_flags: dict | None = None,
     insider_baseline: dict | None = None,
+    conviction_tiers: dict | None = None,
 ) -> None:
-    """Persist edits made via the /logic page."""
+    """Persist edits made via the /logic page.
+
+    `conviction_tiers` is a flat {label: points} mapping, matching what
+    load_config reads back. Tier points used to be written into
+    conviction_flags under a `tier_pts_` prefix, which nothing ever read.
+    """
     # Merge with existing overrides so we don't clobber sections not being saved.
     # Sections are updated key-by-key (not replaced wholesale) so fields with no
     # form control yet (e.g. alert_rules.signal_scan_*) survive a save of other
@@ -183,6 +244,16 @@ def save_overrides(
         existing.setdefault("conviction_flags", {}).update(conviction_flags)
     if insider_baseline is not None:
         existing.setdefault("insider_baseline", {}).update(insider_baseline)
+    if conviction_tiers is not None:
+        existing.setdefault("conviction_tiers", {}).update(conviction_tiers)
 
-    with open(OVERRIDES_PATH, "w") as f:
+    # Write to a temp file in the same directory and rename over the target.
+    # os.replace is atomic on both POSIX and Windows, so a reader (or a crash)
+    # can never observe a half-written overrides file, which the previous
+    # open(path, "w") + json.dump could produce.
+    tmp_path = f"{OVERRIDES_PATH}.tmp"
+    with open(tmp_path, "w") as f:
         json.dump(existing, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, OVERRIDES_PATH)

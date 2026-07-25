@@ -65,7 +65,9 @@ INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
 # Redis-backed caches (query results, stats, clusters HTML) live in cache_module.
 # In-process caches for small, hot, non-shared lookups:
 _sectors_cache:      TTLCache = TTLCache(maxsize=1, ttl=3600)
-_config_cache:       TTLCache = TTLCache(maxsize=1, ttl=60)
+# maxsize covers both entries this cache holds ("config" and "version"); at
+# maxsize=1 the two would evict each other on every alternating access.
+_config_cache:       TTLCache = TTLCache(maxsize=4, ttl=60)
 _leaderboard_cache:  TTLCache = TTLCache(maxsize=1, ttl=3600)
 
 
@@ -94,6 +96,36 @@ def _load_config_cached() -> dict:
     result = cfg.load_config()
     _config_cache["config"] = result
     return result
+
+
+def _config_version() -> str:
+    """Hash of the result-affecting config, cached with the config itself.
+
+    Goes into the Redis query-cache key so a /logic edit cannot be served a
+    cached row set that was scored under the old config. Deliberately NOT part
+    of _filters_dict: that dict is also used to build pager and sort URLs, and a
+    hash has no business appearing in a query string.
+    """
+    cached = _config_cache.get("version")
+    if cached is not None:
+        return cached
+    version = cfg.config_version(_load_config_cached())
+    _config_cache["version"] = version
+    return version
+
+
+def _query_cache_key(filters: dict) -> str:
+    """Redis key for a cached filings result set.
+
+    The config version is part of the key because these entries hold rows that
+    were already scored and CEO/CFO filtered under a specific config. Keeps the
+    "it:query:" prefix so cache.invalidate_query_cache() still matches.
+
+    Only the filings result sets need this. it:stats and it:clusters read no
+    config: get_cluster_activity is called without min_insiders, so it uses its
+    own default rather than the configurable alert threshold.
+    """
+    return f"it:query:{_config_version()}:{_cache_key(filters)}"
 
 
 def _get_all_sectors_cached(db: psycopg.Connection) -> list[str]:
@@ -410,8 +442,7 @@ async def index(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    ckey = _cache_key(filters)
-    cached_result = cache_module.cache_get(f"it:query:{ckey}")
+    cached_result = cache_module.cache_get(_query_cache_key(filters))
     cached_sectors = _sentinel_get(_sectors_cache, "sectors")
 
     # Acquire a DB connection only when something is missing from cache.
@@ -468,7 +499,7 @@ async def index(
                     market_cap_tiers=effective_mktcap_tiers or None,
                     hide_entity_filers=effective_hide_entity,
                 )
-                cache_module.cache_set(f"it:query:{ckey}", pre_mtime, (buys, sells, buy_count, sell_count))
+                cache_module.cache_set(_query_cache_key(filters), pre_mtime, (buys, sells, buy_count, sell_count))
             else:
                 buys, sells, buy_count, sell_count = cached_result
 
@@ -577,8 +608,7 @@ async def htmx_filings(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    ckey = _cache_key(filters)
-    cached_result = cache_module.cache_get(f"it:query:{ckey}")
+    cached_result = cache_module.cache_get(_query_cache_key(filters))
 
     need_db = (cached_result is None) or summary_mode
 
@@ -632,7 +662,7 @@ async def htmx_filings(
                     market_cap_tiers=effective_mktcap_tiers or None,
                     hide_entity_filers=effective_hide_entity,
                 )
-                cache_module.cache_set(f"it:query:{ckey}", pre_mtime, (buys, sells, buy_count, sell_count))
+                cache_module.cache_set(_query_cache_key(filters), pre_mtime, (buys, sells, buy_count, sell_count))
             else:
                 buys, sells, buy_count, sell_count = cached_result
 
@@ -1936,7 +1966,10 @@ async def logic_page(
         "config": view_config,
         "stats": stats,
         "transaction_codes": cfg.TRANSACTION_CODES,
-        "conviction_tiers": cfg.CONVICTION_TIERS,
+        # Merged config, not cfg.CONVICTION_TIERS. Passing the raw module
+        # constant meant the page always rendered source defaults, so a saved
+        # tier point value would not show up even once persistence worked.
+        "conviction_tiers": active_config["conviction_tiers"],
         "recent_alerts": recent_alerts,
         "slack_configured": slack_configured,
     })
@@ -1961,12 +1994,18 @@ async def logic_save(
     conviction_ten_percent_owner_bonus: int | None = Form(default=None, ge=0, le=10),
     conviction_cluster_bonus: int | None = Form(default=None, ge=0, le=10),
     conviction_non_10b5_1_buy: int | None = Form(default=None, ge=0, le=10),
-    # Conviction tier point values
-    conviction_value_250k_pts: int | None = Form(default=None, ge=0, le=10),
-    conviction_value_1m_pts: int | None = Form(default=None, ge=0, le=10),
-    conviction_value_5m_pts: int | None = Form(default=None, ge=0, le=10),
-    conviction_pct_20_pts: int | None = Form(default=None, ge=0, le=10),
-    conviction_pct_50_pts: int | None = Form(default=None, ge=0, le=10),
+    # Conviction tier point values. These names must be exactly
+    # f"conviction_{label}_pts" for each label in cfg.conviction_tier_labels(),
+    # which is what templates/logic.html posts. They previously read
+    # conviction_value_5m_pts against a form field named
+    # conviction_value_over_5m_pts, and since FastAPI drops unmatched form
+    # fields silently, every one of these was always None and no tier edit was
+    # ever saved. tests/test_config_tiers.py pins the two together.
+    conviction_value_over_250k_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_value_over_1m_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_value_over_5m_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_pct_over_20_pts: int | None = Form(default=None, ge=0, le=10),
+    conviction_pct_over_50_pts: int | None = Form(default=None, ge=0, le=10),
     # Insider history baseline (all optional -- default None means "keep existing")
     insider_baseline_min_prior_trades: int | None = Form(default=None, ge=1, le=20),
     insider_baseline_size_multiplier: float | None = Form(default=None, ge=1.0, le=20.0),
@@ -1994,26 +2033,24 @@ async def logic_save(
         "cluster_bonus":           conviction_cluster_bonus,
         "non_10b5_1_buy":          conviction_non_10b5_1_buy,
     }
+    # Tier points, keyed by the tier's own label so config.load_config can apply
+    # them straight onto CONVICTION_TIERS. Keys come from the same helper the
+    # template uses, so a renamed or added tier cannot silently go unhandled.
     tier_pts = {
-        "value_250k":  conviction_value_250k_pts,
-        "value_1m":    conviction_value_1m_pts,
-        "value_5m":    conviction_value_5m_pts,
-        "pct_20":      conviction_pct_20_pts,
-        "pct_50":      conviction_pct_50_pts,
+        "value_over_250k": conviction_value_over_250k_pts,
+        "value_over_1m":   conviction_value_over_1m_pts,
+        "value_over_5m":   conviction_value_over_5m_pts,
+        "pct_over_20":     conviction_pct_over_20_pts,
+        "pct_over_50":     conviction_pct_over_50_pts,
     }
     submitted_flags = {k: v for k, v in flag_map.items() if v is not None}
     submitted_tier_pts = {k: v for k, v in tier_pts.items() if v is not None}
 
-    if submitted_flags or submitted_tier_pts:
+    if submitted_flags:
         # Load existing flags to merge into
         existing = _load_config_cached()
         conviction_flags = dict(existing.get("conviction_flags") or cfg.CONVICTION_FLAGS)
         conviction_flags.update(submitted_flags)
-        # Tier point overrides — update the points in CONVICTION_TIERS structure
-        # These are stored separately in config_overrides under "conviction_tier_pts"
-        # and applied at load_config time. For now store in conviction_flags with prefix.
-        for key, val in submitted_tier_pts.items():
-            conviction_flags[f"tier_pts_{key}"] = val
 
     insider_baseline_map = {
         "min_prior_trades": insider_baseline_min_prior_trades,
@@ -2026,8 +2063,15 @@ async def logic_save(
         alert_rules, filter_defaults,
         conviction_flags=conviction_flags or None,
         insider_baseline=submitted_insider_baseline or None,
+        conviction_tiers=submitted_tier_pts or None,
     )
     _config_cache.clear()
+    # The Redis query cache holds already-computed conviction scores and CEO/CFO
+    # filtering, and it only self-invalidates when the ingest sentinel moves, so
+    # without this a saved change stayed invisible until the next nightly ingest.
+    # The config hash in the cache key makes stale entries unreachable anyway;
+    # this drops them so they are not just orphaned in Redis until they expire.
+    cache_module.invalidate_query_cache()
     return RedirectResponse(url="/logic?saved=1", status_code=303)
 
 
