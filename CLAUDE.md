@@ -117,6 +117,32 @@ ssh deploy@167.99.167.244 "cd /home/deploy/insider-tracker && git pull \
 `bash deploy.sh <domain>` does the same thing, and `--setup` bootstraps a fresh
 box (venv, .env gate, migrations, all 12 systemd units, nginx htpasswd, certbot).
 
+## Wisepub SSO (added 2026-07-25)
+
+The dashboard can be embedded on the paid Wisepub site (`vip.optionpit.com`) and a
+logged-in Wisepub user gets in without the Basic Auth prompt. SSO Site record **5**
+on Wisepub points here; outbound URL `https://vip.optionpit.com/sso-redirect/5`.
+
+- `wisepub_sso.py` — HS256 JWT verification, replay guard, `wp_sso` session cookie.
+  Copied verbatim from portfolio-tracker/income-value-tracker; keep the three in sync.
+- `app.py` gains `GET /sso` (verify token, 303 to `/` with the cookie) and
+  `GET /internal/sso-authz` (204/401 — nginx's `auth_request` target).
+- **nginx does the gating**: `location /` and `/static/` use `satisfy any;` with both
+  `auth_basic` and `auth_request /internal/sso-authz`, so Basic Auth (staff) or a
+  Wisepub session (subscriber) both work. `/sso` is its own location with no
+  `auth_basic`. The site also switched from `frame-deny` to `frame-vip`.
+  Live config is `sites-enabled/insider-tracker`, which is a **real file, not a
+  symlink** — edit that one.
+- `WISEPUB_SSO_SECRET` in `.env` must match the record's "JWT Secret" field.
+- The replay guard uses the Redis client from `cache.py` (db=3) on purpose: the
+  service runs `--workers 2`, and an in-process guard would let a token be spent
+  once per worker. The JWT has no `exp` claim, so `iat` freshness (120s) plus
+  one-time use is the whole replay defense.
+- This does **not** give SSO users app-level authorization — `/logic/save`,
+  `/watchlist/*` etc. are still unauthenticated behind the front door (see "Future
+  candidates"), and now the front door has a second key. Worth real app-level auth
+  before turning `Show in Menu` on for that record.
+
 ## Config / Logic tab
 
 All tunable parameters live in `config.py` (alert thresholds, conviction weights, filter defaults). The `/logic` page renders and edits them. Edits save to `config_overrides.json` (gitignored) without touching source files.
@@ -159,6 +185,7 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 
 ## Future candidates
 
+- **Filter out private-fund / tickerless filers (editorial scope)** — Insider activity on private, non-tradeable vehicles (in-house general-account trusts, private credit funds) is noise for this tool: you can't act on it. Real examples: Manulife's insurance subs (Manufacturers Life Insurance Co / Manulife (International)/(Singapore) / Manulife Reinsurance) filing Form 4 as 10%+ owners of "John Hancock GA Mortgage Trust" / "John Hancock GA Senior Loan Trust"; "Diameter Dynamic Credit Fund". These have `issuer_ticker = NULL` and are *already suppressed from Slack alerts* by the `issuer_ticker IS NOT NULL` guard in the matchers (see `private/gotchas.md`), but they still show up in the dashboard tables/KPIs. Decide the desired scope: (a) an explicit "hide tickerless / private-fund filers" filter on the dashboard, and/or (b) a curated issuer-name denylist, and/or (c) exclude from KPI aggregates. Low priority — the alert layer already keeps them out of Slack. Revisit later.
 - **Auth / CSRF on mutating endpoints** — `/logic/save`, `/watchlist/add`, `/watchlist/remove` have no *application-level* auth. In production this is currently mitigated at the network layer: nginx's `location /` block on the live server already applies whole-site `auth_basic` (excluding only `/healthz`, `/webhook/alert`, `/robots.txt` — see `private/ops.md`), so these routes aren't actually reachable unauthenticated today. Still worth real app-level auth/CSRF before sharing more broadly or changing the nginx front door — don't rely on the network-layer gate as a permanent substitute.
 - **Earnings proximity flag** — mark trades within 10 days of earnings (needs earnings calendar source)
 - **Historical baseline signal** — flag when a buy is an outlier vs. this insider's own history
