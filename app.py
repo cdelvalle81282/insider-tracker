@@ -537,6 +537,17 @@ async def index(
         "is_today": target_date == date.today(),
         "buy_count": buy_count,
         "sell_count": sell_count,
+        # A conviction sort ranks the candidate pool in SQL by a pre-score that
+        # covers every component except cluster_bonus, then scores exactly in
+        # Python. Past the pool cap some rows are never considered, so a dropped
+        # row could still outrank a shown one by up to that one bonus. Derived
+        # from counts we already have rather than plumbed out of the query, so
+        # the banner survives a cache hit.
+        "conviction_truncated": (
+            sort_by == "conviction"
+            and max(buy_count, sell_count) > queries.CONVICTION_POOL_CAP
+        ),
+        "conviction_pool_cap": queries.CONVICTION_POOL_CAP,
         "buys_page": buys_page,
         "sells_page": sells_page,
         "buys_total_pages": max(1, -(-buy_count // PAGE_SIZE)),
@@ -691,6 +702,17 @@ async def htmx_filings(
         "target_date": target_date.isoformat(),
         "buy_count": buy_count,
         "sell_count": sell_count,
+        # A conviction sort ranks the candidate pool in SQL by a pre-score that
+        # covers every component except cluster_bonus, then scores exactly in
+        # Python. Past the pool cap some rows are never considered, so a dropped
+        # row could still outrank a shown one by up to that one bonus. Derived
+        # from counts we already have rather than plumbed out of the query, so
+        # the banner survives a cache hit.
+        "conviction_truncated": (
+            sort_by == "conviction"
+            and max(buy_count, sell_count) > queries.CONVICTION_POOL_CAP
+        ),
+        "conviction_pool_cap": queries.CONVICTION_POOL_CAP,
         "buys_page": buys_page,
         "sells_page": sells_page,
         "buys_total_pages": max(1, -(-buy_count // PAGE_SIZE)),

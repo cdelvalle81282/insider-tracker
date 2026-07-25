@@ -21,6 +21,22 @@
 {% endmacro %}
 <div class="animate-in">
 
+{# Conviction sort past the pool cap: SQL ranks the pool by a pre-score covering
+   every component except the cluster bonus, so ordering is close but not exact. #}
+{% if conviction_truncated %}
+<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;margin-bottom:12px;
+            border:1px solid var(--warn,#8a6d1f);border-radius:6px;
+            background:rgba(180,140,30,.10);font-size:.78rem;color:var(--text-2);">
+  <span aria-hidden="true">⚠</span>
+  <span>
+    Ranking the top {{ "{:,}".format(conviction_pool_cap) }} matches by conviction.
+    This range matches more than that, so a trade just outside the pool could
+    outrank one shown here by up to the cluster bonus. Narrow the date range or
+    raise the minimum value for an exact ranking.
+  </span>
+</div>
+{% endif %}
+
 <!-- ── Daily Summary ──────────────────────────────────────────────── -->
 {% if summary_mode and daily_summary %}
 <details class="mb-5" open>

@@ -295,6 +295,79 @@ def _batch_insider_baseline(
     return flags
 
 
+def _conviction_prescore_sql(
+    tiers: dict,
+    flags: dict,
+    keywords: list[str],
+    max_score: int,
+) -> tuple[str, list]:
+    """A SQL expression approximating _conviction_score, for ORDER BY only.
+
+    Returns (expression, params). Used to order the candidate pool for a
+    conviction sort so that truncating the pool drops the least promising rows
+    rather than the smallest ones.
+
+    Deliberately omits cluster_bonus: that needs a per-row COUNT(DISTINCT
+    insider_cik) over a moving window, which _enrich already batches in Python,
+    and duplicating it here would mean maintaining the cluster rule twice. The
+    consequence is bounded and one-directional: this expression can understate a
+    row's true score by at most cluster_bonus, never overstate it.
+
+    Every weight and threshold is a bound parameter read from the same merged
+    config the Python scorer uses, so /logic edits cannot desynchronise the two.
+    """
+    parts: list[str] = ["%s"]
+    params: list = [int(flags.get("base_open_market_buy", 0) or 0)]
+
+    value_brackets = tiers.get("value") or []
+    if value_brackets:
+        # One CASE, so only the highest matching tier contributes. That mirrors
+        # the Python loop's `break`, and relies on the same descending-threshold
+        # invariant. A NULL total_value fails every comparison and scores 0.
+        whens = []
+        for threshold, points, _label in value_brackets:
+            whens.append("WHEN total_value >= %s THEN %s")
+            params.extend([threshold, int(points)])
+        parts.append("CASE " + " ".join(whens) + " ELSE 0 END")
+
+    pct_brackets = tiers.get("pct_holdings") or []
+    if pct_brackets:
+        # Mirrors _pct_holdings' P branch: non-derivative buys that increased an
+        # existing position. Anything else yields NULL and scores 0.
+        pct_expr = (
+            "CASE WHEN table_type <> 'D' AND shares > 0"
+            " AND shares_owned_after > shares"
+            " THEN shares::float8 / shares_owned_after * 100 END"
+        )
+        whens = []
+        for threshold, points, _label in pct_brackets:
+            whens.append(f"WHEN ({pct_expr}) >= %s THEN %s")
+            params.extend([threshold, int(points)])
+        parts.append("CASE " + " ".join(whens) + " ELSE 0 END")
+
+    ceo_pts = int(flags.get("ceo_cfo_bonus", 0) or 0)
+    if keywords and ceo_pts:
+        parts.append("CASE WHEN insider_title ILIKE ANY(%s) THEN %s ELSE 0 END")
+        params.extend([[f"%{kw}%" for kw in keywords], ceo_pts])
+
+    for column, flag_key in (
+        ("is_director", "director_bonus"),
+        ("is_ten_percent_owner", "ten_percent_owner_bonus"),
+    ):
+        pts = int(flags.get(flag_key, 0) or 0)
+        if pts:
+            parts.append(f"CASE WHEN {column} = 1 THEN %s ELSE 0 END")
+            params.append(pts)
+
+    non_plan = int(flags.get("non_10b5_1_buy", 0) or 0)
+    if non_plan:
+        parts.append("CASE WHEN COALESCE(is_10b5_1, 0) = 0 THEN %s ELSE 0 END")
+        params.append(non_plan)
+
+    # LEAST mirrors the Python min(score, max_score) so both live on one scale.
+    return f"LEAST({' + '.join(parts)}, %s)", [*params, int(max_score)]
+
+
 def _conviction_score(
     row: dict,
     tiers: dict,
@@ -475,12 +548,21 @@ _SORT_COLUMNS = {
     "filed":   "filed_at",
 }
 
-# Conviction sort must pull ALL matching rows before Python can sort/slice by score
-# (see get_filings_for_date) — this caps the candidate pool as a safety valve against
-# unbounded memory/query cost on a wide date range, without limiting real page results.
-# Rows are pre-sorted by total_value DESC, so truncation only ever drops unbrowsed
-# page-depth, not anything a normal page size would reach.
-_CONVICTION_POOL_CAP = 20_000
+# Conviction sort must pull the candidate rows before Python can sort/slice them by
+# score (see get_filings_for_date), so the pool is capped as a safety valve against
+# unbounded memory and query cost on a wide date range.
+#
+# The pool is ordered by a SQL pre-score (see _conviction_prescore_sql), NOT by
+# total_value. Ordering by value was wrong: conviction is mostly independent of
+# trade size, so a small high-conviction CEO purchase could sit below the cap while
+# large low-conviction rows were kept, and page one of a conviction sort could be
+# wrong on any range matching more than the cap. The pre-score covers every scoring
+# component except cluster_bonus, so a dropped row can now only be understated by
+# that one bonus.
+#
+# Callers surface truncation to the user by comparing the total match count against
+# this cap; see the conviction_truncated banner in the filings routes.
+CONVICTION_POOL_CAP = 20_000
 
 # Regex used by hide_entity_filers filter — drops entity-named filers (funds, institutions)
 # who are NOT officers. Keeps officers filing through personal LLCs/trusts (is_officer=1).
@@ -1019,10 +1101,20 @@ def get_filings_for_date(
     assert _safe_col in _SORT_COLUMNS.values(), f"Unexpected sort column: {_safe_col!r}"
     _safe_dir = "ASC" if sort_order == "asc" else "DESC"
     use_conviction = (sort_by == "conviction")
-    if use_conviction:
-        sql_sort = "ORDER BY total_value DESC NULLS LAST"
-    else:
-        sql_sort = f"ORDER BY {_safe_col} {_safe_dir} NULLS LAST"
+    sql_sort = f"ORDER BY {_safe_col} {_safe_dir} NULLS LAST"
+
+    # For a conviction sort the pool is ordered by the SQL pre-score, so the cap
+    # drops the least promising rows instead of merely the smallest ones. Built
+    # once here and reused per side; only the P side uses it, because
+    # _conviction_score returns 0 for every non-P code.
+    prescore_sql, prescore_params = "", []
+    if use_conviction and ctx is not None and ctx.conviction_tiers and ctx.conviction_flags:
+        prescore_sql, prescore_params = _conviction_prescore_sql(
+            ctx.conviction_tiers,
+            ctx.conviction_flags,
+            ctx.ceo_cfo_keywords or [],
+            ctx.conviction_max or 10,
+        )
 
     select_cols = """
         SELECT transaction_id, accession_no, filed_at,
@@ -1066,17 +1158,27 @@ def get_filings_for_date(
         # Pagination vs legacy limit:
         #   - page_size provided, non-conviction sort => LIMIT %s OFFSET %s
         #   - page_size provided, conviction sort      => no SQL OFFSET (Python sorts/slices
-        #     the full candidate pool), but capped by _CONVICTION_POOL_CAP as a safety valve
+        #     the pool), but capped by CONVICTION_POOL_CAP as a safety valve
         #   - page_size None                           => export/backtest path; legacy limit
+        # Order the pool by pre-score on the P side only. S rows always score 0,
+        # so ranking them by value keeps the most consequential sells on page one.
+        side_sort = sql_sort
+        if use_conviction:
+            if side_code == "P" and prescore_sql:
+                side_sort = f"ORDER BY {prescore_sql} DESC, total_value DESC NULLS LAST"
+                side_params.extend(prescore_params)
+            else:
+                side_sort = "ORDER BY total_value DESC NULLS LAST"
+
         if page_size is not None and not use_conviction:
-            sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT %s OFFSET %s"
+            sql = f"{select_cols}\n{where_sql}\n{side_sort}\nLIMIT %s OFFSET %s"
             side_params.append(page_size)
             side_params.append((page - 1) * page_size)
         elif page_size is not None and use_conviction:
-            sql = f"{select_cols}\n{where_sql}\n{sql_sort}\nLIMIT %s"
-            side_params.append(_CONVICTION_POOL_CAP)
+            sql = f"{select_cols}\n{where_sql}\n{side_sort}\nLIMIT %s"
+            side_params.append(CONVICTION_POOL_CAP)
         else:
-            sql = f"{select_cols}\n{where_sql}\n{sql_sort}"
+            sql = f"{select_cols}\n{where_sql}\n{side_sort}"
             if page_size is None and limit:
                 sql += "\nLIMIT %s"
                 side_params.append(limit)
