@@ -89,6 +89,16 @@ sudo chown root:www-data /etc/nginx/.htpasswd-insider
 
 sudo cp schedule/nginx-insider-tracker.conf /etc/nginx/sites-available/insider-tracker
 sudo sed -i "s/YOURDOMAIN.duckdns.org/$DOMAIN/g" /etc/nginx/sites-available/insider-tracker
+# NOTE: on the current production box, sites-enabled/insider-tracker is a REAL
+# FILE, not a symlink, and has been hand-edited. This ln -sf would replace it.
+# That is correct for a fresh box, which is the only thing --setup is for, but do
+# not run --setup against the existing server without reconciling that file first.
+if [ -f /etc/nginx/sites-enabled/insider-tracker ] && [ ! -L /etc/nginx/sites-enabled/insider-tracker ]; then
+  echo "  !! sites-enabled/insider-tracker is a real file, not a symlink." >&2
+  echo "  !! It may carry hand-made changes. Back it up and diff it against" >&2
+  echo "  !! schedule/nginx-insider-tracker.conf before re-running --setup." >&2
+  exit 1
+fi
 sudo ln -sf /etc/nginx/sites-available/insider-tracker /etc/nginx/sites-enabled/insider-tracker
 sudo nginx -t && sudo systemctl reload nginx
 
