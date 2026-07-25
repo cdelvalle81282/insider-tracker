@@ -12,10 +12,13 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 import click
 import httpx
@@ -34,6 +37,46 @@ EDGAR_BASE = "https://www.sec.gov"
 RATE_SLEEP = 1.0 / SEC_RATE_LIMIT  # seconds between requests
 
 INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
+
+_LOG = logging.getLogger("ingest")
+
+# How many per-row failure descriptions to keep. run_log.error_detail is a single
+# text column, so an unbounded list on a bad-schema day would be useless noise.
+_MAX_FAILURE_DETAIL = 10
+
+
+class UpsertResult(NamedTuple):
+    """Outcome of a batch insert. `failures` holds human-readable diagnostics for
+    rows that raised an unexpected psycopg error, capped at _MAX_FAILURE_DETAIL.
+
+    Duplicate keys are absorbed by ON CONFLICT DO NOTHING without raising, so a
+    non-empty `failures` always means something genuinely unexpected (schema drift,
+    a NOT NULL violation, a bad type) and must never be reported as a clean run.
+    """
+    inserted: int
+    failed: int
+    failures: list[str]
+
+
+@dataclass
+class IngestResult:
+    """Outcome of ingesting one date.
+
+    `errors` counts fetch/parse failures AND insert failures, so health_check's
+    existing consecutive-errors alarm covers both without a run_log schema change.
+    `insert_failures` is tracked separately because it alone decides whether the
+    success heartbeat is withheld: a network blip is expected operationally, a row
+    the database refused is not.
+    """
+    filings_found: int = 0
+    rows_inserted: int = 0
+    errors: int = 0
+    insert_failures: int = 0
+    error_lines: list[str] = field(default_factory=list)
+
+    @property
+    def error_detail(self) -> str:
+        return "; ".join(self.error_lines[-_MAX_FAILURE_DETAIL:])
 
 
 def _write_sentinel() -> None:
@@ -225,17 +268,13 @@ def accession_from_filename(filename: str) -> str:
 # Core ingest logic
 # ---------------------------------------------------------------------------
 
-def ingest_date(conn: psycopg.Connection, target_date: date) -> tuple[int, int, int, str]:
+def ingest_date(conn: psycopg.Connection, target_date: date) -> IngestResult:
     """
     Ingest all Form 4 filings for target_date.
-    Returns (filings_found, rows_inserted, errors, error_detail).
     """
     client = _make_client()
     entries = fetch_index_for_date(client, target_date)
-    filings_found = len(entries)
-    rows_inserted = 0
-    errors = 0
-    error_lines = []
+    result = IngestResult(filings_found=len(entries))
 
     for entry in entries:
         accession_no = accession_from_filename(entry["filename"])
@@ -248,8 +287,16 @@ def ingest_date(conn: psycopg.Connection, target_date: date) -> tuple[int, int, 
                 if not row.get("issuer_ticker"):
                     row["issuer_ticker"] = lookup_ticker(row["issuer_cik"])
 
-            inserted = _upsert_rows(conn, rows)
-            rows_inserted += inserted
+            upsert = _upsert_rows(conn, rows)
+            result.rows_inserted += upsert.inserted
+            if upsert.failed:
+                # Folded into `errors` so health_check's consecutive-errors alarm
+                # covers insert failures too. The "insert:" prefix keeps them
+                # distinguishable from fetch/parse errors in run_log.error_detail.
+                result.errors += upsert.failed
+                result.insert_failures += upsert.failed
+                for line in upsert.failures:
+                    result.error_lines.append(f"insert: {line}")
 
             # Enrich sector for this issuer (session-cached, one EDGAR call per CIK per run)
             if rows:
@@ -265,10 +312,10 @@ def ingest_date(conn: psycopg.Connection, target_date: date) -> tuple[int, int, 
                 except Exception:
                     pass  # sector enrichment failure must never break ingest
         except Exception as e:
-            errors += 1
-            error_lines.append(f"{accession_no}: {e}")
+            result.errors += 1
+            result.error_lines.append(f"{accession_no}: {e}")
 
-    return filings_found, rows_inserted, errors, "; ".join(error_lines[-10:])
+    return result
 
 
 def _resolve_amendment(conn: psycopg.Connection, row: dict) -> int:
@@ -318,8 +365,8 @@ def _resolve_amendment(conn: psycopg.Connection, row: dict) -> int:
     return 0
 
 
-def _upsert_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
-    """Insert rows, skipping duplicates. Returns count of new rows inserted.
+def _upsert_rows(conn: psycopg.Connection, rows: list[dict]) -> UpsertResult:
+    """Insert rows, skipping duplicates. Returns an UpsertResult.
 
     psycopg3 named-parameter placeholders use `%(name)s`, not SQLite's `:name`.
 
@@ -331,10 +378,14 @@ def _upsert_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
     rolls back only that row.
 
     `ON CONFLICT DO NOTHING` already handles duplicate-key cases without
-    raising, so this guard mostly protects against genuinely malformed
-    rows (e.g. NULL violations from a schema drift).
+    raising, so anything reaching the error handler is a genuinely malformed
+    row (e.g. NULL violations from a schema drift). Those are counted and
+    returned rather than swallowed: a run that silently discarded every row
+    used to report errors=0 and ping the success heartbeat.
     """
     inserted = 0
+    failed = 0
+    failures: list[str] = []
     for row in rows:
         try:
             with conn.transaction():  # per-row tx — failures don't cascade across the batch
@@ -366,14 +417,22 @@ def _upsert_rows(conn: psycopg.Connection, rows: list[dict]) -> int:
                 if cur.rowcount:
                     inserted += 1
                     _resolve_amendment(conn, row)
-        except psycopg.Error:
+        except psycopg.Error as exc:
             # per-row transaction auto-rolled back; preserve already-inserted rows.
-            pass
+            failed += 1
+            txid = row.get("transaction_id") or "?"
+            # sqlstate plus the primary message is enough to tell a NOT NULL
+            # violation from a type mismatch without dumping the whole row.
+            detail = getattr(getattr(exc, "diag", None), "message_primary", None) or str(exc)
+            sqlstate = getattr(exc, "sqlstate", None) or "?????"
+            _LOG.error("insert failed for %s [%s]: %s", txid, sqlstate, detail)
+            if len(failures) < _MAX_FAILURE_DETAIL:
+                failures.append(f"{txid} [{sqlstate}] {detail}".strip())
     # `conn.transaction()` already committed each row; this commit is a
     # belt-and-suspenders no-op for the case where psycopg's autocommit
     # state has been left open by some caller.
     conn.commit()
-    return inserted
+    return UpsertResult(inserted=inserted, failed=failed, failures=failures)
 
 
 # ---------------------------------------------------------------------------
@@ -702,8 +761,13 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
         else:
             _run_kind = "intraday"
 
+        # Withhold the success heartbeat if the database refused rows, or if a whole
+        # date blew up. Either way this run is not the clean run it used to claim.
+        run_insert_failures = 0
+        run_had_exception = False
+
         for d in dates:
-            # Skip weekends — EDGAR has no filings
+            # Skip weekends, EDGAR has no filings
             if d.weekday() >= 5:
                 continue
 
@@ -711,17 +775,23 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             click.echo(f"Ingesting {d} ...", nl=False)
 
             try:
-                found, inserted, errors, error_detail = ingest_date(conn, d)
+                res = ingest_date(conn, d)
+                run_insert_failures += res.insert_failures
                 finished_at = datetime.now(timezone.utc).isoformat()
                 conn.execute(
                     """INSERT INTO run_log (started_at, finished_at, date_processed,
                        filings_found, rows_inserted, errors, error_detail, run_kind)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (started_at, finished_at, d.isoformat(), found, inserted, errors, error_detail or None, _run_kind),
+                    (started_at, finished_at, d.isoformat(), res.filings_found,
+                     res.rows_inserted, res.errors, res.error_detail or None, _run_kind),
                 )
                 conn.commit()
-                click.echo(f" {found} filings, {inserted} rows inserted, {errors} errors")
+                msg = f" {res.filings_found} filings, {res.rows_inserted} rows inserted, {res.errors} errors"
+                if res.insert_failures:
+                    msg += f" ({res.insert_failures} insert failures)"
+                click.echo(msg)
             except Exception as e:
+                run_had_exception = True
                 # Aborted txns must be rolled back before the next statement.
                 conn.rollback()
                 finished_at = datetime.now(timezone.utc).isoformat()
@@ -736,11 +806,24 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
 
         # Mark joint-filer duplicates introduced by this ingest
         mark_joint_filers(conn)
+        # Sentinel is touched unconditionally, even on a partially failing run. Its
+        # only consumer is Redis cache invalidation, and a run that inserted some
+        # rows must still invalidate. Withholding it would also trip health_check's
+        # stale_sentinel finding with a misleading "has the ingester ever run?".
         _write_sentinel()
 
-        # Heartbeat ping — only for nightly runs (since_last_run path)
+        # Heartbeat ping, only for nightly runs (since_last_run path), and only when
+        # the run was actually clean. Network fetch/parse errors still heartbeat
+        # (they are expected operationally); refused inserts and hard exceptions
+        # do not, so the uptime monitor stops reporting green on a broken ingest.
         if since_last_run:
-            _ping_heartbeat(os.getenv("INGEST_HEARTBEAT_URL"))
+            if run_insert_failures or run_had_exception:
+                click.echo(
+                    f"Withholding success heartbeat: {run_insert_failures} insert "
+                    f"failure(s), exception={run_had_exception}"
+                )
+            else:
+                _ping_heartbeat(os.getenv("INGEST_HEARTBEAT_URL"))
 
         # Health check — only for nightly runs; backfills skip alerts anyway
         if since_last_run:
