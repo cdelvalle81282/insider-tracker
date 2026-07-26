@@ -151,9 +151,21 @@ class TestDeployScript:
             f"deploy.sh must install all of: {units}"
         )
 
-    def test_generates_the_nginx_htpasswd(self, deploy_text):
-        assert "htpasswd-insider" in deploy_text
+    def test_uses_the_shared_nginx_htpasswd(self, deploy_text):
+        assert "/etc/nginx/.htpasswd" in deploy_text
         assert "openssl passwd" in deploy_text
+        assert "htpasswd-insider" not in deploy_text, (
+            "the per-app file is not the house convention and is not what the "
+            "live nginx config reads"
+        )
+
+    def test_never_overwrites_the_shared_htpasswd(self, deploy_text):
+        """It is shared by every app on the droplet, so clobbering it would
+        silently change the other apps' credentials."""
+        assert "if [ -f /etc/nginx/.htpasswd ]" in deploy_text
+
+    def test_gates_on_secret_key(self, deploy_text):
+        assert "SECRET_KEY=.+" in deploy_text
 
     @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
     def test_script_parses(self):

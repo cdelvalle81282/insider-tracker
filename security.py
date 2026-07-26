@@ -274,7 +274,14 @@ async def _send_plain(send, status: int, body: bytes, extra_headers=()) -> None:
 # is the embed on the paid site, so 'none' would break the product. X-Frame-Options
 # is deliberately NOT sent: it has no multi-origin form, and DENY would override
 # this in browsers that support both.
-FRAME_ANCESTORS = "https://vip.optionpit.com"
+#
+# This value must match nginx's snippets/frame-vip.conf exactly. That snippet
+# emits its own Content-Security-Policy containing only frame-ancestors, and when
+# a response carries two CSP headers the browser enforces BOTH, so the effective
+# policy is their intersection. Listing a narrower set here (dropping 'self',
+# say) would silently tighten framing beyond what the shared house policy
+# intends. See _shared/deploy.md.
+FRAME_ANCESTORS = "'self' https://vip.optionpit.com"
 
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",

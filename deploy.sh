@@ -51,8 +51,14 @@ if ! grep -Eq '^DATABASE_URL=.+' .env; then
 fi
 if ! grep -Eq '^BASIC_AUTH_USER=.+' .env || ! grep -Eq '^BASIC_AUTH_PASSWORD=.+' .env; then
   echo "  !! BASIC_AUTH_USER / BASIC_AUTH_PASSWORD are empty in $APP_DIR/.env." >&2
-  echo "  !! The app fails closed without them and nginx needs them for the" >&2
-  echo "  !! htpasswd file. Set both and re-run." >&2
+  echo "  !! The app fails closed without them, and they must match the entry in" >&2
+  echo "  !! the shared /etc/nginx/.htpasswd. Set both and re-run." >&2
+  exit 1
+fi
+if ! grep -Eq '^SECRET_KEY=.+' .env; then
+  echo "  !! SECRET_KEY is empty in $APP_DIR/.env. Generate one with" >&2
+  echo "  !!   openssl rand -hex 32" >&2
+  echo "  !! It signs CSRF tokens and must be identical across both workers." >&2
   exit 1
 fi
 
@@ -78,14 +84,30 @@ for timer in schedule/*.timer; do
 done
 
 # nginx: Basic Auth lives in the committed config, so the front door is closed
-# by default. The htpasswd file is generated from the same credentials the app
-# uses, and nginx forwards Authorization upstream, so one browser prompt
-# satisfies both layers.
-echo "==> Generating nginx htpasswd"
-printf '%s:%s\n' "\$BASIC_AUTH_USER" "\$(openssl passwd -apr1 "\$BASIC_AUTH_PASSWORD")" \
-  | sudo tee /etc/nginx/.htpasswd-insider > /dev/null
-sudo chmod 640 /etc/nginx/.htpasswd-insider
-sudo chown root:www-data /etc/nginx/.htpasswd-insider
+# by default. nginx forwards Authorization upstream, so one browser prompt
+# satisfies both the nginx and the application check.
+#
+# /etc/nginx/.htpasswd is shared by every app on this droplet (see
+# _shared/deploy.md), so this NEVER overwrites an existing one: doing so would
+# silently change the credentials for the other apps behind the same file.
+if [ -f /etc/nginx/.htpasswd ]; then
+  echo "==> /etc/nginx/.htpasswd already exists (shared across apps); leaving it alone"
+  echo "    If BASIC_AUTH_USER is not in it, add it with:"
+  echo "      sudo htpasswd /etc/nginx/.htpasswd \$BASIC_AUTH_USER"
+else
+  echo "==> Creating shared nginx htpasswd"
+  printf '%s:%s\n' "\$BASIC_AUTH_USER" "\$(openssl passwd -apr1 "\$BASIC_AUTH_PASSWORD")" \
+    | sudo tee /etc/nginx/.htpasswd > /dev/null
+  sudo chmod 640 /etc/nginx/.htpasswd
+  sudo chown root:www-data /etc/nginx/.htpasswd
+fi
+
+# robots.txt is served from disk by nginx so crawler rules survive an app outage.
+if [ ! -f /var/www/insider/robots.txt ]; then
+  echo "==> Seeding /var/www/insider/robots.txt"
+  sudo mkdir -p /var/www/insider
+  printf 'User-agent: *\nDisallow: /\n' | sudo tee /var/www/insider/robots.txt > /dev/null
+fi
 
 sudo cp schedule/nginx-insider-tracker.conf /etc/nginx/sites-available/insider-tracker
 sudo sed -i "s/YOURDOMAIN.duckdns.org/$DOMAIN/g" /etc/nginx/sites-available/insider-tracker

@@ -78,12 +78,19 @@ class TestHeadersPresent:
 class TestFraming:
     def test_frame_ancestors_allows_the_vip_embed(self, client):
         csp = client.get("/watchlist").headers["content-security-policy"]
-        assert "frame-ancestors https://vip.optionpit.com" in csp
+        assert "frame-ancestors 'self' https://vip.optionpit.com" in csp
 
     def test_frame_ancestors_is_not_none(self, client):
         """'none' would break the whole reason the SSO work exists."""
         csp = client.get("/watchlist").headers["content-security-policy"]
         assert "frame-ancestors 'none'" not in csp
+
+    def test_frame_ancestors_matches_the_shared_nginx_snippet(self):
+        """nginx's snippets/frame-vip.conf sends its own CSP with only
+        frame-ancestors. Two CSP headers are enforced as an intersection, so a
+        narrower value here would silently tighten framing past the house policy
+        that every app on the droplet shares."""
+        assert security.FRAME_ANCESTORS == "'self' https://vip.optionpit.com"
 
     def test_x_frame_options_is_not_sent(self, client):
         """It has no multi-origin form, and DENY would override frame-ancestors."""

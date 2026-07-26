@@ -1,11 +1,20 @@
 """Static checks on the committed nginx front door.
 
-The committed config had no auth_basic at all, while the live server had it added
-by hand. deploy.sh installs this file, so any rebuild or drift served the whole
-dashboard and every mutating endpoint to the internet.
+Two separate problems this guards against.
 
-The exempt locations here must mirror security.EXEMPT_PATHS. That set has an
-equality assert in test_security.py; this file is the other half of the pair.
+First, the config originally committed here carried no auth_basic at all, while
+the live server had it added by hand. deploy.sh installs this file, so a rebuild
+or any drift would have served the whole dashboard to the internet.
+
+Second, the replacement written during the security pass was itself a regression
+against production: no TLS, no frame snippet, no AI-crawler block, no staff-only
+rule for the mutating endpoints, and a per-app htpasswd that is not the house
+convention. This file was reconciled against the live server on 2026-07-26; these
+tests pin the parts that matter so it cannot silently drift again.
+
+Note this is the PRE-certbot template. certbot adds `listen 443 ssl`, the
+certificate paths and the :80 redirect block on first run, so their absence here
+is correct and deliberate.
 """
 from __future__ import annotations
 
@@ -19,37 +28,45 @@ import security
 CONF = (Path(__file__).resolve().parent.parent
         / "schedule" / "nginx-insider-tracker.conf").read_text(encoding="utf-8")
 
+# Matches `location <modifier?> <pattern> {`, where the modifier is one of
+# = ~ ~* ^~ or absent. The earlier version of this helper used a single \S+ and
+# so captured "~" as the location name for regex blocks, silently skipping them.
+_LOCATION_RE = re.compile(r"location\s+(?:(=|~\*|~|\^~)\s*)?(\S+)\s*\{")
+
 
 def _location_blocks() -> dict[str, str]:
-    """Map each `location <match>` to its block body (non-nested, which is all
-    this config uses)."""
     blocks: dict[str, str] = {}
-    for match in re.finditer(r"location\s+(=\s*)?(\S+)\s*\{", CONF):
+    for match in _LOCATION_RE.finditer(CONF):
         name = match.group(2)
-        start = match.end()
-        depth = 1
-        i = start
+        depth, i = 1, match.end()
         while i < len(CONF) and depth:
             if CONF[i] == "{":
                 depth += 1
             elif CONF[i] == "}":
                 depth -= 1
             i += 1
-        blocks[name] = CONF[start:i]
+        blocks[name] = CONF[match.end():i]
     return blocks
 
 
 BLOCKS = _location_blocks()
+REGEX_LOCATION = next(n for n in BLOCKS if n.startswith("^/(logic"))
+
+# Exempt in nginx. /internal/sso-authz is app-exempt too but `internal` here, so
+# a client can never reach it; it is excluded from the comparison below.
+EXPECTED_EXEMPT = {"/healthz", "/robots.txt", "/webhook/alert", "/sso"}
+
+MUTATING_ROUTES = [
+    "/logic/save", "/logic/test-alert",
+    "/watchlist/add", "/watchlist/remove", "/watchlist/toggle",
+    "/performance/add", "/performance/remove",
+]
 
 
 class TestClosedByDefault:
-    def test_catch_all_requires_a_credential(self):
-        body = BLOCKS["/"]
-        assert "auth_basic" in body
-        assert "auth_basic_user_file" in body
-
-    def test_static_requires_a_credential(self):
-        body = BLOCKS["/static/"]
+    @pytest.mark.parametrize("path", ["/", "/static/"])
+    def test_catch_all_locations_require_a_credential(self, path):
+        body = BLOCKS[path]
         assert "auth_basic" in body
         assert "auth_basic_user_file" in body
 
@@ -60,21 +77,49 @@ class TestClosedByDefault:
         assert "satisfy any" in body
         assert "auth_request /internal/sso-authz" in body
 
-    def test_htpasswd_path_is_consistent(self):
-        """Count directives, not mentions: the header comment names it too."""
+    def test_htpasswd_is_the_shared_house_file(self):
+        """Count directives, not mentions: the header comment names it too.
+
+        /etc/nginx/.htpasswd is shared by every app on the droplet, per
+        _shared/deploy.md, which is also why deploy.sh must never overwrite it.
+        """
         directives = re.findall(r"^\s*auth_basic_user_file\s+(\S+?);", CONF, re.M)
-        assert len(directives) == 2, "one per protected location"
-        assert set(directives) == {"/etc/nginx/.htpasswd-insider"}, (
-            "deploy.sh generates exactly this path"
+        assert len(directives) == 3, "/, /static/, and the staff-only regex"
+        assert set(directives) == {"/etc/nginx/.htpasswd"}
+
+
+class TestStaffOnlyWrites:
+    def test_mutating_endpoints_do_not_accept_an_sso_session(self):
+        """Without this, a paying subscriber could edit thresholds, the watchlist,
+        or fire test alerts. The application enforces the same rule independently
+        in security.verify_mutation."""
+        body = BLOCKS[REGEX_LOCATION]
+        assert "auth_basic" in body
+        assert "satisfy any" not in body
+        assert "auth_request" not in body
+
+    @pytest.mark.parametrize("path", MUTATING_ROUTES)
+    def test_every_mutating_route_matches_the_regex(self, path):
+        assert re.match(REGEX_LOCATION + r"\Z", path), (
+            f"{path} is not covered by the staff-only nginx location"
         )
+
+    @pytest.mark.parametrize("path", ["/", "/watchlist", "/logic", "/performance"])
+    def test_read_only_paths_are_not_caught_by_the_regex(self, path):
+        """The regex must not accidentally lock the viewing pages to staff."""
+        assert not re.match(REGEX_LOCATION + r"\Z", path)
 
 
 class TestExemptions:
-    EXPECTED_EXEMPT = {"/healthz", "/robots.txt", "/webhook/alert", "/sso"}
-
     @pytest.mark.parametrize("path", sorted(EXPECTED_EXEMPT))
-    def test_exempt_paths_disable_basic_auth(self, path):
-        assert "auth_basic off" in BLOCKS[path]
+    def test_exempt_paths_carry_no_auth_directive(self, path):
+        """auth_basic is not set at server level, so a location that simply omits
+        it is open. That is how the live config does it; an explicit
+        `auth_basic off` would be equivalent but is not what production runs."""
+        body = BLOCKS[path]
+        assert "auth_basic" not in body
+        assert "satisfy" not in body
+        assert "auth_request" not in body
 
     @pytest.mark.parametrize("path", sorted(EXPECTED_EXEMPT))
     def test_exempt_paths_are_exact_matches(self, path):
@@ -85,32 +130,63 @@ class TestExemptions:
         )
 
     def test_nginx_exemptions_match_the_application(self):
-        """The two layers must agree, or a path is open in one and closed in the
-        other. /internal/sso-authz is app-exempt but nginx-internal, so it is
-        excluded from the comparison."""
+        """A path exempt in one layer and protected in the other is either a
+        surprise 401 or a hole."""
         app_exempt = set(security.EXEMPT_PATHS) - {"/internal/sso-authz"}
-        assert app_exempt == self.EXPECTED_EXEMPT
+        assert app_exempt == EXPECTED_EXEMPT
 
     def test_auth_request_target_is_internal(self):
         """Otherwise a client could call the authorization endpoint directly."""
         assert "internal;" in BLOCKS["/internal/sso-authz"]
 
     def test_auth_request_target_drops_the_body(self):
-        body = BLOCKS["/internal/sso-authz"]
-        assert "proxy_pass_request_body off" in body
+        assert "proxy_pass_request_body off" in BLOCKS["/internal/sso-authz"]
+
+
+class TestLiveParity:
+    """Things the live server has that the committed file must not lose again."""
+
+    def test_framing_is_delegated_to_the_shared_snippet(self):
+        assert "include snippets/frame-vip.conf;" in CONF
+
+    @pytest.mark.parametrize("path", ["/", "/static/"])
+    def test_ai_crawlers_are_blocked(self, path):
+        assert "GPTBot" in BLOCKS[path]
+        assert "return 403" in BLOCKS[path]
+
+    def test_robots_is_served_from_disk(self):
+        """So crawler rules survive an application outage."""
+        body = BLOCKS["/robots.txt"]
+        assert "alias /var/www/insider/robots.txt" in body
+        assert "proxy_pass" not in body
+
+    def test_subrequest_passes_the_original_uri(self):
+        assert "X-Original-URI" in BLOCKS["/internal/sso-authz"]
 
 
 class TestNoRegressions:
-    def test_every_location_proxies_upstream(self):
+    def test_every_proxying_location_targets_the_right_port(self):
         for name, body in BLOCKS.items():
-            assert "proxy_pass" in body, f"location {name} does not proxy"
+            if "proxy_pass" in body:
+                assert "127.0.0.1:8002" in body, f"location {name} proxies elsewhere"
 
-    def test_port_is_unchanged(self):
-        assert CONF.count("127.0.0.1:8002") == len(BLOCKS)
+    def test_only_robots_avoids_the_proxy(self):
+        non_proxying = {n for n, b in BLOCKS.items() if "proxy_pass" not in b}
+        assert non_proxying == {"/robots.txt"}
 
     def test_gzip_and_static_caching_survived(self):
         assert "gzip on" in CONF
         assert "immutable" in BLOCKS["/static/"]
+
+    def test_is_the_pre_certbot_template(self):
+        """certbot adds TLS on first run; hand-adding it here would duplicate.
+
+        Matches directives at the start of a line, not prose: the header comment
+        legitimately explains what certbot will add.
+        """
+        assert re.search(r"^\s*listen\s+80;", CONF, re.M)
+        assert not re.search(r"^\s*listen\s+443", CONF, re.M)
+        assert not re.search(r"^\s*ssl_certificate", CONF, re.M)
 
     def test_braces_balance(self):
         assert CONF.count("{") == CONF.count("}")
