@@ -56,10 +56,21 @@ REGEX_LOCATION = next(n for n in BLOCKS if n.startswith("^/(logic"))
 # a client can never reach it; it is excluded from the comparison below.
 EXPECTED_EXEMPT = {"/healthz", "/robots.txt", "/webhook/alert", "/sso"}
 
-MUTATING_ROUTES = [
+# Writes nginx itself must keep away from a subscriber session. Editing
+# thresholds or firing a test alert is editorial-only under any identity.
+STAFF_ONLY_ROUTES = [
     "/logic/save", "/logic/test-alert",
-    "/watchlist/add", "/watchlist/remove", "/watchlist/toggle",
     "/performance/add", "/performance/remove",
+]
+
+# Writes a subscriber legitimately performs on their own rows, so nginx must NOT
+# gate them behind Basic Auth. They were in the staff-only regex until
+# 2026-07-27, when per-subscriber watchlists landed and enforcement moved into
+# the app (security.SUBSCRIBER_WRITABLE_PATHS plus an owner predicate on every
+# statement). Leaving them here would make the feature fail in production while
+# passing every test, since the app never sees the request.
+SUBSCRIBER_WRITABLE_ROUTES = [
+    "/watchlist/add", "/watchlist/remove", "/watchlist/toggle",
 ]
 
 
@@ -90,19 +101,35 @@ class TestClosedByDefault:
 
 class TestStaffOnlyWrites:
     def test_mutating_endpoints_do_not_accept_an_sso_session(self):
-        """Without this, a paying subscriber could edit thresholds, the watchlist,
-        or fire test alerts. The application enforces the same rule independently
-        in security.verify_mutation."""
+        """Without this, a paying subscriber could edit thresholds or fire test
+        alerts. The application enforces the same rule independently in
+        security.verify_mutation."""
         body = BLOCKS[REGEX_LOCATION]
         assert "auth_basic" in body
         assert "satisfy any" not in body
         assert "auth_request" not in body
 
-    @pytest.mark.parametrize("path", MUTATING_ROUTES)
-    def test_every_mutating_route_matches_the_regex(self, path):
+    @pytest.mark.parametrize("path", STAFF_ONLY_ROUTES)
+    def test_every_staff_only_route_matches_the_regex(self, path):
         assert re.match(REGEX_LOCATION + r"\Z", path), (
             f"{path} is not covered by the staff-only nginx location"
         )
+
+    @pytest.mark.parametrize("path", SUBSCRIBER_WRITABLE_ROUTES)
+    def test_subscriber_writable_routes_are_not_gated_by_nginx(self, path):
+        """These must reach the app, which scopes the write to rows the caller
+        owns. Putting them back in the regex would break subscriber watchlists
+        in production while every application-level test still passed."""
+        assert not re.match(REGEX_LOCATION + r"\Z", path), (
+            f"{path} is gated by nginx, so a subscriber can never reach it"
+        )
+
+    def test_the_two_sets_agree_with_the_application(self):
+        """The nginx regex and security.SUBSCRIBER_WRITABLE_PATHS describe the
+        same boundary from two sides, so they must not drift apart."""
+        import security
+        assert set(SUBSCRIBER_WRITABLE_ROUTES) == set(security.SUBSCRIBER_WRITABLE_PATHS)
+        assert not (set(STAFF_ONLY_ROUTES) & set(security.SUBSCRIBER_WRITABLE_PATHS))
 
     @pytest.mark.parametrize("path", ["/", "/watchlist", "/logic", "/performance"])
     def test_read_only_paths_are_not_caught_by_the_regex(self, path):

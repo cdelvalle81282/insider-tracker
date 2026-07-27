@@ -301,3 +301,52 @@ class TestSingleFlight:
         assert args[0] == b"it:refresh:it:query:abc"
         assert kwargs["nx"] is True
         assert kwargs["ex"] == 15
+
+
+# ---------------------------------------------------------------------------
+# invalidate_owner_cache
+# ---------------------------------------------------------------------------
+
+
+class TestInvalidateOwnerCache:
+    """Watchlist edits used to call invalidate_query_cache(), which deletes
+    every cached query for everyone. With one editorial user that was fine. With
+    subscribers it would mean one person adding a ticker flushes the shared
+    dashboard for all of them, so the cache would never survive."""
+
+    def test_scan_is_scoped_to_one_owner(self, mock_client):
+        mock_client.scan_iter.return_value = iter([b"it:query:o=abc:watchsets"])
+
+        cache.invalidate_owner_cache("sub:alice@example.com")
+
+        pattern = mock_client.scan_iter.call_args.args[0]
+        assert pattern.startswith("it:query:o=")
+        assert pattern.endswith(":*")
+        assert pattern != "it:query:*", "that would evict every other viewer"
+
+    def test_two_owners_scan_different_patterns(self, mock_client):
+        mock_client.scan_iter.return_value = iter([])
+        cache.invalidate_owner_cache("sub:alice@example.com")
+        first = mock_client.scan_iter.call_args.args[0]
+        mock_client.scan_iter.return_value = iter([])
+        cache.invalidate_owner_cache("sub:bob@example.com")
+        assert first != mock_client.scan_iter.call_args.args[0]
+
+    def test_empty_scan_does_not_call_delete(self, mock_client):
+        """redis-py errors on DEL with no keys, and unlike the global helper
+        this runs on every watchlist write."""
+        mock_client.scan_iter.return_value = iter([])
+
+        cache.invalidate_owner_cache("sub:alice@example.com")
+
+        mock_client.delete.assert_not_called()
+
+    def test_redis_error_does_not_raise(self, mock_client):
+        mock_client.scan_iter.side_effect = redis.RedisError("down")
+
+        cache.invalidate_owner_cache("sub:alice@example.com")
+
+    def test_prefix_is_stable_and_hides_the_address(self):
+        owner = "sub:alice@example.com"
+        assert cache.owner_key_prefix(owner) == cache.owner_key_prefix(owner)
+        assert "alice@example.com" not in cache.owner_key_prefix(owner)

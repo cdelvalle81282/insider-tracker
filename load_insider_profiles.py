@@ -169,14 +169,17 @@ def main() -> None:
     already = 0
     for w in winners:
         existing = conn.execute(
-            "SELECT id FROM watchlist WHERE type='insider' AND value=%s",
+            "SELECT id FROM watchlist WHERE type='insider' AND value=%s AND owner='house'",
             [w["insider_cik"]],
         ).fetchone()
         if existing:
             already += 1
         else:
             conn.execute(
-                "INSERT INTO watchlist (type, value, label) VALUES ('insider', %s, %s)"
+                # owner='house': this auto-add curates the editorial list, and
+                # must never write into a subscriber's.
+                "INSERT INTO watchlist (type, value, label, owner)"
+                " VALUES ('insider', %s, %s, 'house')"
                 " ON CONFLICT DO NOTHING",
                 [w["insider_cik"], w["insider_name"]],
             )

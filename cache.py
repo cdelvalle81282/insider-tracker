@@ -169,8 +169,47 @@ def acquire_cooldown(name: str, ttl_seconds: int) -> bool:
     return bool(acquired)
 
 
+def owner_key_prefix(owner: str) -> str:
+    """The cache-key segment identifying whose view an entry belongs to.
+
+    Hashed rather than interpolated raw, because the owner is a subscriber email:
+    it would otherwise put addresses in Redis key names, and an address can
+    contain the ':' that structures the keyspace.
+    """
+    return "o=" + hashlib.sha256(owner.encode("utf-8")).hexdigest()[:16]
+
+
+def invalidate_owner_cache(owner: str) -> None:
+    """Delete only the cached entries belonging to one owner.
+
+    Watchlist edits used to call invalidate_query_cache(), which deletes every
+    cached query for everyone. That was fine when the only person editing was
+    editorial. With subscribers it would mean one person adding a ticker flushes
+    the shared dashboard cache for every other subscriber, so the cache would
+    essentially never survive.
+
+    Only genuinely per-viewer entries carry the owner prefix (the watchlist
+    activity strip, and any query filtered to watched_only). The shared
+    dashboard cache has no owner segment and is untouched here, which is correct:
+    a watchlist change cannot alter it now that watch flags are applied after
+    the cache read by queries.decorate_watched.
+    """
+    try:
+        cl = _client()
+        keys = list(cl.scan_iter(f"it:query:{owner_key_prefix(owner)}:*"))
+        if keys:
+            cl.delete(*keys)
+    except redis.RedisError as exc:
+        logger.debug("Redis invalidate_owner_cache failed: %s", exc)
+
+
 def invalidate_query_cache() -> None:
-    """Delete all cached query results. Call on watchlist changes."""
+    """Delete all cached query results, for every owner.
+
+    Still the right tool for a config change, where conviction scoring really is
+    baked into every cached row. Do NOT use it for watchlist edits; see
+    invalidate_owner_cache.
+    """
     try:
         cl = _client()
         keys = list(cl.scan_iter("it:query:*"))

@@ -539,8 +539,11 @@ def check_and_send(
     # 0. Watchlist activity — any size, buy or sell. Claimed under the same
     # shared key as big_buy/insider_buy, so a watched trade that also clears
     # a generic threshold gets exactly one alert (this one, checked first).
-    watched_tickers = list(queries.watched_tickers(conn))
-    watched_insiders = list(queries.watched_insiders(conn))
+    # HOUSE only. Subscribers have their own watchlists now, and firing
+    # editorial Slack on a subscriber's picks would let anyone with a login
+    # page the desk.
+    watched_tickers = list(queries.watched_tickers(conn, owner=queries.HOUSE))
+    watched_insiders = list(queries.watched_insiders(conn, owner=queries.HOUSE))
     for row in _match_watchlist_activity(conn, since_ts, watched_tickers, watched_insiders):
         payload = _format_watchlist_message(row, base_url)
         if claim_and_send(conn, _buy_alert_key(row), "watchlist", payload, webhook_url):
@@ -979,7 +982,7 @@ def check_congress_alerts(
     if not webhook_url:
         return 0
 
-    watched_lower = list(queries.watched_congress_members(conn))
+    watched_lower = list(queries.watched_congress_members(conn, owner=queries.HOUSE))
     if not watched_lower:
         return 0
 

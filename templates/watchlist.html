@@ -28,8 +28,40 @@
   <h1 class="text-xl font-bold" style="color:var(--text-1);">Watchlist</h1>
   <p style="color:var(--text-2);font-size:.90rem;margin-top:4px;">
     Recent activity on pinned tickers, insiders, and politicians first — add, remove, and manage below.
+    {% if house_watchlist is not none %}
+    <span style="color:var(--text-3);">Your list is private to you.</span>
+    {% endif %}
   </p>
+  {% if house_watchlist is not none %}
+  <p style="color:var(--text-3);font-size:.78rem;margin-top:6px;">
+    {{ watch_used }} of {{ watch_limit }} entries used.
+  </p>
+  {% endif %}
 </div>
+
+{# Editorial picks, read-only. Rendered only for subscribers: staff are already
+   looking at this exact list above, so showing it twice would just confuse. #}
+{% if house_watchlist is not none and (house_watchlist.tickers or house_watchlist.insiders or house_watchlist.congress_members) %}
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">
+    Editorial Picks <span style="color:var(--text-3);font-weight:400;font-size:.78rem;">— what the desk is watching</span>
+  </h2>
+  <p style="color:var(--text-3);font-size:.78rem;margin-bottom:12px;">
+    Read-only. Add any of these to your own list with the ☆ on the dashboard.
+  </p>
+  <div class="flex flex-wrap gap-2">
+    {% for item in house_watchlist.tickers %}
+      <a href="/issuer/{{ item.value }}" class="badge" style="text-decoration:none;color:var(--text-1);">{{ item.value }}</a>
+    {% endfor %}
+    {% for item in house_watchlist.insiders %}
+      <a href="/insider/{{ item.value }}" class="badge" style="text-decoration:none;color:var(--text-1);">{{ item.label or item.value }}</a>
+    {% endfor %}
+    {% for item in house_watchlist.congress_members %}
+      <span class="badge" style="color:var(--text-1);">{{ item.label or item.value }}</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 <!-- Recent Activity -->
 <div class="surface mb-6" style="padding:20px;">

@@ -220,11 +220,30 @@ class TestStaffAuthorization:
         self._session(monkeypatch, staff=False)
         assert anon.get("/watchlist").status_code == 200
 
-    def test_subscriber_cannot_mutate(self, anon, monkeypatch, csrf):
-        """Read-only: a valid CSRF token is not authorization."""
+    @pytest.mark.parametrize("path", [
+        "/logic/save", "/logic/test-alert", "/performance/add", "/performance/remove",
+    ])
+    def test_subscriber_cannot_mutate_editorial_state(self, anon, monkeypatch, csrf, path):
+        """A valid CSRF token is not authorization. Held for every write except
+        the subscriber's own watchlist rows."""
+        self._session(monkeypatch, staff=False)
+        assert anon.post(path, data={}, headers=csrf).status_code == 403, path
+
+    def test_subscriber_may_write_their_own_watchlist(self, anon, monkeypatch, csrf):
+        """The one deliberate exception, added 2026-07-27. Reaching the handler
+        is the assertion: 400 means it got past authorization and failed on the
+        empty form, where it previously stopped at 403."""
         self._session(monkeypatch, staff=False)
         resp = anon.post("/watchlist/toggle", data={"ticker": "AAPL"}, headers=csrf)
-        assert resp.status_code == 403
+        assert resp.status_code == 400
+
+    def test_the_exception_is_an_explicit_allowlist(self):
+        """Default stays closed, so a POST added later is staff-only until
+        someone deliberately opts it in."""
+        assert security.SUBSCRIBER_WRITABLE_PATHS == frozenset({
+            "/watchlist/add", "/watchlist/remove", "/watchlist/toggle",
+        })
+        assert "/logic/save" not in security.SUBSCRIBER_WRITABLE_PATHS
 
     def test_staff_session_may_mutate(self, anon, monkeypatch):
         self._session(monkeypatch, staff=True)

@@ -79,6 +79,21 @@ EXEMPT_PATHS = frozenset({
 # by Healthchecks/BetterStack, which cannot carry a CSRF token.
 CSRF_EXEMPT_PATHS = frozenset({"/webhook/alert"})
 
+# Writes a subscriber may perform on their OWN rows. Still CSRF-checked; only the
+# staff requirement is lifted.
+#
+# An explicit allowlist rather than a loosened default, so a POST added later is
+# staff-only until someone deliberately opts it in. The routes themselves are
+# what enforce "own rows": app.require_watch_owner derives the owner from the
+# session, never from form input, and remove_watch carries the owner in its
+# DELETE predicate. Without that, this set alone would let any subscriber edit
+# the editorial watchlist.
+SUBSCRIBER_WRITABLE_PATHS = frozenset({
+    "/watchlist/add",
+    "/watchlist/remove",
+    "/watchlist/toggle",
+})
+
 # Pages a subscriber may authenticate for but must not read. Settings and
 # operational history, and the research pages that show how the conviction model
 # was calibrated. /export.csv is here because it hands over the whole filing set
@@ -278,6 +293,13 @@ async def verify_mutation(request: Request) -> None:
     if not verify_csrf_token(token):
         _LOG.warning("CSRF rejection on %s %s", request.method, request.url.path)
         raise HTTPException(status_code=403, detail="Invalid or missing CSRF token")
+
+    if request.url.path in SUBSCRIBER_WRITABLE_PATHS:
+        # Authenticated is enough here; the route scopes the write to rows this
+        # principal owns. AuthMiddleware already rejected anyone unauthenticated,
+        # so reaching this line means there is a valid staff or subscriber
+        # identity.
+        return
 
     if not is_staff(request):
         # A subscriber can legitimately hold a valid CSRF token, since they can

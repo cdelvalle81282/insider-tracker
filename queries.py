@@ -29,8 +29,12 @@ class EnrichContext:
     conviction_thresholds: dict | None = None
     cluster_window_days: int = 14
     ceo_cfo_keywords: list[str] = field(default_factory=list)
-    watched_tickers: set[str] = field(default_factory=set)     # Session 6
-    watched_insiders: set[str] = field(default_factory=set)    # Session 6
+    # NOTE: the watchlist sets deliberately do NOT live here any more.
+    # _enrich output is what gets cached in Redis under a key shared by every
+    # user, so anything user-specific baked in here is served to the wrong
+    # person. Watch flags are applied per request by decorate_watched(), after
+    # the cache read. Putting them back on this dataclass would reintroduce a
+    # cross-subscriber data leak that no test of a single user would catch.
     compute_conviction: bool = False
     insider_baseline_cfg: dict | None = None    # INSIDER_BASELINE values
     compute_insider_baseline: bool = False
@@ -518,15 +522,11 @@ def _enrich(rows: list[dict], ctx: EnrichContext | None = None) -> list[dict]:
             d["conviction_reasons"] = []
             d["conviction_tier"] = "low"
 
-        # Watchlist flag
-        if ctx:
-            ticker = d.get("issuer_ticker") or ""
-            insider = d.get("insider_cik") or ""
-            d["is_watched"] = (
-                ticker in ctx.watched_tickers or insider in ctx.watched_insiders
-            )
-        else:
-            d["is_watched"] = False
+        # Watchlist flag: always False here, and deliberately so. This value is
+        # cached under a key shared by every user, so it has to be
+        # user-independent. decorate_watched() sets the real flag per request
+        # after the cache read.
+        d["is_watched"] = False
 
         d["baseline_flag"] = baseline_flags.get(d.get("transaction_id"))
 
@@ -581,10 +581,47 @@ _ENTITY_FILER_RE = (
 )
 
 
-def list_watchlist(conn: psycopg.Connection) -> dict[str, list[dict]]:
+def decorate_watched(rows, *, tickers: set[str], insiders: set[str]):
+    """Stamp the viewer's own watch flags onto rows, in place.
+
+    Called AFTER the Redis read, never before. The rows themselves are the same
+    for every viewer and are cached once under a shared key; only this flag
+    differs per person. Keeping the two apart is what lets one cached dashboard
+    serve every subscriber instead of one cached copy per subscriber, and it is
+    what stops Redis handing one subscriber another's watchlist.
+
+    Cheap by construction: two set-membership tests over a page of rows.
+    """
+    for row in rows:
+        row["is_watched"] = (
+            (row.get("issuer_ticker") or "") in tickers
+            or (row.get("insider_cik") or "") in insiders
+        )
+    return rows
+
+
+# The editorial watchlist. Everything that is not a named subscriber is this.
+# Alerts and the profile auto-add pin to it, so a subscriber's picks can never
+# reach Slack.
+HOUSE = "house"
+
+# Per-subscriber ceiling. Staff (owner == HOUSE) are uncapped. Exists to bound a
+# subscriber turning the watchlist into a bulk feed of the whole market, since
+# every watched row costs work in get_watchlist_feed.
+SUBSCRIBER_WATCH_LIMIT = 50
+
+# `owner` is keyword-only and has NO default on every function below. That is
+# deliberate: a default of HOUSE would make a forgotten call site silently read
+# or write the editorial list instead of failing, which is precisely the bug
+# class this column introduces. Better a TypeError at the call site.
+
+
+def list_watchlist(conn: psycopg.Connection, *, owner: str) -> dict[str, list[dict]]:
     """Return {'tickers': [...], 'insiders': [...], 'congress_members': [...]} for the watchlist page."""
     rows = conn.execute(
-        "SELECT id, type, value, label, created_at FROM watchlist ORDER BY created_at DESC"
+        "SELECT id, type, value, label, created_at FROM watchlist"
+        " WHERE owner = %s ORDER BY created_at DESC",
+        [owner],
     ).fetchall()
     tickers = [dict(r) for r in rows if r["type"] == "ticker"]
     insiders = [dict(r) for r in rows if r["type"] == "insider"]
@@ -592,18 +629,48 @@ def list_watchlist(conn: psycopg.Connection) -> dict[str, list[dict]]:
     return {"tickers": tickers, "insiders": insiders, "congress_members": congress_members}
 
 
-def add_watch(conn: psycopg.Connection, watch_type: str, value: str, label: str) -> None:
+def count_watch(conn: psycopg.Connection, *, owner: str) -> int:
+    row = conn.execute(
+        "SELECT count(*) AS n FROM watchlist WHERE owner = %s", [owner]
+    ).fetchone()
+    return int(row["n"])
+
+
+def watch_owner(conn: psycopg.Connection, watch_id: int) -> str | None:
+    """The owner of a row, or None if it does not exist.
+
+    Callers that delete by id must check this first. Ids are sequential and
+    guessable, so without it a subscriber could delete the editorial list one
+    row at a time.
+    """
+    row = conn.execute(
+        "SELECT owner FROM watchlist WHERE id = %s", [watch_id]
+    ).fetchone()
+    return row["owner"] if row else None
+
+
+def add_watch(
+    conn: psycopg.Connection, watch_type: str, value: str, label: str, *, owner: str
+) -> None:
     assert conn.autocommit, "add_watch requires an autocommit connection"
     conn.execute(
-        "INSERT INTO watchlist (type, value, label) VALUES (%s, %s, %s)"
+        "INSERT INTO watchlist (type, value, label, owner) VALUES (%s, %s, %s, %s)"
         " ON CONFLICT DO NOTHING",
-        [watch_type, value.strip(), label.strip()],
+        [watch_type, value.strip(), label.strip(), owner],
     )
 
 
-def remove_watch(conn: psycopg.Connection, watch_id: int) -> None:
+def remove_watch(conn: psycopg.Connection, watch_id: int, *, owner: str) -> bool:
+    """Delete a row, but only if `owner` holds it. True when a row was removed.
+
+    The owner predicate is in the DELETE itself rather than only in a prior
+    check, so there is no window between the check and the delete.
+    """
     assert conn.autocommit, "remove_watch requires an autocommit connection"
-    conn.execute("DELETE FROM watchlist WHERE id = %s", [watch_id])
+    cur = conn.execute(
+        "DELETE FROM watchlist WHERE id = %s AND owner = %s", [watch_id, owner]
+    )
+    return cur.rowcount > 0
 
 
 def toggle_watch(
@@ -611,39 +678,42 @@ def toggle_watch(
     watch_type: str,
     value: str,
     label: str,
+    *,
+    owner: str,
 ) -> bool:
-    """Toggles watch status. Returns True if now watched, False if removed."""
+    """Toggles watch status for one owner. True if now watched, False if removed."""
     assert conn.autocommit, "toggle_watch requires an autocommit connection"
     row = conn.execute(
-        "SELECT id FROM watchlist WHERE type = %s AND value = %s",
-        [watch_type, value],
+        "SELECT id FROM watchlist WHERE type = %s AND value = %s AND owner = %s",
+        [watch_type, value, owner],
     ).fetchone()
     if row:
-        remove_watch(conn, row["id"])
+        remove_watch(conn, row["id"], owner=owner)
         return False
-    add_watch(conn, watch_type, value, label)
+    add_watch(conn, watch_type, value, label, owner=owner)
     return True
 
 
-def watched_tickers(conn: psycopg.Connection) -> set[str]:
+def watched_tickers(conn: psycopg.Connection, *, owner: str) -> set[str]:
     rows = conn.execute(
-        "SELECT value FROM watchlist WHERE type = 'ticker'"
+        "SELECT value FROM watchlist WHERE type = 'ticker' AND owner = %s", [owner]
     ).fetchall()
     return {r["value"] for r in rows}
 
 
-def watched_insiders(conn: psycopg.Connection) -> set[str]:
+def watched_insiders(conn: psycopg.Connection, *, owner: str) -> set[str]:
     """Returns a set of insider_cik values."""
     rows = conn.execute(
-        "SELECT value FROM watchlist WHERE type = 'insider'"
+        "SELECT value FROM watchlist WHERE type = 'insider' AND owner = %s", [owner]
     ).fetchall()
     return {r["value"] for r in rows}
 
 
-def watched_congress_members(conn: psycopg.Connection) -> set[str]:
+def watched_congress_members(conn: psycopg.Connection, *, owner: str) -> set[str]:
     """Returns a set of lowercase politician_name values for watched congress members."""
     rows = conn.execute(
-        "SELECT value FROM watchlist WHERE type = 'congress_member'"
+        "SELECT value FROM watchlist WHERE type = 'congress_member' AND owner = %s",
+        [owner],
     ).fetchall()
     return {r["value"].lower() for r in rows}
 
@@ -945,6 +1015,7 @@ def _build_filings_where(
     ceo_cfo_keywords: list[str] | None = None,
     sector: str | None = None,
     watched_only: bool = False,
+    watched_owner: str = HOUSE,
     date_range: tuple[date, date] | None = None,
     hide_funds: bool = False,
     has_options_only: bool = False,
@@ -952,7 +1023,11 @@ def _build_filings_where(
     hide_entity_filers: bool = False,
 ) -> tuple[str, list]:
     """Build WHERE clause and params for filings queries.
-    Returns (where_sql, params) where where_sql starts with 'WHERE ...'."""
+    Returns (where_sql, params) where where_sql starts with 'WHERE ...'.
+
+    watched_owner only matters when watched_only is set, and it defaults to
+    HOUSE so a caller that never heard of owners keeps the pre-subscriber
+    behaviour rather than silently matching every subscriber's list at once."""
     # Date condition: single date or range
     if date_range:
         date_condition = "filed_at::date BETWEEN %s AND %s"
@@ -1006,8 +1081,8 @@ def _build_filings_where(
     _frag_search   = "AND (issuer_ticker ILIKE %s OR issuer_name ILIKE %s OR insider_name ILIKE %s)" if search else ""
     _frag_sec      = "AND sector = %s" if sector else ""
     _frag_watched  = (
-        "AND (issuer_ticker IN (SELECT value FROM watchlist WHERE type='ticker') "
-        "OR insider_cik IN (SELECT value FROM watchlist WHERE type='insider'))"
+        "AND (issuer_ticker IN (SELECT value FROM watchlist WHERE type='ticker' AND owner=%s) "
+        "OR insider_cik IN (SELECT value FROM watchlist WHERE type='insider' AND owner=%s))"
         if watched_only else ""
     )
     _frag_funds    = (
@@ -1045,7 +1120,8 @@ def _build_filings_where(
     """.format(codes=",".join(["%s"] * len(transaction_codes)))
 
     # Param order must mirror placeholder order in the WHERE clause exactly:
-    # date -> codes -> min_value -> ceo_keywords -> search -> sector -> mktcap -> entity_re.
+    # date -> codes -> min_value -> ceo_keywords -> search -> sector -> watched
+    # -> mktcap -> entity_re.
     params += transaction_codes
     params.append(min_value)
     if ceo_cfo_only and ceo_cfo_keywords:
@@ -1055,6 +1131,10 @@ def _build_filings_where(
         params += [s, s, s]
     if sector:
         params.append(sector)
+    if watched_only:
+        # Two placeholders, one per subquery in _frag_watched, and it sits
+        # between _frag_sec and mktcap_sql in the WHERE clause.
+        params += [watched_owner, watched_owner]
     params += mktcap_params
     if hide_entity_filers:
         params.append(_ENTITY_FILER_RE)
@@ -1077,6 +1157,7 @@ def get_filings_for_date(
     sort_order: str = "desc",
     sector: str | None = None,
     watched_only: bool = False,
+    watched_owner: str = HOUSE,
     date_range: tuple[date, date] | None = None,
     limit: int | None = None,
     ctx: EnrichContext | None = None,
@@ -1148,6 +1229,7 @@ def get_filings_for_date(
             ceo_cfo_keywords=ceo_cfo_keywords,
             sector=sector,
             watched_only=watched_only,
+            watched_owner=watched_owner,
             date_range=date_range,
             hide_funds=hide_funds,
             has_options_only=has_options_only,
@@ -1219,6 +1301,7 @@ def get_filings_count(
     ceo_cfo_keywords: list[str] | None = None,
     sector: str | None = None,
     watched_only: bool = False,
+    watched_owner: str = HOUSE,
     date_range: tuple[date, date] | None = None,
     hide_funds: bool = False,
     has_options_only: bool = False,
@@ -1239,6 +1322,7 @@ def get_filings_count(
         ceo_cfo_keywords=ceo_cfo_keywords,
         sector=sector,
         watched_only=watched_only,
+        watched_owner=watched_owner,
         date_range=date_range,
         hide_funds=hide_funds,
         has_options_only=has_options_only,

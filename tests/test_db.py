@@ -206,14 +206,14 @@ class TestAddWatch:
         conn.autocommit = False
 
         with pytest.raises(AssertionError):
-            queries.add_watch(conn, "ticker", "AAPL", "Apple Inc")
+            queries.add_watch(conn, "ticker", "AAPL", "Apple Inc", owner=queries.HOUSE)
 
     def test_does_not_raise_when_connection_is_autocommit(self):
         conn = MagicMock()
         conn.autocommit = True
 
         # Should not raise
-        queries.add_watch(conn, "ticker", "AAPL", "Apple Inc")
+        queries.add_watch(conn, "ticker", "AAPL", "Apple Inc", owner=queries.HOUSE)
 
         conn.execute.assert_called_once()
 
@@ -221,7 +221,7 @@ class TestAddWatch:
         conn = MagicMock()
         conn.autocommit = True
 
-        queries.add_watch(conn, "ticker", "  AAPL  ", "  Apple Inc  ")
+        queries.add_watch(conn, "ticker", "  AAPL  ", "  Apple Inc  ", owner=queries.HOUSE)
 
         args = conn.execute.call_args.args
         # Second positional arg is the params list: [watch_type, value, label]
@@ -236,13 +236,33 @@ class TestRemoveWatch:
         conn.autocommit = False
 
         with pytest.raises(AssertionError):
-            queries.remove_watch(conn, 42)
+            queries.remove_watch(conn, 42, owner=queries.HOUSE)
 
     def test_does_not_raise_when_connection_is_autocommit(self):
         conn = MagicMock()
         conn.autocommit = True
+        conn.execute.return_value.rowcount = 1
 
-        # Should not raise
-        queries.remove_watch(conn, 42)
+        assert queries.remove_watch(conn, 42, owner=queries.HOUSE) is True
 
         conn.execute.assert_called_once()
+
+    def test_owner_is_part_of_the_delete_predicate(self):
+        """Not merely checked beforehand. Watchlist ids are sequential, so
+        without this a subscriber could delete the editorial list by id."""
+        conn = MagicMock()
+        conn.autocommit = True
+        conn.execute.return_value.rowcount = 1
+
+        queries.remove_watch(conn, 42, owner="sub:a@example.com")
+
+        sql, params = conn.execute.call_args.args
+        assert "owner = %s" in sql
+        assert params == [42, "sub:a@example.com"]
+
+    def test_deleting_someone_elses_row_reports_no_match(self):
+        conn = MagicMock()
+        conn.autocommit = True
+        conn.execute.return_value.rowcount = 0
+
+        assert queries.remove_watch(conn, 42, owner="sub:a@example.com") is False

@@ -149,7 +149,7 @@ def _config_version() -> str:
     return version
 
 
-def _query_cache_key(filters: dict) -> str:
+def _query_cache_key(filters: dict, owner: str | None = None) -> str:
     """Redis key for a cached filings result set.
 
     The config version is part of the key because these entries hold rows that
@@ -159,7 +159,17 @@ def _query_cache_key(filters: dict) -> str:
     Only the filings result sets need this. it:stats and it:clusters read no
     config: get_cluster_activity is called without min_insiders, so it uses its
     own default rather than the configurable alert threshold.
+
+    `owner` is passed ONLY when the result genuinely differs per viewer, which
+    today means watched_only=True, because that filter runs in SQL against one
+    person's watchlist. Everything else stays owner-free and is therefore one
+    shared entry serving every subscriber. Do not add the owner unconditionally
+    "to be safe": that would fragment the shared dashboard cache into one copy
+    per subscriber and throw away the reason this cache makes subscriber load
+    cheap in the first place.
     """
+    if owner is not None:
+        return f"it:query:{cache_module.owner_key_prefix(owner)}:{_config_version()}:{_cache_key(filters)}"
     return f"it:query:{_config_version()}:{_cache_key(filters)}"
 
 
@@ -382,7 +392,12 @@ def render_price_preview_svg(bars: list[dict], filings: list[dict]) -> str:
 
 
 def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
-    """Build an EnrichContext with conviction config and watchlist sets."""
+    """Build an EnrichContext with conviction config.
+
+    No watchlist sets: _enrich output is cached under a key shared by every
+    user, so it must not carry anything user-specific. Watch flags are applied
+    per request by queries.decorate_watched() after the cache read.
+    """
     return EnrichContext(
         conn=db,
         conviction_flags=active_config.get("conviction_flags"),
@@ -391,12 +406,87 @@ def _make_ctx(db: psycopg.Connection, active_config: dict) -> EnrichContext:
         conviction_thresholds=active_config.get("conviction_thresholds"),
         cluster_window_days=active_config.get("conviction_cluster_window_days", 14),
         ceo_cfo_keywords=active_config.get("alert_rules", {}).get("insider_title_keywords", []),
-        watched_tickers=queries.watched_tickers(db),
-        watched_insiders=queries.watched_insiders(db),
         compute_conviction=True,
         insider_baseline_cfg=active_config.get("insider_baseline"),
         compute_insider_baseline=True,
     )
+
+
+# Owner of a subscriber-authenticated request we cannot put a name to. Reads
+# with this return nothing, which is the safe answer; writes never get this far
+# because require_watch_owner() refuses them first. It must not be HOUSE: that
+# would hand the editorial list to anyone holding a session with no email.
+_ANONYMOUS_OWNER = "sub:<unidentified>"
+
+
+def watch_owner(request: Request) -> str:
+    """Whose watchlist this request READS.
+
+    Staff read the editorial list; a subscriber reads their own, keyed by the
+    email in their SSO session. Derived from the session on the server and NEVER
+    from a form field or query parameter: accepting a client-supplied owner
+    would let a subscriber post owner=house and edit the editorial list.
+
+    Staff authenticated by Basic Auth have no email and still map to HOUSE, so
+    the editorial workflow is unchanged.
+    """
+    if getattr(request.state, "is_staff", False):
+        return queries.HOUSE
+    email = getattr(request.state, "subscriber_email", None)
+    return f"sub:{email}" if email else _ANONYMOUS_OWNER
+
+
+def require_watch_owner(request: Request) -> str:
+    """Whose watchlist this request may WRITE, or 403.
+
+    Same derivation as watch_owner, except that an unidentifiable subscriber is
+    refused outright rather than silently degraded. A valid Wisepub session
+    always carries an email (read_session rejects a token without one), so this
+    should be unreachable; it is here because the failure mode if it ever
+    becomes reachable is a subscriber writing the editorial list.
+    """
+    owner = watch_owner(request)
+    if owner == _ANONYMOUS_OWNER:
+        logging.getLogger("app").warning("Watchlist write from a session with no email")
+        raise HTTPException(status_code=403, detail="No subscriber identity")
+    return owner
+
+
+def _watch_sets(db: psycopg.Connection, owner: str) -> tuple[set[str], set[str]]:
+    """The viewer's watched tickers and insider CIKs, for decorate_watched."""
+    return (
+        queries.watched_tickers(db, owner=owner),
+        queries.watched_insiders(db, owner=owner),
+    )
+
+
+def _watch_sets_cached(owner: str) -> tuple[set[str], set[str]]:
+    """_watch_sets, memoised in Redis per owner.
+
+    index() and htmx_filings() use the acquire-late pattern and hold zero DB
+    connections on a cache hit, which is the thing that makes the dashboard
+    cheap under load. Decorating rows with watch flags needs this data on every
+    render, so fetching it from Postgres each time would quietly undo that and
+    put a connection checkout back on the hot path for every viewer.
+
+    These sets are tiny and only change on a watchlist write, which already
+    calls invalidate_owner_cache. The key carries the owner prefix so that
+    invalidation catches it.
+    """
+    key = f"it:query:{cache_module.owner_key_prefix(owner)}:watchsets"
+    cached = cache_module.cache_get(key)
+    if cached is not None:
+        return set(cached[0]), set(cached[1])
+    pre_mtime = cache_module._sentinel_mtime()
+    db = get_db()
+    try:
+        tickers, insiders = _watch_sets(db, owner)
+    finally:
+        put_db(db)
+    # Stored as lists: the payload is pickled, and lists keep it obvious that
+    # this is a serialised snapshot rather than a live set.
+    cache_module.cache_set(key, pre_mtime, (list(tickers), list(insiders)))
+    return tickers, insiders
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +661,10 @@ async def index(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    cached_result = cache_module.cache_get_single_flight(_query_cache_key(filters))
+    viewer = watch_owner(request)
+    cached_result = cache_module.cache_get_single_flight(
+        _query_cache_key(filters, owner=viewer if only_watched else None)
+    )
     cached_sectors = _sentinel_get(_sectors_cache, "sectors")
 
     # Acquire a DB connection only when something is missing from cache.
@@ -599,6 +692,7 @@ async def index(
                     sort_order=sort_order,
                     sector=sector or None,
                     watched_only=only_watched,
+                    watched_owner=viewer,
                     date_range=date_range_arg,
                     ctx=ctx,
                     hide_funds=effective_hide_funds,
@@ -622,6 +716,7 @@ async def index(
                     ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
                     sector=sector or None,
                     watched_only=only_watched,
+                    watched_owner=viewer,
                     date_range=date_range_arg,
                     hide_funds=effective_hide_funds,
                     has_options_only=effective_has_options_only,
@@ -651,6 +746,13 @@ async def index(
         buys, sells, buy_count, sell_count = cached_result
         daily_summary = []
         all_sectors = cached_sectors
+
+    # Watch flags are applied here, after the cache read, never inside the
+    # cached payload: the rows are shared by every viewer and only this flag
+    # differs per person.
+    _wt, _wi = _watch_sets_cached(viewer)
+    queries.decorate_watched(buys, tickers=_wt, insiders=_wi)
+    queries.decorate_watched(sells, tickers=_wt, insiders=_wi)
 
     return templates.TemplateResponse(request, "index.html", {
         "buys": buys,
@@ -748,7 +850,10 @@ async def htmx_filings(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    cached_result = cache_module.cache_get_single_flight(_query_cache_key(filters))
+    viewer = watch_owner(request)
+    cached_result = cache_module.cache_get_single_flight(
+        _query_cache_key(filters, owner=viewer if only_watched else None)
+    )
 
     need_db = (cached_result is None) or summary_mode
 
@@ -773,6 +878,7 @@ async def htmx_filings(
                     sort_order=sort_order,
                     sector=sector or None,
                     watched_only=only_watched,
+                    watched_owner=viewer,
                     date_range=date_range_arg,
                     ctx=ctx,
                     hide_funds=effective_hide_funds,
@@ -796,6 +902,7 @@ async def htmx_filings(
                     ceo_cfo_keywords=active_config["alert_rules"]["insider_title_keywords"],
                     sector=sector or None,
                     watched_only=only_watched,
+                    watched_owner=viewer,
                     date_range=date_range_arg,
                     hide_funds=effective_hide_funds,
                     has_options_only=effective_has_options_only,
@@ -820,6 +927,13 @@ async def htmx_filings(
     else:
         buys, sells, buy_count, sell_count = cached_result
         daily_summary = []
+
+    # Watch flags are applied here, after the cache read, never inside the
+    # cached payload: the rows are shared by every viewer and only this flag
+    # differs per person.
+    _wt, _wi = _watch_sets_cached(viewer)
+    queries.decorate_watched(buys, tickers=_wt, insiders=_wi)
+    queries.decorate_watched(sells, tickers=_wt, insiders=_wi)
 
     return templates.TemplateResponse(request, "_tables_partial.html", {
         "buys": buys,
@@ -992,26 +1106,30 @@ async def htmx_top_signals(request: Request):
 # HTMX partial — watchlist activity hero strip
 # ---------------------------------------------------------------------------
 
-def _get_watchlist_feed_sync(db: psycopg.Connection) -> list[dict]:
-    tickers = queries.watched_tickers(db)
-    insiders = queries.watched_insiders(db)
+def _get_watchlist_feed_sync(db: psycopg.Connection, owner: str) -> list[dict]:
+    tickers = queries.watched_tickers(db, owner=owner)
+    insiders = queries.watched_insiders(db, owner=owner)
     return queries.get_watchlist_feed(db, tickers, insiders, lookback_days=14, limit=8)
 
 
 @app.get("/htmx/watchlist-activity", response_class=HTMLResponse)
 @limiter.limit("60/minute")
 async def htmx_watchlist_activity(request: Request):
-    # Prefixed "it:query:" (not "it:top-signals:") so watchlist add/remove
-    # invalidates it immediately via invalidate_query_cache(), same as the
-    # main filings query cache — this content is watchlist-dependent, unlike
-    # the top-signals strip.
-    skey = f"it:query:watchlist-activity:{date.today().isoformat()}"
+    # This strip IS the viewer's own watchlist, so unlike the main filings cache
+    # it is genuinely per-owner and the key carries the owner prefix. That is
+    # also what lets invalidate_owner_cache evict it on a watchlist edit without
+    # touching anyone else's entries.
+    viewer = watch_owner(request)
+    skey = (
+        f"it:query:{cache_module.owner_key_prefix(viewer)}"
+        f":watchlist-activity:{date.today().isoformat()}"
+    )
     html = cache_module.cache_get(skey)
     if html is None:
         pre_mtime = cache_module._sentinel_mtime()
         db = get_db()
         try:
-            feed = await asyncio.to_thread(_get_watchlist_feed_sync, db)
+            feed = await asyncio.to_thread(_get_watchlist_feed_sync, db, viewer)
         finally:
             put_db(db)
         html = templates.env.get_template("_watchlist_activity.html").render({"feed": feed})
@@ -1419,7 +1537,7 @@ async def chart_view(
             "text":     text,
         })
 
-    watched = queries.watched_tickers(db)
+    watched = queries.watched_tickers(db, owner=watch_owner(request))
     return templates.TemplateResponse(request, "chart.html", {
         "ticker": ticker,
         "range": range,
@@ -1611,7 +1729,8 @@ async def watchlist_page(
     request: Request,
     db: psycopg.Connection = Depends(get_request_db),
 ):
-    wl = queries.list_watchlist(db)
+    viewer = watch_owner(request)
+    wl = queries.list_watchlist(db, owner=viewer)
     tickers = [item["value"] for item in wl["tickers"]]
     insider_ciks = [item["value"] for item in wl["insiders"]]
     congress_names_lower = [item["value"].lower() for item in wl["congress_members"]]
@@ -1629,9 +1748,17 @@ async def watchlist_page(
 
     activity_feed = queries.get_watchlist_feed(db, tickers, insider_ciks, lookback_days=60, limit=20)
 
+    # Subscribers also see the editorial list, read-only, so "what is the desk
+    # watching" is part of what they are paying for. Staff are already looking
+    # at exactly that list, so showing it twice would just be confusing.
+    house = None if viewer == queries.HOUSE else queries.list_watchlist(db, owner=queries.HOUSE)
+
     return templates.TemplateResponse(request, "watchlist.html", {
         "watchlist": wl,
         "activity_feed": activity_feed,
+        "house_watchlist": house,
+        "watch_limit": queries.SUBSCRIBER_WATCH_LIMIT,
+        "watch_used": len(tickers) + len(insider_ciks) + len(congress_names_lower),
     })
 
 
@@ -1660,8 +1787,14 @@ async def watchlist_add(
         if not _CIK_RE.match(value):
             raise HTTPException(status_code=400, detail="Invalid CIK format")
     # congress_member: value is the politician name — stored as-is, matched case-insensitively
-    queries.add_watch(db, watch_type, value, label or value)
-    cache_module.invalidate_query_cache()
+    owner = require_watch_owner(request)
+    if owner != queries.HOUSE and queries.count_watch(db, owner=owner) >= queries.SUBSCRIBER_WATCH_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Watchlist is limited to {queries.SUBSCRIBER_WATCH_LIMIT} entries",
+        )
+    queries.add_watch(db, watch_type, value, label or value, owner=owner)
+    cache_module.invalidate_owner_cache(owner)
     safe_next = next if next in ("/watchlist", "/congress") else "/watchlist"
     return RedirectResponse(url=safe_next, status_code=303)
 
@@ -1672,8 +1805,12 @@ async def watchlist_remove(
     db: psycopg.Connection = Depends(get_request_db),
     watch_id: int = Form(...),
 ):
-    queries.remove_watch(db, watch_id)
-    cache_module.invalidate_query_cache()
+    # The owner predicate is inside the DELETE, so a subscriber cannot remove a
+    # row they do not own by guessing its id. Ids are sequential.
+    owner = require_watch_owner(request)
+    if not queries.remove_watch(db, watch_id, owner=owner):
+        raise HTTPException(status_code=404, detail="No such watchlist entry")
+    cache_module.invalidate_owner_cache(owner)
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
@@ -1700,8 +1837,24 @@ async def watchlist_toggle(
     elif watch_type == "insider":
         if not _CIK_RE.match(value):
             raise HTTPException(status_code=400, detail="Invalid CIK format")
-    is_watched = queries.toggle_watch(db, watch_type, value, label or value)
-    cache_module.invalidate_query_cache()
+    owner = require_watch_owner(request)
+    if owner != queries.HOUSE:
+        # A toggle that removes must always be allowed, even at the cap, or a
+        # subscriber who hits the limit can never get back under it. So decide
+        # the direction here rather than trusting whichever star the browser
+        # happened to render.
+        existing = (
+            queries.watched_tickers(db, owner=owner) if watch_type == "ticker"
+            else queries.watched_insiders(db, owner=owner)
+        )
+        adding = value not in existing
+        if adding and queries.count_watch(db, owner=owner) >= queries.SUBSCRIBER_WATCH_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Watchlist is limited to {queries.SUBSCRIBER_WATCH_LIMIT} entries",
+            )
+    is_watched = queries.toggle_watch(db, watch_type, value, label or value, owner=owner)
+    cache_module.invalidate_owner_cache(owner)
     watch_star = templates.env.get_template("_macros.html").module.watch_star
     return HTMLResponse(watch_star(watch_type, value, label or value, is_watched))
 
@@ -1791,7 +1944,7 @@ async def congress_view(
     sort_order: str = Query(default="desc"),
 ):
     effective_days = days if days > 0 else None
-    watched_members = queries.watched_congress_members(db)
+    watched_members = queries.watched_congress_members(db, owner=watch_owner(request))
     trades = queries.get_congress_trades(
         db,
         ticker=ticker or None,
@@ -1835,7 +1988,7 @@ async def htmx_congress_trades(
     sort_order: str = Query(default="desc"),
 ):
     effective_days = days if days > 0 else None
-    watched_members = queries.watched_congress_members(db)
+    watched_members = queries.watched_congress_members(db, owner=watch_owner(request))
     trades = queries.get_congress_trades(
         db,
         ticker=ticker or None,
