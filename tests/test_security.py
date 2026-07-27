@@ -248,6 +248,82 @@ class TestStaffAuthorization:
         assert security.is_staff(req) is False
 
 
+class TestStaffOnlyReads:
+    """Authorizing a read, which is a separate question from authorizing a write.
+
+    verify_mutation only ever guarded POSTs, so before this every authenticated
+    user could GET the settings page, the research pages, and a bulk CSV of the
+    entire filing set. Subscribers arriving over SSO made that a real exposure
+    rather than a theoretical one.
+    """
+
+    def _session(self, monkeypatch, staff: bool):
+        monkeypatch.setattr(
+            security, "sso_session",
+            lambda _req: {"email": "sub@example.com", "staff": staff},
+        )
+
+    @pytest.mark.parametrize("path", sorted(security.STAFF_ONLY_PATHS))
+    def test_subscriber_is_refused(self, anon, monkeypatch, path):
+        self._session(monkeypatch, staff=False)
+        assert anon.get(path).status_code == 403, path
+
+    @pytest.mark.parametrize("path", sorted(security.STAFF_ONLY_PATHS))
+    def test_staff_is_not_refused(self, monkeypatch, path):
+        """Staff must get past the gate. Several of these routes then blow up on
+        the MagicMock DB, so raise_server_exceptions=False turns that into a 500
+        and the assertion stays about authorization rather than about whether the
+        page happens to render under a stubbed database."""
+        monkeypatch.setattr(security, "sso_session", lambda _req: None)
+        c = TestClient(app_module.app, raise_server_exceptions=False)
+        c.auth = (USER, PASSWORD)
+        assert c.get(path).status_code != 403, path
+
+    @pytest.mark.parametrize("path", ["/watchlist", "/guide"])
+    def test_subscriber_keeps_the_content_pages(self, anon, monkeypatch, path):
+        self._session(monkeypatch, staff=False)
+        assert anon.get(path).status_code == 200, path
+
+    def test_anonymous_still_gets_401_not_403(self, anon, monkeypatch):
+        """Authentication is still resolved before authorization, so an
+        unauthenticated request to a staff page is challenged rather than told
+        it lacks the right role."""
+        monkeypatch.setattr(security, "sso_session", lambda _req: None)
+        assert anon.get("/logic").status_code == 401
+
+    def test_staff_only_set_is_pinned(self):
+        """Widening this set is a deliberate act, not a drive-by edit."""
+        assert security.STAFF_ONLY_PATHS == frozenset({
+            "/logic", "/run-log", "/backtest", "/backtest-logic",
+            "/performance", "/export.csv",
+        })
+
+    def test_leaderboard_stays_subscriber_visible(self):
+        """Product decision 2026-07-27: finished insight subscribers pay for,
+        unlike /backtest which shows how the model was calibrated."""
+        assert "/leaderboard" not in security.STAFF_ONLY_PATHS
+
+    def test_matching_is_exact_not_prefix(self, anon, monkeypatch):
+        """A startswith check would let /logic cover /logic-anything, and would
+        also collapse /backtest and /backtest-logic into one rule."""
+        self._session(monkeypatch, staff=False)
+        assert anon.get("/logicXYZ").status_code == 404
+
+    def test_staff_nav_links_are_hidden_from_subscribers(self, anon, monkeypatch):
+        """The end-to-end check on request.state.is_staff: a subscriber must not
+        be offered links that would only 403, so this asserts on the rendered
+        page rather than on the flag in isolation."""
+        self._session(monkeypatch, staff=False)
+        body = anon.get("/watchlist").text
+        assert 'href="/backtest"' not in body
+        assert 'href="/logic"' not in body
+
+        self._session(monkeypatch, staff=True)
+        body = anon.get("/watchlist").text
+        assert 'href="/backtest"' in body
+        assert 'href="/logic"' in body
+
+
 class TestSsoSoftDependency:
     def test_missing_module_yields_no_session(self, monkeypatch):
         """security.py must import and work in a checkout without wisepub_sso."""

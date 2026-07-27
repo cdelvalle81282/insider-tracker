@@ -227,3 +227,77 @@ class TestInvalidateQueryCache:
 
         # Must not propagate
         cache.invalidate_query_cache()
+
+
+# ---------------------------------------------------------------------------
+# cache_get_single_flight
+# ---------------------------------------------------------------------------
+
+
+class TestSingleFlight:
+    """Staleness is measured against one global sentinel the ingest bumps, so
+    every cached entry expires at the same instant. Without single-flighting,
+    every request in flight at that moment runs the same expensive query against
+    the same pool."""
+
+    def _store(self, mock_client, mtime, value):
+        mock_client.get.return_value = cache._serialize((mtime, value))
+
+    def test_fresh_entry_is_returned_without_taking_a_lock(self, mock_client, monkeypatch):
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 100.0)
+        self._store(mock_client, 200.0, "fresh")
+
+        assert cache.cache_get_single_flight("it:query:x") == "fresh"
+        mock_client.set.assert_not_called()
+
+    def test_winner_is_told_to_recompute(self, mock_client, monkeypatch):
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 300.0)
+        self._store(mock_client, 200.0, "stale")
+        mock_client.set.return_value = True  # won SET NX
+
+        assert cache.cache_get_single_flight("it:query:x") is None
+
+    def test_loser_is_served_the_previous_value(self, mock_client, monkeypatch):
+        """The whole point: one caller hits the DB, everyone else gets served."""
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 300.0)
+        self._store(mock_client, 200.0, "stale")
+        mock_client.set.return_value = None  # lost SET NX
+
+        assert cache.cache_get_single_flight("it:query:x") == "stale"
+
+    def test_cold_key_computes(self, mock_client, monkeypatch):
+        """No previous value exists, so there is nothing to serve and every
+        caller must compute. Not a gap in the design."""
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 300.0)
+        mock_client.get.return_value = None
+
+        assert cache.cache_get_single_flight("it:query:x") is None
+
+    def test_redis_error_falls_through_to_compute(self, mock_client, monkeypatch):
+        """Redis is a performance dependency, never an availability one."""
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 300.0)
+        mock_client.get.side_effect = redis.RedisError("down")
+
+        assert cache.cache_get_single_flight("it:query:x") is None
+
+    def test_lock_failure_fails_open(self, mock_client, monkeypatch):
+        """If the lock cannot be taken there is no cache to stampede anyway, so
+        the caller proceeds rather than serving something it cannot verify."""
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 300.0)
+        self._store(mock_client, 200.0, "stale")
+        mock_client.set.side_effect = redis.RedisError("down")
+
+        assert cache.cache_get_single_flight("it:query:x") is None
+
+    def test_lock_is_scoped_to_the_key_and_expires(self, mock_client, monkeypatch):
+        """A stuck lock must not freeze a key on stale data forever."""
+        monkeypatch.setattr(cache, "_sentinel_mtime", lambda: 300.0)
+        self._store(mock_client, 200.0, "stale")
+        mock_client.set.return_value = True
+
+        cache.cache_get_single_flight("it:query:abc", lock_ttl=15)
+
+        args, kwargs = mock_client.set.call_args
+        assert args[0] == b"it:refresh:it:query:abc"
+        assert kwargs["nx"] is True
+        assert kwargs["ex"] == 15

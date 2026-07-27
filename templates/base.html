@@ -436,9 +436,16 @@
         <a href="/"          class="nav-link {% block nav_dashboard %}{% endblock %}">Dashboard</a>
         <a href="/watchlist" class="nav-link {% block nav_watchlist %}{% endblock %}">Watchlist</a>
         <a href="/congress"  class="nav-link {% block nav_congress %}{% endblock %}">Congress</a>
+        {# Staff-only reads (security.STAFF_ONLY_PATHS). A subscriber following
+           these would just collect a 403, so do not offer them. An unset
+           request.state.is_staff renders falsy, which hides them. #}
+        {% if request.state.is_staff %}
         <a href="/backtest"  class="nav-link {% block nav_backtest %}{% endblock %}">Backtest</a>
+        {% endif %}
         <a href="/leaderboard" class="nav-link {% block nav_leaderboard %}{% endblock %}">Leaderboard</a>
+        {% if request.state.is_staff %}
         <a href="/performance" class="nav-link {% block nav_performance %}{% endblock %}">Performance</a>
+        {% endif %}
         <a href="/guide" class="nav-link {% block nav_guide %}{% endblock %}">Guide</a>
       </div>
 
@@ -448,7 +455,9 @@
           <span style="font-size:.72rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;">Loading</span>
         </div>
 
-        <!-- Gear menu (ops pages) -->
+        <!-- Gear menu (ops pages). Every entry is staff-only, so the whole
+             control is hidden from subscribers rather than emptied. -->
+        {% if request.state.is_staff %}
         <div style="position:relative;" class="gear-menu">
           <button onclick="document.querySelector('.gear-menu').classList.toggle('open')"
                   style="width:30px;height:30px;border-radius:7px;border:1px solid var(--border);
@@ -470,6 +479,7 @@
             <a href="/backtest-logic" class="nav-link {% block nav_backtest_logic %}{% endblock %}" style="display:block;padding:7px 12px;border-radius:5px;">Backtest Logic</a>
           </div>
         </div>
+        {% endif %}
         <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode"
                 style="width:30px;height:30px;border-radius:7px;border:1px solid var(--border);
                        background:var(--bg-surface);color:var(--text-2);cursor:pointer;

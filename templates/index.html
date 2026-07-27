@@ -256,7 +256,11 @@
   </div>
   {% endif %}
 
+  {# /export.csv is staff-only (security.STAFF_ONLY_PATHS): it hands over the
+     whole filing set in one request. Hidden rather than left to 403. #}
+  {% if request.state.is_staff %}
   <button type="button" onclick="exportCSV()" class="btn-ghost">Export CSV ↓</button>
+  {% endif %}
 
 </form>
 

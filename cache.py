@@ -68,8 +68,8 @@ def _deserialize(raw: bytes):
     return pickle.loads(blob)
 
 
-def cache_get(key: str):
-    """Return cached value, or None on miss, stale entry, or Redis error."""
+def _read(key: str):
+    """Return (stored_mtime, value), or None on miss, Redis error, or bad blob."""
     try:
         raw = _client().get(key)
     except redis.RedisError as exc:
@@ -78,13 +78,66 @@ def cache_get(key: str):
     if raw is None:
         return None
     try:
-        stored_mtime, value = _deserialize(raw)
+        return _deserialize(raw)
     except Exception as exc:
         logger.debug("Redis deserialize failed for key %r: %s", key, exc)
         return None
+
+
+def cache_get(key: str):
+    """Return cached value, or None on miss, stale entry, or Redis error."""
+    entry = _read(key)
+    if entry is None:
+        return None
+    stored_mtime, value = entry
     if stored_mtime < _sentinel_mtime():
         return None  # stale since last ingest
     return value
+
+
+def cache_get_single_flight(key: str, lock_ttl: int = 15):
+    """cache_get, but only ONE caller is sent to the database on a stale entry.
+
+    Every entry goes stale at the same instant, because staleness is measured
+    against one global sentinel mtime that the ingest bumps. With a handful of
+    editorial users that is invisible. With a few hundred subscribers it is a
+    thundering herd: every in-flight request misses together and every one of
+    them runs the same expensive query against the same connection pool.
+
+    So the first caller to arrive after an ingest claims a short Redis lock and
+    recomputes (returns None, meaning "you do the work"); everyone else is handed
+    the previous value until that finishes. The cost is that a page can show
+    pre-ingest data for a few seconds after the ingest, which is a fair trade for
+    a tool whose data arrives in daily batches anyway.
+
+    A cold key has no previous value to serve, so all callers compute. That is
+    unavoidable rather than a gap: there is nothing to serve.
+    """
+    entry = _read(key)
+    if entry is None:
+        return None  # cold: nothing to serve, everyone computes
+    stored_mtime, value = entry
+    if stored_mtime >= _sentinel_mtime():
+        return value  # fresh
+    if _claim_refresh(key, lock_ttl):
+        return None  # we won the race; recompute and cache_set
+    return value  # someone else is recomputing; serve the previous value
+
+
+def _claim_refresh(key: str, ttl_seconds: int) -> bool:
+    """True when this caller should perform the refresh for `key`.
+
+    Fails OPEN, like acquire_cooldown: if Redis is unreachable there is no cache
+    to stampede in the first place, and every request has to hit the DB anyway.
+    """
+    try:
+        acquired = _client().set(
+            f"it:refresh:{key}".encode(), b"1", nx=True, ex=ttl_seconds
+        )
+    except redis.RedisError as exc:
+        logger.debug("Redis _claim_refresh %r failed, proceeding: %s", key, exc)
+        return True
+    return bool(acquired)
 
 
 def cache_set(key: str, pre_mtime: float, value, ttl: int = 86400) -> None:

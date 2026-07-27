@@ -67,7 +67,33 @@ templates.env.filters["fmt_value"] = queries._fmt_value
 
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _CIK_RE = re.compile(r"^\d{1,10}$")
-limiter = Limiter(key_func=get_remote_address)
+
+
+def _rate_limit_key(request: Request) -> str:
+    """Rate-limit per subscriber where we know who they are, per IP otherwise.
+
+    get_remote_address alone buckets by IP, so a whole office behind one NAT
+    would share a single allowance while a subscriber on a phone gets a fresh
+    one every time their address changes. The SSO session gives a stable
+    identity for exactly the population this needs to be fair to.
+
+    Reads the email AuthMiddleware already resolved rather than re-verifying the
+    cookie. getattr, because the exempt paths (/healthz, /webhook/alert) skip
+    that middleware and so never populate it.
+    """
+    email = getattr(request.state, "subscriber_email", None)
+    if email:
+        return f"sub:{email}"
+    return get_remote_address(request)
+
+
+# Storage is Redis, not the slowapi default of in-process memory: the service
+# runs multiple uvicorn workers, so an in-memory counter means each worker
+# enforces its own copy of every limit and the real ceiling is silently
+# (limit x workers). It also resets on every deploy. db=4 keeps the limiter
+# clear of the cache on db=3, whose invalidation helpers scan by key prefix.
+_LIMITER_STORAGE = os.getenv("RATE_LIMIT_STORAGE_URI", "redis://localhost:6379/4")
+limiter = Limiter(key_func=_rate_limit_key, storage_uri=_LIMITER_STORAGE)
 
 INGEST_SENTINEL = Path(__file__).parent / "data" / ".last_ingest"
 
@@ -545,7 +571,7 @@ async def index(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    cached_result = cache_module.cache_get(_query_cache_key(filters))
+    cached_result = cache_module.cache_get_single_flight(_query_cache_key(filters))
     cached_sectors = _sentinel_get(_sectors_cache, "sectors")
 
     # Acquire a DB connection only when something is missing from cache.
@@ -722,7 +748,7 @@ async def htmx_filings(
         buys_page=buys_page, sells_page=sells_page,
     )
 
-    cached_result = cache_module.cache_get(_query_cache_key(filters))
+    cached_result = cache_module.cache_get_single_flight(_query_cache_key(filters))
 
     need_db = (cached_result is None) or summary_mode
 

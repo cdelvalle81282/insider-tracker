@@ -9,13 +9,21 @@ the whole dashboard plus every mutating endpoint.
 Two principals reach the app:
 
   staff       HTTP Basic Auth, or a Wisepub SSO session with staff=True.
-  subscriber  A valid Wisepub SSO session with staff=False. Read-only.
+  subscriber  A valid Wisepub SSO session with staff=False.
 
 That split matters because the dashboard is embedded in a cross-site iframe on
 vip.optionpit.com and subscribers arrive through /sso with no Basic Auth
 credentials at all. Authenticating them is not the same as authorizing them:
 CLAUDE.md is explicit that SSO must not confer app-level authorization, so the
 mutating endpoints require staff specifically.
+
+Authorization is enforced in two places, and they answer different questions:
+
+  verify_mutation   may this principal WRITE? Every POST, staff only by default.
+  STAFF_ONLY_PATHS  may this principal READ this page? Settings, ops, research.
+
+A subscriber is therefore not simply "read-only": they can read the editorial
+content they pay for and not the settings or research behind it.
 
 Design notes worth keeping:
 
@@ -70,6 +78,29 @@ EXEMPT_PATHS = frozenset({
 # Mutating requests that skip the CSRF and staff checks. /webhook/alert is called
 # by Healthchecks/BetterStack, which cannot carry a CSRF token.
 CSRF_EXEMPT_PATHS = frozenset({"/webhook/alert"})
+
+# Pages a subscriber may authenticate for but must not read. Settings and
+# operational history, and the research pages that show how the conviction model
+# was calibrated. /export.csv is here because it hands over the whole filing set
+# in one request, which is the bulk-extract version of the same problem.
+#
+# Exact match, for the same reason EXEMPT_PATHS is exact: a startswith check
+# would make "/logic" cover "/logicXYZ", and it would also wrongly collapse
+# "/backtest" and "/backtest-logic" into one rule. The mutating counterparts
+# (/logic/save, /performance/add, ...) are already staff-only through
+# verify_mutation, so they do not need listing here.
+#
+# Every /htmx/* fragment backs a subscriber-visible page (audited 2026-07-27), so
+# none belong in this set. If a future staff page gets an HTMX fragment, the
+# fragment path has to be added here too or it stays readable on its own.
+STAFF_ONLY_PATHS = frozenset({
+    "/logic",
+    "/run-log",
+    "/backtest",
+    "/backtest-logic",
+    "/performance",
+    "/export.csv",
+})
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
@@ -387,10 +418,31 @@ class AuthMiddleware:
                 header = value.decode("latin-1")
                 break
 
-        if check_basic_auth(header) or sso_session(scope) is not None:
-            return await self.app(scope, receive, send)
+        # Mirrors is_staff(), which cannot be reused directly here because it
+        # takes a Request and this middleware is pure ASGI.
+        basic_ok = check_basic_auth(header)
+        session = sso_session(scope)
+        if not basic_ok and session is None:
+            return await _send_plain(
+                send, 401, b"Authentication required",
+                [(b"www-authenticate", b'Basic realm="Insider Scanner"')],
+            )
 
-        return await _send_plain(
-            send, 401, b"Authentication required",
-            [(b"www-authenticate", b'Basic realm="Insider Scanner"')],
-        )
+        staff = basic_ok or bool(session and session.get("staff"))
+
+        # Published on the scope so templates can branch on it via
+        # request.state.is_staff, and so the rate limiter can key on the
+        # subscriber, without anyone re-deriving the identity. Verifying the SSO
+        # cookie means an HMAC check, and doing it once per request rather than
+        # once per consumer keeps that off the hot path. Request.state reads
+        # scope["state"], and setdefault matches what Starlette itself does when
+        # the server did not supply one.
+        state = scope.setdefault("state", {})
+        state["is_staff"] = staff
+        state["subscriber_email"] = (session or {}).get("email")
+
+        if path in STAFF_ONLY_PATHS and not staff:
+            _LOG.warning("Non-staff read attempt on %s", path)
+            return await _send_plain(send, 403, b"Staff credentials required")
+
+        return await self.app(scope, receive, send)

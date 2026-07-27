@@ -6,11 +6,22 @@ After=network.target
 Type=simple
 User=deploy
 WorkingDirectory=/home/deploy/insider-tracker
-ExecStart=/home/deploy/insider-tracker/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8002 --workers 2
+ExecStart=/home/deploy/insider-tracker/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8002 --workers 4
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/home/deploy/insider-tracker/.env
+
+# MemoryMax is a hard kill, not a throttle, so it moves with --workers or the
+# next worker added is the one that gets OOM-killed under load. Measured at
+# roughly 65 MB per worker, so 4 workers is about 260 MB and 1G leaves room for
+# the Redis client buffers and a traffic spike.
+#
+# This box also hosts 8+ other Python apps and has had uvicorn workers killed by
+# a co-located cron that ballooned to 3.6 GB (see private/gotchas.md), so the
+# limit is about being a good neighbour as much as bounding this app.
+MemoryMax=1G
+MemoryHigh=768M
 
 [Install]
 WantedBy=multi-user.target
