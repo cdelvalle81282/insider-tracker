@@ -845,6 +845,19 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             except Exception as e:
                 click.echo(f"Health check error (non-fatal): {e}")
 
+        # Expire subscriber usage data. Attached to the nightly run rather than
+        # given its own systemd unit, so there is one less thing to forget about
+        # and the retention promise cannot silently stop being kept.
+        if since_last_run:
+            try:
+                import usage
+                n_pruned = usage.prune(conn, usage.RETENTION_DAYS)
+                conn.commit()
+                if n_pruned:
+                    click.echo(f"Pruned {n_pruned} usage event(s) older than {usage.RETENTION_DAYS}d")
+            except Exception as e:
+                click.echo(f"Usage prune error (non-fatal): {e}")
+
         # Fire Slack alerts for newly ingested rows (real-time runs only)
         if not suppress_alerts:
             try:

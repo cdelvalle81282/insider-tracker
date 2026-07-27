@@ -52,6 +52,8 @@ import time
 
 from fastapi import HTTPException, Request
 
+import usage
+
 # Soft dependency. The Wisepub SSO module may not be present in every checkout,
 # and this module must import cleanly without it: Basic Auth alone is then the
 # only way in, which is the correct degraded behaviour rather than a crash.
@@ -115,6 +117,7 @@ STAFF_ONLY_PATHS = frozenset({
     "/backtest-logic",
     "/performance",
     "/export.csv",
+    "/admin/usage",
 })
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
@@ -402,6 +405,45 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         return await self.app(scope, receive, send_with_headers)
+
+
+class UsageMiddleware:
+    """Record page views for the staff usage dashboard.
+
+    Registered so that it sits INSIDE AuthMiddleware (added before it, since
+    Starlette applies user middleware in reverse registration order), because it
+    reads the identity that AuthMiddleware resolves onto the scope. An
+    unauthenticated request never reaches this.
+
+    Only whole-page GETs are recorded. The /htmx/* fragments are skipped
+    deliberately: one dashboard view fires five of them, so counting them would
+    inflate every figure by a factor that varies per page. Routes record their
+    own richer events (a search term, a watchlist add) by calling usage.record
+    directly.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "GET":
+            return await self.app(scope, receive, send)
+
+        path = scope.get("path", "")
+        if (
+            path.startswith("/static/")
+            or path.startswith("/htmx/")
+            or path in EXEMPT_PATHS
+        ):
+            return await self.app(scope, receive, send)
+
+        state = scope.get("state") or {}
+        email = state.get("subscriber_email") or (
+            usage.STAFF_EMAIL if state.get("is_staff") else None
+        )
+        if email:
+            usage.record(email, "page_view", path)
+        return await self.app(scope, receive, send)
 
 
 class AuthMiddleware:

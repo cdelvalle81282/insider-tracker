@@ -39,6 +39,7 @@ import config as cfg
 import polygon_client
 import queries
 import security
+import usage
 import wisepub_sso
 from backtest import (
     PRICE_WARMUP_DAYS,
@@ -212,9 +213,52 @@ def _filters_dict(
     }
 
 
+async def _usage_flusher():
+    """Periodically write buffered usage events.
+
+    A background task rather than an inline write on each request: see usage.py
+    on why analytics must never compete with page rendering for a pool
+    connection. The DB call goes through to_thread because it is blocking and
+    this runs on the event loop.
+    """
+    while True:
+        try:
+            await asyncio.sleep(usage.FLUSH_INTERVAL_SECONDS)
+            if usage.pending():
+                await asyncio.to_thread(_flush_usage_sync)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Never let an analytics failure kill the loop; usage.flush already
+            # re-queues its batch and logs.
+            logging.getLogger("usage").exception("usage flusher iteration failed")
+
+
+def _flush_usage_sync() -> int:
+    db = get_db()
+    try:
+        return usage.flush(db)
+    finally:
+        put_db(db)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield  # nothing to set up/tear down at app level
+    task = asyncio.create_task(_usage_flusher())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        # Final flush, so a graceful restart does not discard the last interval.
+        if usage.pending():
+            try:
+                await asyncio.to_thread(_flush_usage_sync)
+            except Exception:
+                logging.getLogger("usage").warning("final usage flush failed")
 
 
 # verify_mutation is registered on the app, not per route, so any POST added
@@ -226,6 +270,10 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# Added FIRST, so it ends up INNERMOST and runs after AuthMiddleware has put the
+# identity on the scope. Reversing these two would record every page view as
+# anonymous.
+app.add_middleware(security.UsageMiddleware)
 # Authentication wraps everything below it. Exemptions live in
 # security.EXEMPT_PATHS and are kept in lockstep with the nginx config.
 app.add_middleware(security.AuthMiddleware)
@@ -450,6 +498,19 @@ def require_watch_owner(request: Request) -> str:
         logging.getLogger("app").warning("Watchlist write from a session with no email")
         raise HTTPException(status_code=403, detail="No subscriber identity")
     return owner
+
+
+def _usage_identity(request: Request) -> str:
+    """Who to attribute a usage event to.
+
+    Staff collapse to a single literal rather than being tracked individually:
+    the point of this table is subscriber behaviour, and editorial traffic would
+    otherwise dominate every count during the working day.
+    """
+    email = getattr(request.state, "subscriber_email", None)
+    if email:
+        return email
+    return usage.STAFF_EMAIL
 
 
 def _watch_sets(db: psycopg.Connection, owner: str) -> tuple[set[str], set[str]]:
@@ -747,6 +808,13 @@ async def index(
         daily_summary = []
         all_sectors = cached_sectors
 
+    if search:
+        # The demand signal: what subscribers look for. Recorded here rather
+        # than in UsageMiddleware so it captures the term, and so it is not
+        # counted once per HTMX fragment.
+        usage.record(_usage_identity(request), "search", request.url.path,
+                     {"q": search[:80]})
+
     # Watch flags are applied here, after the cache read, never inside the
     # cached payload: the rows are shared by every viewer and only this flag
     # differs per person.
@@ -927,6 +995,13 @@ async def htmx_filings(
     else:
         buys, sells, buy_count, sell_count = cached_result
         daily_summary = []
+
+    if search:
+        # The demand signal: what subscribers look for. Recorded here rather
+        # than in UsageMiddleware so it captures the term, and so it is not
+        # counted once per HTMX fragment.
+        usage.record(_usage_identity(request), "search", request.url.path,
+                     {"q": search[:80]})
 
     # Watch flags are applied here, after the cache read, never inside the
     # cached payload: the rows are shared by every viewer and only this flag
@@ -1794,6 +1869,8 @@ async def watchlist_add(
             detail=f"Watchlist is limited to {queries.SUBSCRIBER_WATCH_LIMIT} entries",
         )
     queries.add_watch(db, watch_type, value, label or value, owner=owner)
+    usage.record(_usage_identity(request), "watch_add", "/watchlist/add",
+                 {"type": watch_type, "value": value[:32]})
     cache_module.invalidate_owner_cache(owner)
     safe_next = next if next in ("/watchlist", "/congress") else "/watchlist"
     return RedirectResponse(url=safe_next, status_code=303)
@@ -2120,6 +2197,29 @@ async def run_log(
     log = queries.get_run_log(db)
     return templates.TemplateResponse(request, "run_log.html", {
         "log": log,
+    })
+
+
+@app.get("/admin/usage", response_class=HTMLResponse)
+@limiter.limit("30/minute")
+async def admin_usage(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """Subscriber usage. Staff-only via security.STAFF_ONLY_PATHS.
+
+    Flushes first, so the page reflects this minute rather than the last time the
+    background task happened to run. Cheap: the buffer is normally near-empty,
+    and this route is not on any hot path.
+    """
+    if usage.pending():
+        await asyncio.to_thread(usage.flush, db)
+    summary = await asyncio.to_thread(queries.usage_summary, db, days)
+    return templates.TemplateResponse(request, "usage.html", {
+        "summary": summary,
+        "days": days,
+        "retention_days": usage.RETENTION_DAYS,
     })
 
 

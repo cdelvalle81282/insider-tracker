@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Subscriber Usage{% endblock %}
+{% block nav_usage %}active{% endblock %}
+
+{% block content %}
+
+<div class="mb-5">
+  <h1 class="text-xl font-bold" style="color:var(--text-1);">Subscriber Usage</h1>
+  <p style="color:var(--text-2);font-size:.90rem;margin-top:4px;">
+    Last {{ days }} days. Editorial traffic is excluded from every figure below.
+    Events are kept for {{ retention_days }} days, then deleted.
+  </p>
+  <div class="flex gap-2 mt-3">
+    {% for d in [7, 30, 90] %}
+    <a href="/admin/usage?days={{ d }}" class="btn-ghost"
+       style="{% if days == d %}color:var(--sky);border-color:var(--sky);{% endif %}">{{ d }}d</a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="flex flex-wrap gap-3 mb-6">
+  <div class="surface" style="padding:16px 20px;min-width:170px;">
+    <div style="color:var(--text-3);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;">Active subscribers</div>
+    <div style="color:var(--text-1);font-size:1.6rem;font-weight:700;">{{ summary.active_subscribers }}</div>
+  </div>
+  <div class="surface" style="padding:16px 20px;min-width:170px;">
+    <div style="color:var(--text-3);font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;">Events recorded</div>
+    <div style="color:var(--text-1);font-size:1.6rem;font-weight:700;">{{ summary.events }}</div>
+  </div>
+</div>
+
+{% if not summary.events %}
+<div class="surface" style="padding:20px;">
+  <p style="color:var(--text-2);">
+    Nothing recorded yet. Events start appearing once subscribers reach the site
+    through Wisepub SSO, and are written in batches every 30 seconds.
+  </p>
+</div>
+{% else %}
+
+<div class="surface mb-6" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:12px;">Most-used pages</h2>
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead><tr>
+        <th style="text-align:left;">Path</th>
+        <th style="text-align:right;">Views</th>
+        <th style="text-align:right;">People</th>
+      </tr></thead>
+      <tbody>
+        {% for row in summary.by_path %}
+        <tr>
+          <td style="color:var(--text-1);">{{ row.path }}</td>
+          <td style="text-align:right;color:var(--text-2);">{{ row.hits }}</td>
+          <td style="text-align:right;color:var(--text-2);">{{ row.people }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="flex flex-wrap gap-4 mb-6">
+  <div class="surface" style="padding:20px;flex:1;min-width:280px;">
+    <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">Top searches</h2>
+    <p style="color:var(--text-3);font-size:.78rem;margin-bottom:12px;">
+      What subscribers look for. Terms that return little are the gap worth filling.
+    </p>
+    {% if summary.searches %}
+    <div class="tbl-wrap">
+      <table class="w-full">
+        <tbody>
+          {% for row in summary.searches %}
+          <tr>
+            <td style="color:var(--text-1);">{{ row.term }}</td>
+            <td style="text-align:right;color:var(--text-2);">{{ row.n }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-3);font-size:.85rem;">No searches yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="surface" style="padding:20px;flex:1;min-width:280px;">
+    <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">Most-watchlisted</h2>
+    <p style="color:var(--text-3);font-size:.78rem;margin-bottom:12px;">
+      What subscribers pin. A strong candidate list for editorial coverage.
+    </p>
+    {% if summary.watch_adds %}
+    <div class="tbl-wrap">
+      <table class="w-full">
+        <tbody>
+          {% for row in summary.watch_adds %}
+          <tr>
+            <td style="color:var(--text-1);">{{ row.value }}</td>
+            <td style="text-align:right;color:var(--text-2);">{{ row.n }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p style="color:var(--text-3);font-size:.85rem;">No watchlist activity yet.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="surface" style="padding:20px;">
+  <h2 style="color:var(--text-1);font-weight:600;margin-bottom:4px;">By subscriber</h2>
+  <p style="color:var(--text-3);font-size:.78rem;margin-bottom:12px;">
+    Most recently seen first. A paying subscriber with no rows here has never
+    opened the app, which is worth knowing before renewal.
+  </p>
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead><tr>
+        <th style="text-align:left;">Subscriber</th>
+        <th style="text-align:right;">Page views</th>
+        <th style="text-align:right;">Last seen</th>
+      </tr></thead>
+      <tbody>
+        {% for row in summary.by_person %}
+        <tr>
+          <td style="color:var(--text-1);">{{ row.email }}</td>
+          <td style="text-align:right;color:var(--text-2);">{{ row.views }}</td>
+          <td style="text-align:right;color:var(--text-2);">{{ row.last_seen.strftime('%Y-%m-%d %H:%M') if row.last_seen else '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endif %}
+
+{% endblock %}

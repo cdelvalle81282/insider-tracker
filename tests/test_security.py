@@ -314,7 +314,7 @@ class TestStaffOnlyReads:
         """Widening this set is a deliberate act, not a drive-by edit."""
         assert security.STAFF_ONLY_PATHS == frozenset({
             "/logic", "/run-log", "/backtest", "/backtest-logic",
-            "/performance", "/export.csv",
+            "/performance", "/export.csv", "/admin/usage",
         })
 
     def test_leaderboard_stays_subscriber_visible(self):

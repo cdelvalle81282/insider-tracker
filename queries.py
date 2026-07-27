@@ -2225,3 +2225,78 @@ def get_congress_summary(conn: psycopg.Connection, days: int = 30, source: str |
         "top_tickers": [{"ticker": r["ticker"], "count": r["cnt"]} for r in top_tickers],
         "top_politicians": [{"name": r["name"], "count": r["cnt"]} for r in top_politicians],
     }
+
+
+# ---------------------------------------------------------------------------
+# Usage analytics (staff-only reporting)
+# ---------------------------------------------------------------------------
+
+def usage_summary(conn: psycopg.Connection, days: int = 30) -> dict:
+    """Subscriber activity for the staff dashboard.
+
+    Every query excludes the 'staff' sentinel: editorial traffic would otherwise
+    dominate the counts and hide the thing being measured.
+    """
+    window = "ts >= now() - make_interval(days => %s) AND email <> 'staff'"
+
+    active = conn.execute(
+        f"SELECT count(DISTINCT email) AS n FROM usage_event WHERE {window}",
+        [days],
+    ).fetchone()["n"]
+
+    events = conn.execute(
+        f"SELECT count(*) AS n FROM usage_event WHERE {window}", [days]
+    ).fetchone()["n"]
+
+    by_path = conn.execute(
+        f"""SELECT path, count(*) AS hits, count(DISTINCT email) AS people
+            FROM usage_event
+            WHERE {window} AND kind = 'page_view'
+            GROUP BY path ORDER BY hits DESC LIMIT 20""",
+        [days],
+    ).fetchall()
+
+    by_person = conn.execute(
+        f"""SELECT email,
+                   count(*) FILTER (WHERE kind = 'page_view') AS views,
+                   max(ts) AS last_seen
+            FROM usage_event
+            WHERE {window}
+            GROUP BY email ORDER BY last_seen DESC LIMIT 50""",
+        [days],
+    ).fetchall()
+
+    searches = conn.execute(
+        f"""SELECT meta->>'q' AS term, count(*) AS n
+            FROM usage_event
+            WHERE {window} AND kind = 'search' AND meta->>'q' <> ''
+            GROUP BY term ORDER BY n DESC LIMIT 25""",
+        [days],
+    ).fetchall()
+
+    watch_adds = conn.execute(
+        f"""SELECT meta->>'value' AS value, count(*) AS n
+            FROM usage_event
+            WHERE {window} AND kind = 'watch_add'
+            GROUP BY value ORDER BY n DESC LIMIT 25""",
+        [days],
+    ).fetchall()
+
+    # Daily active subscribers, for the shape of the trend rather than a number.
+    daily = conn.execute(
+        f"""SELECT ts::date AS day, count(DISTINCT email) AS people
+            FROM usage_event
+            WHERE {window}
+            GROUP BY day ORDER BY day""",
+        [days],
+    ).fetchall()
+
+    return {
+        "active_subscribers": active,
+        "events": events,
+        "by_path": [dict(r) for r in by_path],
+        "by_person": [dict(r) for r in by_person],
+        "searches": [dict(r) for r in searches],
+        "watch_adds": [dict(r) for r in watch_adds],
+        "daily": [dict(r) for r in daily],
+    }
