@@ -138,10 +138,14 @@ on Wisepub points here; outbound URL `https://vip.optionpit.com/sso-redirect/5`.
   service runs `--workers 2`, and an in-process guard would let a token be spent
   once per worker. The JWT has no `exp` claim, so `iat` freshness (120s) plus
   one-time use is the whole replay defense.
-- This does **not** give SSO users app-level authorization — `/logic/save`,
-  `/watchlist/*` etc. are still unauthenticated behind the front door (see "Future
-  candidates"), and now the front door has a second key. Worth real app-level auth
-  before turning `Show in Menu` on for that record.
+- SSO users get in, but they are **not** staff. `security.verify_mutation` is
+  registered as an app-level dependency, so every POST requires a valid CSRF token
+  *and* `is_staff()`, which an SSO session only satisfies when the token carried
+  `allow_staff`. Shipped 2026-07-27; this was the stated precondition for turning
+  `Show in Menu` on for that record.
+- **Read authorization is still all-or-nothing.** Any authenticated user, staff or
+  subscriber, can GET every page including `/logic`, `/run-log`, `/backtest` and
+  `/export.csv`. See "Subscriber launch" below before exposing this to subscribers.
 
 ## Config / Logic tab
 
@@ -183,10 +187,48 @@ Every new filter param must appear in ALL of these or it will be silently droppe
 - User-Agent: `"Option Pit Research charlie@optionpit.com"` (required — SEC blocks missing/generic UAs)
 - Rate limit: 8 req/sec (SEC cap is 10)
 
+## Subscriber launch (audit 2026-07-27, not yet built)
+
+State of play before opening this app to paying subscribers via Wisepub SSO.
+
+**Writes are already safe.** `security.verify_mutation` is an app-level dependency,
+so every POST requires CSRF plus `is_staff()`. A subscriber cannot save config,
+touch the watchlist, or fire a test alert, at the app layer *and* at nginx.
+
+**Reads are not gated at all.** Any authenticated user can GET `/logic` (every
+threshold and conviction weight), `/run-log` (ingest operations), `/backtest` and
+`/backtest-logic` (unpublished research), `/performance`, and `/export.csv` (bulk
+extract of the whole filing set, capped only at 3/min per IP). These need a staff
+read gate before launch.
+
+**The watchlist is global, and that is the real blocker.** One table, `UNIQUE (type,
+value)`, no owner column. It also drives Slack alerts and the auto-add in
+`load_insider_profiles.py`. Giving subscribers write access to it as-is would let
+any subscriber edit and delete every other subscriber's entries and spam editorial
+Slack. Per-subscriber lists need an `owner` column (NULL meaning the house list),
+with the house list exposed read-only so subscribers can see staff picks.
+
+- **`wp_sso` sessions carry `email`**, so a stable per-subscriber identity already
+  exists to key rows and analytics on. No new login system is needed.
+- **Cache keys must include the owner once watchlists are per-user.**
+  `it:query:watchlist-activity:{date}` is global today, and `_enrich` bakes
+  `watched` flags into cached HTML. Left alone, subscriber A would be served
+  subscriber B's watchlist out of Redis.
+- **Rate limits are per worker, not global.** `Limiter(key_func=get_remote_address)`
+  defaults to in-memory storage, so with `--workers 2` every stated limit is really
+  double, and limits reset on restart. Point slowapi at the Redis on db=3.
+- **No usage analytics exist.** Nothing records who viewed what.
+
+Capacity is not a concern: the droplet is 4 vCPU / 8 GB (the `1vcpu-1gb` hostname
+is stale and misleading), load ~0.3, DB 656 MB, service at 128 MB of a 512 MB cap,
+9 of 100 Postgres connections used, and the expensive queries are already Redis
+cached. Raise `--workers` and `MemoryMax` together if concurrency climbs.
+
 ## Future candidates
 
 - **Filter out private-fund / tickerless filers (editorial scope)** — Insider activity on private, non-tradeable vehicles (in-house general-account trusts, private credit funds) is noise for this tool: you can't act on it. Real examples: Manulife's insurance subs (Manufacturers Life Insurance Co / Manulife (International)/(Singapore) / Manulife Reinsurance) filing Form 4 as 10%+ owners of "John Hancock GA Mortgage Trust" / "John Hancock GA Senior Loan Trust"; "Diameter Dynamic Credit Fund". These have `issuer_ticker = NULL` and are *already suppressed from Slack alerts* by the `issuer_ticker IS NOT NULL` guard in the matchers (see `private/gotchas.md`), but they still show up in the dashboard tables/KPIs. Decide the desired scope: (a) an explicit "hide tickerless / private-fund filers" filter on the dashboard, and/or (b) a curated issuer-name denylist, and/or (c) exclude from KPI aggregates. Low priority — the alert layer already keeps them out of Slack. Revisit later.
-- **Auth / CSRF on mutating endpoints** — `/logic/save`, `/watchlist/add`, `/watchlist/remove` have no *application-level* auth. In production this is currently mitigated at the network layer: nginx's `location /` block on the live server already applies whole-site `auth_basic` (excluding only `/healthz`, `/webhook/alert`, `/robots.txt` — see `private/ops.md`), so these routes aren't actually reachable unauthenticated today. Still worth real app-level auth/CSRF before sharing more broadly or changing the nginx front door — don't rely on the network-layer gate as a permanent substitute.
+- **Per-subscriber watchlists (blocks the subscriber launch).** The `watchlist` table is global: `UNIQUE (type, value)` with no owner column, so there is exactly one list shared by everyone. Subscribers currently cannot write to it (all POSTs require staff), which is why nothing is broken today, but "let subscribers build a watchlist" needs an `owner` column plus a house/curated list they can read. See "Subscriber launch".
+- **Read-side staff gating.** `security.verify_mutation` covers writes only. `/logic`, `/run-log`, `/backtest`, `/backtest-logic`, `/performance` and `/export.csv` are readable by any authenticated user, including subscribers. See "Subscriber launch".
 - **Earnings proximity flag** — mark trades within 10 days of earnings (needs earnings calendar source)
 - **Historical baseline signal** — flag when a buy is an outlier vs. this insider's own history
 - **Conviction weight tuning** — calibrate against actual forward returns
