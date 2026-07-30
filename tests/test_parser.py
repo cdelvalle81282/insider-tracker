@@ -46,3 +46,25 @@ class TestCleanCikRejects:
         """ingest_date's per-filing handler catches broad Exception, but keeping
         this a ValueError means callers can be narrower if they want."""
         assert issubclass(parser.Form4ParseError, ValueError)
+
+
+class TestNormalizeDate:
+    """Some filers append a timezone offset to transactionDate, e.g.
+    "2026-04-16-05:00". Postgres' DATE column rejects that outright (22007) --
+    strip it back to the plain ISO date, same fix the SQLite->PG migration
+    script already applied on the historical data (see gotchas.md)."""
+
+    def test_strips_trailing_timezone_offset(self):
+        assert parser._normalize_date("2026-04-16-05:00") == "2026-04-16"
+
+    def test_leaves_plain_iso_date_unchanged(self):
+        assert parser._normalize_date("2026-04-16") == "2026-04-16"
+
+    def test_leaves_none_unchanged(self):
+        assert parser._normalize_date(None) is None
+
+    def test_leaves_non_date_text_unchanged(self):
+        """Anything that doesn't start with YYYY-MM-DD is left alone so a
+        genuinely malformed date still surfaces as an insert failure rather
+        than being silently mangled."""
+        assert parser._normalize_date("garbage") == "garbage"

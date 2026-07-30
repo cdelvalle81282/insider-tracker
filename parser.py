@@ -90,6 +90,20 @@ def _int_flag(el: etree._Element | None, tag: str) -> int:
     return 1 if val and val.upper() in ("1", "TRUE", "YES", "Y") else 0
 
 
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _normalize_date(text: str | None) -> str | None:
+    """Strip a trailing timezone offset some filers append, e.g. "2026-04-16-05:00".
+
+    Postgres' DATE column rejects that outright (22007). Same shape of bug as
+    the SQLite->PG migration hit (see gotchas.md) but never patched on this path.
+    """
+    if text and len(text) > 10 and _ISO_DATE_RE.match(text):
+        return text[:10]
+    return text
+
+
 def correct_price_corruption(
     shares: float | None, price: float | None, ticker: str | None
 ) -> tuple[float | None, float | None]:
@@ -218,7 +232,7 @@ def _build_row(
         "form_type": form_type,
         **issuer,
         **owner,
-        "transaction_date": _text(tx, "transactionDate") or "",
+        "transaction_date": _normalize_date(_text(tx, "transactionDate")) or "",
         "transaction_code": _text(tx.find("transactionCoding"), "transactionCode") or "",
         "equity_swap": _int_flag(tx.find("transactionCoding"), "equitySwapInvolved"),
         "table_type": table_type,
