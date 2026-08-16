@@ -379,6 +379,7 @@ def _match_big_buy(
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
           AND issuer_ticker IS NOT NULL
+          AND is_10b5_1 = 0
         ORDER BY total_value DESC
         """,
         [threshold, since_ts],
@@ -395,7 +396,11 @@ def _match_watchlist_activity(
     """Any buy or sell (no $ threshold) on a watched ticker or insider — watching
     something means the user cares about it regardless of size. Checked before the
     generic thresholds in check_and_send() so a matching trade gets the
-    ⭐ WATCHLIST message instead of (or as well as) BIG BUY / C-SUITE BUY."""
+    ⭐ WATCHLIST message instead of (or as well as) BIG BUY / C-SUITE BUY.
+
+    Still excludes 10b5-1 plan sells/buys — those are pre-scheduled, not a
+    discretionary signal, and every other "notable activity" surface in the app
+    (dashboard default, hero strip, chart overlays) hides them too."""
     if not watched_tickers and not watched_insiders:
         return []
     rows = conn.execute(
@@ -407,6 +412,7 @@ def _match_watchlist_activity(
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
           AND issuer_ticker IS NOT NULL
+          AND is_10b5_1 = 0
           AND (issuer_ticker = ANY(%s) OR insider_cik = ANY(%s))
         ORDER BY total_value DESC NULLS LAST
         """,
@@ -435,6 +441,7 @@ def _match_insider_buy(
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
           AND issuer_ticker IS NOT NULL
+          AND is_10b5_1 = 0
           AND ({kw_clauses})
         ORDER BY total_value DESC
         """,
@@ -467,6 +474,7 @@ def _match_cluster(
           AND joint_filer_of IS NULL
           AND table_type = 'ND'
           AND issuer_ticker IS NOT NULL
+          AND is_10b5_1 = 0
         GROUP BY issuer_cik, issuer_name, issuer_ticker
         HAVING COUNT(DISTINCT insider_cik) >= %s
            AND MAX(ingested_at) >= %s
