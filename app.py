@@ -205,7 +205,7 @@ def _filters_dict(
         "sector": sector or "",
         "watched_only": watched_only,
         "hide_funds": hide_funds,
-        "has_options_only": has_options_only,
+        "has_options_only": "1" if has_options_only else "0",
         "market_cap_tiers": market_cap_tiers or [],
         "hide_entity_filers": hide_entity_filers,
         "buys_page": buys_page,
@@ -684,7 +684,7 @@ async def index(
     sector: str | None = Query(default=None),
     watched_only: str = Query(default="0"),
     hide_funds: str = Query(default="0"),
-    has_options_only: str = Query(default="0"),
+    has_options_only: str = Query(default=None),
     market_cap_tiers: list[str] = Query(default=[]),
     hide_entity_filers: str = Query(default="0"),
     buys_page: int = Query(default=1, ge=1),
@@ -704,7 +704,10 @@ async def index(
     ceo_cfo_only = ceo_cfo == "1"
     only_watched = watched_only == "1"
     effective_hide_funds = hide_funds == "1"
-    effective_has_options_only = has_options_only == "1"
+    effective_has_options_only = (
+        (has_options_only != "0") if has_options_only is not None
+        else fd.get("has_options_only", True)
+    )
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
     effective_hide_entity = hide_entity_filers == "1"
     date_range_arg = (range_start, range_end) if is_range else None
@@ -716,7 +719,7 @@ async def index(
         roles=roles, search=search, ceo_cfo=ceo_cfo,
         sort_by=sort_by, sort_order=sort_order,
         sector=sector, watched_only=watched_only,
-        hide_funds=hide_funds, has_options_only=has_options_only,
+        hide_funds=hide_funds, has_options_only=effective_has_options_only,
         market_cap_tiers=effective_mktcap_tiers,
         hide_entity_filers=hide_entity_filers,
         buys_page=buys_page, sells_page=sells_page,
@@ -880,7 +883,7 @@ async def htmx_filings(
     sector: str | None = Query(default=None),
     watched_only: str = Query(default="0"),
     hide_funds: str = Query(default="0"),
-    has_options_only: str = Query(default="0"),
+    has_options_only: str = Query(default="1"),
     market_cap_tiers: list[str] = Query(default=[]),
     hide_entity_filers: str = Query(default="0"),
     buys_page: int = Query(default=1, ge=1),
@@ -890,7 +893,7 @@ async def htmx_filings(
     effective_hide = hide_10b5_1 != "0"
     effective_hide_swap = hide_equity_swap != "0"
     effective_hide_funds = hide_funds == "1"
-    effective_has_options_only = has_options_only == "1"
+    effective_has_options_only = has_options_only != "0"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
     effective_hide_entity = hide_entity_filers == "1"
     effective_min = min_value
@@ -912,7 +915,7 @@ async def htmx_filings(
         roles=roles, search=search, ceo_cfo=ceo_cfo,
         sort_by=sort_by, sort_order=sort_order,
         sector=sector, watched_only=watched_only,
-        hide_funds=hide_funds, has_options_only=has_options_only,
+        hide_funds=hide_funds, has_options_only=effective_has_options_only,
         market_cap_tiers=effective_mktcap_tiers,
         hide_entity_filers=hide_entity_filers,
         buys_page=buys_page, sells_page=sells_page,
@@ -1260,7 +1263,7 @@ async def export_csv(
     sector: str | None = Query(default=None),
     watched_only: str = Query(default="0"),
     hide_funds: str = Query(default="0"),
-    has_options_only: str = Query(default="0"),
+    has_options_only: str = Query(default="1"),
     market_cap_tiers: list[str] = Query(default=[]),
     hide_entity_filers: str = Query(default="0"),
 ):
@@ -1268,7 +1271,7 @@ async def export_csv(
     effective_hide = hide_10b5_1 != "0"
     effective_hide_swap = hide_equity_swap != "0"
     effective_hide_funds = hide_funds == "1"
-    effective_has_options_only = has_options_only == "1"
+    effective_has_options_only = has_options_only != "0"
     effective_mktcap_tiers = [t for t in market_cap_tiers if t in queries.MARKET_CAP_TIERS]
     effective_hide_entity = hide_entity_filers == "1"
     ceo_cfo_only = ceo_cfo == "1"

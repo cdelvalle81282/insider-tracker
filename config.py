@@ -71,6 +71,7 @@ FILTER_DEFAULTS = {
     "transaction_codes": ["P", "S"],
     "hide_10b5_1": True,
     "hide_equity_swap": True,
+    "has_options_only": True,
     "roles": [],
 }
 

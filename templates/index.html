@@ -144,9 +144,17 @@
         </label>
         <div class="fg-sep"></div>
         <label class="flex items-center gap-1.5 cursor-pointer select-none">
-          <input type="checkbox" name="has_options_only" value="1"
+          {# Plain checkboxes are dropped from hx-include when unchecked (native
+             form-serialization behavior), which would make it impossible to
+             turn this OFF live once it defaults to on. The hidden input always
+             carries an explicit '0'/'1', so unchecking actually reaches the
+             server instead of silently falling back to the default. #}
+          <input type="checkbox" id="chk_has_options_only"
                  {% if filters.get('has_options_only') == '1' %}checked{% endif %}
+                 onchange="document.getElementById('has_options_only').value = this.checked ? '1' : '0';"
                  class="accent-sky-500 w-3 h-3 rounded" />
+          <input type="hidden" name="has_options_only" id="has_options_only"
+                 value="{{ filters.get('has_options_only', '1') }}" />
           <span class="fg-label">Has Options Only</span>
         </label>
         <div class="fg-sep"></div>
