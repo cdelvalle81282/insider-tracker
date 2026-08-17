@@ -48,6 +48,7 @@ from backtest import (
     detect_hhl,
     detect_resistance_break,
 )
+from backtest_insiders import _is_likely_entity
 from config import PAGE_SIZE, save_overrides
 from db import get_db, get_request_db, put_db
 from queries import EnrichContext
@@ -2301,6 +2302,7 @@ async def backtest(request: Request):
                     row[k] = _parse_float(v.strip() if v else "")
                 else:
                     row[k] = v.strip() if v else v
+            row["is_fund"] = _is_likely_entity(row.get("insider_name"))
             rows.append(row)
 
     SIGNALS = (

@@ -176,6 +176,14 @@
     </label>
   </div>
 
+  {# Hide funds #}
+  <div class="fg">
+    <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--text-2);cursor:pointer;">
+      <input type="checkbox" id="f-hidefunds" checked onchange="applyFilters()" style="accent-color:var(--sky);">
+      Hide funds
+    </label>
+  </div>
+
   {# Min return #}
   <div class="fg">
     <span class="fg-label">Min ret</span>
@@ -486,6 +494,7 @@
     const cbOn       = document.getElementById('f-cb').checked;
     const anySignal  = gcOn || rbOn || hhlOn || cbOn;
     const hide10b5   = document.getElementById('f-hide10b5').checked;
+    const hideFunds  = document.getElementById('f-hidefunds').checked;
     const minRet     = parseFloat(document.getElementById('f-minret').value);
     const tickerQ    = (document.getElementById('f-ticker').value || '').toUpperCase().trim();
 
@@ -515,6 +524,9 @@
 
       // Hide 10b5-1
       if (hide10b5 && row.is_10b5_1) { el.style.display = 'none'; return; }
+
+      // Hide funds
+      if (hideFunds && row.is_fund) { el.style.display = 'none'; return; }
 
       // Min return (uses the return for current window)
       const retKey = 'return_' + currentWindow + 'd';
