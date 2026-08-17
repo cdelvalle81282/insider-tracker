@@ -31,7 +31,7 @@
         {% for r in rows %}
         <tr>
           <td class="td">
-            <a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ r.issuer_ticker }}</a>
+            <span style="color:var(--text-3);">$</span><a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">{{ r.issuer_ticker }}</a>
             {% if r.issuer_name %}
             <span style="color:var(--text-3);font-size:.78rem;margin-left:4px;">{{ r.issuer_name }}</span>
             {% endif %}

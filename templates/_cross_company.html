@@ -28,7 +28,7 @@
             <a href="/insider/{{ r.insider_cik }}" class="hover:underline hover:text-sky-400" style="color:var(--text-1);">{{ r.insider_name }}</a>
           </td>
           <td class="td">
-            <a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ r.issuer_ticker or '—' }}</a>
+            {% if r.issuer_ticker %}<span style="color:var(--text-3);">$</span><a href="/chart/{{ r.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">{{ r.issuer_ticker }}</a>{% else %}<span class="ticker-link" style="color:var(--text-3);">—</span>{% endif %}
             <span style="color:var(--text-3);font-size:.8rem;margin-left:4px;">{{ r.issuer_name }}</span>
           </td>
           <td class="td" style="color:var(--text-2);font-size:.85rem;">

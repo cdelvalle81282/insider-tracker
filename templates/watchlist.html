@@ -85,7 +85,7 @@
         {% set is_buy = f.transaction_code == 'P' %}
         <tr class="{{ 'row-buy' if is_buy else 'row-sell' }}">
           <td class="td">
-            <a href="/chart/{{ f.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">${{ f.issuer_ticker or '—' }}</a>
+            {% if f.issuer_ticker %}<span style="color:var(--text-3);">$</span><a href="/chart/{{ f.issuer_ticker }}" class="ticker-link" style="text-decoration:none;">{{ f.issuer_ticker }}</a>{% else %}<span class="ticker-link" style="color:var(--text-3);">—</span>{% endif %}
           </td>
           <td class="td" style="color:var(--text-2);">
             {% if f.insider_name %}
