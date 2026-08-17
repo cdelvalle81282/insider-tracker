@@ -82,7 +82,7 @@ is a research-backed weighting of how meaningful a single buy looks, added up fr
   <li><span style="color:#a855f7;font-weight:700;">CB</span> Channel Break — price breaks out of a sideways range</li>
 </ul>
 <p style="margin-top:10px;">A ✓ with "<strong>Nd</strong>" next to it means the pattern fired <strong>N days after the insider's buy</strong> — not N days ago. It only shows a checkmark if that happened within whichever forward window (15/30/45/60/90d) is currently selected at the top of the page.</p>
-<p style="margin-top:10px;">The most recent ~90 days of trades are intentionally absent from this table — each row needs a full 90-day-forward price window to score the 90-day return column, so very recent buys simply haven't had time to qualify yet. That's by design, not missing data; the live <a href="/" style="color:var(--sky);">Dashboard</a> feed and Recent Signal Triggers cover what's happened lately.</p>
+<p style="margin-top:10px;">Trades show up in this table as soon as they're filed — you don't have to wait out the full 90-day window. What's still maturing reads as N/A (a signal) or — (a return) rather than being left off: HHL and the 90d return column, for example, need a full 90 trading days after the buy before they can be scored, so a trade from last week will fill those in later, not now. That's by design, not missing data.</p>
 <p style="margin-top:10px;">Only Golden Cross currently pushes a live Slack alert — backtesting showed the other three don't have a consistent return edge measured from their own fire date. All four are still tracked here and shown as chart markers.</p>
 {% endcall %}
 

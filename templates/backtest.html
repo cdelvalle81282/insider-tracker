@@ -9,7 +9,7 @@
 <div class="mb-6">
   <h1 style="font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:.15em; color:var(--text-1);display:flex;align-items:center;">
     Backtest: Insider Buy → Trend Signals
-    {{ info_tip("For every qualifying insider buy, checks whether GC/RB/HHL/CB fired afterward and how the stock performed at 15/30/45/60/90 days out. A checkmark with \"Nd\" means the pattern fired N days AFTER the buy, not N days ago. The most recent ~90 days of trades are intentionally absent -- each row needs a full forward-return window to score, so very recent buys haven't qualified yet. See the Guide page for full definitions.") }}
+    {{ info_tip("For every qualifying insider buy, checks whether GC/RB/HHL/CB fired afterward and how the stock performed at 15/30/45/60/90 days out. A checkmark with \"Nd\" means the pattern fired N days AFTER the buy, not N days ago. Trades from the last few months show up right away, but individual signals and returns read N/A / — until enough forward trading days have passed to compute them — HHL in particular needs a full 90-day lookahead. See the Guide page for full definitions.") }}
   </h1>
   <p style="font-size:.88rem; color:var(--text-2); margin-top:4px;">
     {% if not running %}

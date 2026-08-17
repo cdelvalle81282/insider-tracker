@@ -34,7 +34,9 @@ from db import get_cli_db
 WINDOWS = [15, 30, 45, 60, 90]  # forward windows (calendar days)
 
 TRADE_START = "2024-08-01"   # earliest trade (90-day channel lookback feasible)
-TRADE_END   = (date.today() - timedelta(days=max(WINDOWS))).isoformat()
+TRADE_END   = date.today().isoformat()   # every signal/return column degrades to N/A per-row
+                                          # until it has enough forward bars, so trades don't
+                                          # need to wait out the full 90d window to appear here
 
 CACHE_DIR = Path("data/polygon_cache")
 RATE_LIMIT_SLEEP = 0.25      # seconds between live API calls (paid tier)
@@ -418,7 +420,7 @@ def main() -> None:
                     if b["date"] >= td:
                         trade_idx = i
                         break
-            if trade_idx is None or trade_idx >= len(bars) - 5:
+            if trade_idx is None:
                 continue
 
             # Per-signal computability
