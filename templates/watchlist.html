@@ -120,7 +120,15 @@
   <!-- Watched Tickers -->
   <div>
     <div class="surface" style="padding:20px;">
-      <h2 style="color:var(--text-1);font-weight:600;margin-bottom:16px;">Watched Tickers</h2>
+      <div class="flex items-center justify-between gap-2" style="margin-bottom:16px;">
+        <h2 style="color:var(--text-1);font-weight:600;">Watched Tickers</h2>
+        {% if watchlist.tickers %}
+        <button type="submit" form="tickers-bulk-form" disabled class="bulk-delete-btn"
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:.76rem;color:var(--text-3);cursor:pointer;">
+          Delete Selected
+        </button>
+        {% endif %}
+      </div>
 
       <form method="POST" action="/watchlist/add" class="flex gap-2 mb-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
@@ -136,29 +144,30 @@
       </form>
 
       {% if watchlist.tickers %}
-      <ul style="list-style:none;padding:0;margin:0;">
-        {% for item in watchlist.tickers %}
-        <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
-          <div class="flex items-center gap-3">
-            <span style="color:var(--amber);">★</span>
-            <a href="/chart/{{ item.value }}"
-               style="font-weight:700;color:var(--text-1);flex:1;text-decoration:none;">
-              ${{ item.value }}
-            </a>
-            {% if item.label and item.label != item.value %}
-            <span class="truncate" style="color:var(--text-3);font-size:.82rem;">{{ item.label }}</span>
-            {% endif %}
-            <form method="POST" action="/watchlist/remove" class="shrink-0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-              <input type="hidden" name="watch_id" value="{{ item.id }}" />
-              <button type="submit"
+      <form id="tickers-bulk-form" method="POST" action="/watchlist/remove-bulk" class="bulk-delete-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <ul style="list-style:none;padding:0;margin:0;">
+          {% for item in watchlist.tickers %}
+          <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
+            <div class="flex items-center gap-3">
+              <input type="checkbox" name="watch_ids" value="{{ item.id }}" class="bulk-select-cb" style="accent-color:var(--sky);" />
+              <span style="color:var(--amber);">★</span>
+              <a href="/chart/{{ item.value }}"
+                 style="font-weight:700;color:var(--text-1);flex:1;text-decoration:none;">
+                ${{ item.value }}
+              </a>
+              {% if item.label and item.label != item.value %}
+              <span class="truncate" style="color:var(--text-3);font-size:.82rem;">{{ item.label }}</span>
+              {% endif %}
+              <button type="submit" formaction="/watchlist/remove" formnovalidate name="watch_id" value="{{ item.id }}"
+                      class="shrink-0"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
-            </form>
-          </div>
-          <div style="margin-left:22px;margin-top:2px;">{{ activity_line(item.last_activity) }}</div>
-        </li>
-        {% endfor %}
-      </ul>
+            </div>
+            <div style="margin-left:22px;margin-top:2px;">{{ activity_line(item.last_activity) }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+      </form>
       {% else %}
       <p style="color:var(--text-3);font-size:.90rem;">No tickers watched yet. Add one above.</p>
       {% endif %}
@@ -168,37 +177,46 @@
   <!-- Watched Insiders -->
   <div>
     <div class="surface" style="padding:20px;">
-      <h2 style="color:var(--text-1);font-weight:600;margin-bottom:12px;">Watched Insiders</h2>
+      <div class="flex items-center justify-between gap-2" style="margin-bottom:12px;">
+        <h2 style="color:var(--text-1);font-weight:600;">Watched Insiders</h2>
+        {% if watchlist.insiders %}
+        <button type="submit" form="insiders-bulk-form" disabled class="bulk-delete-btn"
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:.76rem;color:var(--text-3);cursor:pointer;">
+          Delete Selected
+        </button>
+        {% endif %}
+      </div>
       <p style="color:var(--text-2);font-size:.82rem;margin-bottom:16px;">
         Add insiders from a <a href="/" style="color:var(--sky);text-decoration:none;">filing detail page</a>
         using the "Watch this insider" button. Insiders are tracked by CIK — stable even if their name changes.
       </p>
 
       {% if watchlist.insiders %}
-      <ul style="list-style:none;padding:0;margin:0;">
-        {% for item in watchlist.insiders %}
-        <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
-          <div class="flex items-center gap-3">
-            <span style="color:var(--amber);">★</span>
-            <a href="/insider/{{ item.value }}"
-               class="text-sm" style="color:var(--text-1);flex:1;text-decoration:none;">{{ item.label }}</a>
-            <span class="num" style="color:var(--text-3);font-size:.76rem;">{{ item.value[:12] }}…</span>
-            <form method="POST" action="/watchlist/remove" class="shrink-0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-              <input type="hidden" name="watch_id" value="{{ item.id }}" />
-              <button type="submit"
+      <form id="insiders-bulk-form" method="POST" action="/watchlist/remove-bulk" class="bulk-delete-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <ul style="list-style:none;padding:0;margin:0;">
+          {% for item in watchlist.insiders %}
+          <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
+            <div class="flex items-center gap-3">
+              <input type="checkbox" name="watch_ids" value="{{ item.id }}" class="bulk-select-cb" style="accent-color:var(--sky);" />
+              <span style="color:var(--amber);">★</span>
+              <a href="/insider/{{ item.value }}"
+                 class="text-sm" style="color:var(--text-1);flex:1;text-decoration:none;">{{ item.label }}</a>
+              <span class="num" style="color:var(--text-3);font-size:.76rem;">{{ item.value[:12] }}…</span>
+              <button type="submit" formaction="/watchlist/remove" formnovalidate name="watch_id" value="{{ item.id }}"
+                      class="shrink-0"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
-            </form>
-          </div>
-          <div style="margin-left:22px;margin-top:2px;">
-            {{ activity_line(item.last_activity) }}
-            {% if item.last_activity and item.last_activity.issuer_ticker %}
-            <span style="color:var(--text-3);font-size:.76rem;margin-left:4px;">· ${{ item.last_activity.issuer_ticker }}</span>
-            {% endif %}
-          </div>
-        </li>
-        {% endfor %}
-      </ul>
+            </div>
+            <div style="margin-left:22px;margin-top:2px;">
+              {{ activity_line(item.last_activity) }}
+              {% if item.last_activity and item.last_activity.issuer_ticker %}
+              <span style="color:var(--text-3);font-size:.76rem;margin-left:4px;">· ${{ item.last_activity.issuer_ticker }}</span>
+              {% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </form>
       {% else %}
       <p style="color:var(--text-3);font-size:.90rem;">No insiders watched yet.</p>
       {% endif %}
@@ -208,7 +226,15 @@
   <!-- Watched Politicians -->
   <div>
     <div class="surface" style="padding:20px;">
-      <h2 style="color:var(--text-1);font-weight:600;margin-bottom:12px;">Watched Politicians</h2>
+      <div class="flex items-center justify-between gap-2" style="margin-bottom:12px;">
+        <h2 style="color:var(--text-1);font-weight:600;">Watched Politicians</h2>
+        {% if watchlist.congress_members %}
+        <button type="submit" form="congress-bulk-form" disabled class="bulk-delete-btn"
+                style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:.76rem;color:var(--text-3);cursor:pointer;">
+          Delete Selected
+        </button>
+        {% endif %}
+      </div>
       <p style="color:var(--text-2);font-size:.82rem;margin-bottom:16px;">
         Add politicians from the <a href="/congress" style="color:var(--sky);text-decoration:none;">Congressional Trades</a>
         tab using the ★ button, or enter a name manually. Names are matched case-insensitively.
@@ -225,24 +251,25 @@
       </form>
 
       {% if watchlist.congress_members %}
-      <ul style="list-style:none;padding:0;margin:0;">
-        {% for item in watchlist.congress_members %}
-        <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
-          <div class="flex items-center gap-3">
-            <span style="color:var(--amber);">★</span>
-            <a href="/congress?politician={{ item.value | urlencode }}"
-               style="color:var(--text-1);flex:1;font-size:.92rem;text-decoration:none;">{{ item.value }}</a>
-            <form method="POST" action="/watchlist/remove" class="shrink-0">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-              <input type="hidden" name="watch_id" value="{{ item.id }}" />
-              <button type="submit"
+      <form id="congress-bulk-form" method="POST" action="/watchlist/remove-bulk" class="bulk-delete-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <ul style="list-style:none;padding:0;margin:0;">
+          {% for item in watchlist.congress_members %}
+          <li style="padding:9px 0;border-bottom:1px solid var(--border-dim);">
+            <div class="flex items-center gap-3">
+              <input type="checkbox" name="watch_ids" value="{{ item.id }}" class="bulk-select-cb" style="accent-color:var(--sky);" />
+              <span style="color:var(--amber);">★</span>
+              <a href="/congress?politician={{ item.value | urlencode }}"
+                 style="color:var(--text-1);flex:1;font-size:.92rem;text-decoration:none;">{{ item.value }}</a>
+              <button type="submit" formaction="/watchlist/remove" formnovalidate name="watch_id" value="{{ item.id }}"
+                      class="shrink-0"
                       style="background:none;border:none;cursor:pointer;font-size:.85rem;color:var(--text-3);">✕</button>
-            </form>
-          </div>
-          <div style="margin-left:22px;margin-top:2px;">{{ congress_activity_line(item.last_activity) }}</div>
-        </li>
-        {% endfor %}
-      </ul>
+            </div>
+            <div style="margin-left:22px;margin-top:2px;">{{ congress_activity_line(item.last_activity) }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+      </form>
       {% else %}
       <p style="color:var(--text-3);font-size:.90rem;">No politicians watched yet.</p>
       {% endif %}
@@ -250,5 +277,37 @@
   </div>
 
 </div>
+
+<script>
+  document.querySelectorAll('.bulk-delete-form').forEach(function (form) {
+    var btn = document.querySelector('.bulk-delete-btn[form="' + form.id + '"]');
+    if (!btn) return;
+    var sync = function () {
+      var checked = form.querySelectorAll('.bulk-select-cb:checked').length;
+      btn.disabled = checked === 0;
+      btn.style.opacity = checked === 0 ? '0.5' : '1';
+      btn.style.color = checked === 0 ? 'var(--text-3)' : 'var(--sell)';
+      btn.style.borderColor = checked === 0 ? 'var(--border)' : 'var(--sell)';
+      btn.textContent = checked === 0 ? 'Delete Selected' : 'Delete Selected (' + checked + ')';
+    };
+    form.addEventListener('change', function (e) {
+      if (e.target.classList.contains('bulk-select-cb')) sync();
+    });
+    form.addEventListener('submit', function (e) {
+      var submitter = e.submitter;
+      var isBulk = !submitter || submitter === btn;
+      if (isBulk && form.querySelectorAll('.bulk-select-cb:checked').length === 0) {
+        e.preventDefault();
+        return;
+      }
+      if (!confirm(isBulk
+        ? 'Remove ' + form.querySelectorAll('.bulk-select-cb:checked').length + ' selected item(s) from the watchlist?'
+        : 'Remove this item from the watchlist?')) {
+        e.preventDefault();
+      }
+    });
+    sync();
+  });
+</script>
 
 {% endblock %}

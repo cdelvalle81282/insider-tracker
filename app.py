@@ -1894,6 +1894,27 @@ async def watchlist_remove(
     return RedirectResponse(url="/watchlist", status_code=303)
 
 
+@app.post("/watchlist/remove-bulk")
+async def watchlist_remove_bulk(
+    request: Request,
+    db: psycopg.Connection = Depends(get_request_db),
+):
+    form = await request.form()
+    raw_ids = form.getlist("watch_ids")
+    try:
+        watch_ids = [int(v) for v in raw_ids]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid watch_ids")
+    if not watch_ids:
+        raise HTTPException(status_code=400, detail="No entries selected")
+    # The owner predicate is inside the DELETE (same as watchlist_remove), so a
+    # subscriber cannot remove rows they do not own by guessing ids in the batch.
+    owner = require_watch_owner(request)
+    queries.remove_watch_bulk(db, watch_ids, owner=owner)
+    cache_module.invalidate_owner_cache(owner)
+    return RedirectResponse(url="/watchlist", status_code=303)
+
+
 @app.post("/watchlist/toggle", response_class=HTMLResponse)
 async def watchlist_toggle(
     request: Request,

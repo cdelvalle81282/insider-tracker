@@ -673,6 +673,21 @@ def remove_watch(conn: psycopg.Connection, watch_id: int, *, owner: str) -> bool
     return cur.rowcount > 0
 
 
+def remove_watch_bulk(conn: psycopg.Connection, watch_ids: list[int], *, owner: str) -> int:
+    """Delete multiple rows, but only ones `owner` holds. Returns rows removed.
+
+    Same owner-in-the-DELETE pattern as remove_watch: a subscriber cannot
+    delete rows they do not own by passing someone else's ids in the batch.
+    """
+    assert conn.autocommit, "remove_watch_bulk requires an autocommit connection"
+    if not watch_ids:
+        return 0
+    cur = conn.execute(
+        "DELETE FROM watchlist WHERE id = ANY(%s) AND owner = %s", [watch_ids, owner]
+    )
+    return cur.rowcount
+
+
 def toggle_watch(
     conn: psycopg.Connection,
     watch_type: str,
