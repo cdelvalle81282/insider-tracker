@@ -629,24 +629,43 @@ def main(target_date, backfill, backfill_days, since_last_run, resolve_amendment
             ]
             total = len(work)
             click.echo(f"Updating last_close for {total} tickers ...")
+
+            # One grouped-daily call covers the whole US market instead of one
+            # request per ticker — at 5876+ tracked tickers the old per-ticker
+            # loop (12s sleep, Polygon free-tier rate limit) took ~19.6 hours
+            # and chronically blew past the Prices Pull heartbeat's grace period.
+            # Step back from the most recent completed trading day (yesterday in
+            # UTC == the ET session this job runs shortly after) to skip weekends
+            # and market holidays, which return an empty result set.
+            closes: dict[str, float] | None = None
+            probe_date = date.today() - timedelta(days=1)
+            for _ in range(5):
+                closes = polygon_client.get_grouped_daily_close(probe_date, POLYGON_API_KEY)
+                if closes:
+                    break
+                probe_date -= timedelta(days=1)
+
+            if not closes:
+                click.echo("Error: no grouped-daily data found in the last 5 trading days.", err=True)
+                return
+
             updated = 0
-            for i, ticker in enumerate(work, start=1):
-                close = polygon_client.fetch_latest_close(ticker, POLYGON_API_KEY)
+            missing = 0
+            for ticker in work:
+                close = closes.get(ticker)
                 if close is not None:
                     conn.execute(
                         "UPDATE ticker_metadata SET last_close=%s, last_close_at=%s WHERE ticker=%s",
                         [close, today_iso, ticker],
                     )
                     updated += 1
-                    click.echo(f"[{i}/{total}] {ticker} → {close}")
                 else:
-                    click.echo(f"[{i}/{total}] {ticker} → no data")
-                if i % 10 == 0:
-                    conn.commit()
-                if i < total:
-                    time.sleep(12)  # Polygon free tier: ~5 req/min
+                    missing += 1
             conn.commit()
-            click.echo(f"Done. Updated {updated}/{total} tickers.")
+            click.echo(
+                f"Done. Updated {updated}/{total} tickers from {probe_date.isoformat()} "
+                f"grouped close ({missing} not found in Polygon's response)."
+            )
             _write_sentinel()
             _ping_heartbeat(os.getenv("PRICES_HEARTBEAT_URL"))
             return

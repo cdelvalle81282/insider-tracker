@@ -141,6 +141,29 @@ def fetch_ticker_metadata(ticker: str, api_key: str) -> dict | None:
     return {"market_cap": market_cap, "has_options": has_options}
 
 
+def get_grouped_daily_close(target_date: date, api_key: str) -> dict[str, float] | None:
+    """
+    Fetch close prices for every US stock ticker on one trading day in a single
+    API call (Polygon's grouped-daily-bars endpoint). Returns {ticker: close} or
+    None if the market was closed that day (holiday/weekend) or the call failed —
+    callers should step back a day and retry rather than treating None as fatal.
+    """
+    if not api_key:
+        return None
+    url = f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{target_date.isoformat()}"
+    try:
+        resp = httpx.get(url, params={"apiKey": api_key, "adjusted": "true"}, timeout=30.0)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+
+    results = data.get("results") or []
+    if not results:
+        return None
+    return {r["T"]: r["c"] for r in results if "T" in r and "c" in r}
+
+
 def fetch_latest_close(ticker: str, api_key: str) -> float | None:
     """Most recent daily close price. Returns None on any error or missing data."""
     if not api_key:
