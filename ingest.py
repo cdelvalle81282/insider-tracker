@@ -219,39 +219,35 @@ def fetch_index_for_date(client: httpx.Client, target_date: date) -> list[dict]:
 def fetch_xml_url(client: httpx.Client, filename: str) -> tuple[str, bytes]:
     """
     Given an index filename like edgar/data/123/0001234-26-000001.txt,
-    fetch the filing index page to find the actual XML document URL,
+    list the accession folder to find the actual XML document URL,
     then fetch and return (xml_url, xml_bytes).
+
+    Uses the folder's index.json rather than the -index.htm filing page:
+    since 2026-10-05 EDGAR's CDN answers 403 for every -index.htm URL
+    (from any IP, with the compliant User-Agent), while directory
+    listings and the documents themselves are still served.
     """
-    index_url = f"{EDGAR_BASE}/Archives/{filename}".replace(".txt", "-index.htm")
+    accession = filename.split("/")[-1].replace(".txt", "")
+    accession_nodash = accession.replace("-", "")
+    cik = filename.split("/")[2]
+    folder_url = f"{EDGAR_BASE}/Archives/edgar/data/{cik}/{accession_nodash}"
+
     time.sleep(RATE_SLEEP)
-    resp = client.get(index_url)
+    resp = client.get(f"{folder_url}/index.json")
     resp.raise_for_status()
 
-    # Parse href attributes to find the raw XML doc (not XSLT-rendered, not XSD)
+    # Pick the raw Form 4 XML (not the XSLT-rendered copy, not the XSD)
     xml_url = None
-    for line in resp.text.splitlines():
-        if 'href=' not in line or '.xml' not in line.lower():
-            continue
-        # Skip XSLT viewer links (contain xslF345 or similar)
-        if 'xsl' in line.lower():
-            continue
-        # Extract href value
-        for chunk in line.split('href="'):
-            if not chunk.startswith('/'):
-                continue
-            href = chunk.split('"')[0]
-            if href.lower().endswith('.xml') and 'xsd' not in href.lower():
-                xml_url = f"{EDGAR_BASE}{href}"
-                break
-        if xml_url:
+    for item in resp.json().get("directory", {}).get("item", []):
+        name = item.get("name", "")
+        lname = name.lower()
+        if lname.endswith(".xml") and "xsl" not in lname and "xsd" not in lname:
+            xml_url = f"{folder_url}/{name}"
             break
 
     # Fallback: accession-number.xml inside the accession folder
     if xml_url is None:
-        accession = filename.split("/")[-1].replace(".txt", "")
-        accession_nodash = accession.replace("-", "")
-        cik = filename.split("/")[2]
-        xml_url = f"{EDGAR_BASE}/Archives/edgar/data/{cik}/{accession_nodash}/{accession}.xml"
+        xml_url = f"{folder_url}/{accession}.xml"
 
     time.sleep(RATE_SLEEP)
     xml_resp = client.get(xml_url)
