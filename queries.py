@@ -2315,3 +2315,53 @@ def usage_summary(conn: psycopg.Connection, days: int = 30) -> dict:
         "watch_adds": [dict(r) for r in watch_adds],
         "daily": [dict(r) for r in daily],
     }
+
+
+# ---------------------------------------------------------------------------
+# Schedule 13D ownership positions
+# ---------------------------------------------------------------------------
+
+def get_ownership_positions(conn: psycopg.Connection, person_cik: str) -> list[dict]:
+    """Every 13D / 13D/A position a person has reported, newest first, with the
+    change versus their previous filing on the same issuer.
+
+    A 13D is a snapshot of aggregate holdings, not a trade, so the "change" is
+    inferred from successive snapshots. The first filing in a series reads as a
+    new position; a snapshot under 5% is the exit filing.
+    """
+    rows = conn.execute(
+        """
+        SELECT f.accession_no, f.form_type, f.filed_at, f.event_date,
+               f.issuer_cik, f.issuer_name, f.issuer_ticker,
+               p.aggregate_owned, p.pct_class,
+               LAG(p.aggregate_owned) OVER w AS prev_owned,
+               LAG(p.pct_class)       OVER w AS prev_pct
+        FROM ownership_filing_person p
+        JOIN ownership_filing f USING (accession_no)
+        WHERE p.person_cik = %s
+        WINDOW w AS (
+            PARTITION BY f.issuer_cik
+            ORDER BY COALESCE(f.event_date, f.filed_at), f.filed_at, f.accession_no
+        )
+        ORDER BY COALESCE(f.event_date, f.filed_at) DESC, f.filed_at DESC
+        """,
+        [person_cik],
+    ).fetchall()
+
+    out: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        owned, prev = d["aggregate_owned"], d["prev_owned"]
+        pct = d["pct_class"]
+        if pct is not None and float(pct) < 5:
+            label = "below 5% (exit)"
+        elif prev is None:
+            label = "new position"
+        elif owned is None:
+            label = ""
+        else:
+            delta = int(owned) - int(prev)
+            label = f"{delta:+,} sh" if delta else "no change"
+        d["change_label"] = label
+        out.append(d)
+    return out
