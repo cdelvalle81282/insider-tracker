@@ -166,6 +166,17 @@ def ingest_date(conn: psycopg.Connection, target_date: date) -> IngestResult:
     return result
 
 
+def _fresh(conn: psycopg.Connection) -> psycopg.Connection:
+    """Return conn if it is still usable, else a new pooled connection."""
+    if not conn.closed and not conn.broken:
+        return conn
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return get_cli_db()
+
+
 def _report(conn: psycopg.Connection, cik: str) -> None:
     rows = queries.get_ownership_positions(conn, cik.zfill(10))
     if not rows:
@@ -220,6 +231,7 @@ def main(target_date, backfill, since_last_run, report_cik):
             if d < STRUCTURED_START:
                 click.echo(f"Skipping {d}: before structured 13D XML ({STRUCTURED_START})")
                 continue
+            conn = _fresh(conn)
             started_at = datetime.now(timezone.utc).isoformat()
             click.echo(f"Ingesting 13D {d} ...", nl=False)
             try:
@@ -227,17 +239,29 @@ def main(target_date, backfill, since_last_run, report_cik):
                 err, found, ins, detail = res.errors, res.filings_found, res.rows_inserted, res.error_detail
                 click.echo(f" {found} filings, {ins} stored, {err} errors")
             except Exception as exc:
-                conn.rollback()
                 err, found, ins, detail = 1, 0, 0, str(exc)
                 click.echo(f" ERROR: {exc}")
-            conn.execute(
-                """INSERT INTO run_log (started_at, finished_at, date_processed,
-                   filings_found, rows_inserted, errors, error_detail, run_kind)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                (started_at, datetime.now(timezone.utc).isoformat(), d.isoformat(),
-                 found, ins, err, detail or None, run_kind),
-            )
-            conn.commit()
+                try:
+                    conn.rollback()
+                except psycopg.Error:
+                    conn = _fresh(conn)
+            # A long backfill must survive one dropped connection: reconnect and
+            # retry the run_log write once rather than dying mid-range.
+            for attempt in (1, 2):
+                try:
+                    conn.execute(
+                        """INSERT INTO run_log (started_at, finished_at, date_processed,
+                           filings_found, rows_inserted, errors, error_detail, run_kind)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (started_at, datetime.now(timezone.utc).isoformat(), d.isoformat(),
+                         found, ins, err, detail or None, run_kind),
+                    )
+                    conn.commit()
+                    break
+                except psycopg.Error:
+                    if attempt == 2:
+                        raise
+                    conn = _fresh(conn)
 
         _write_sentinel()
     finally:

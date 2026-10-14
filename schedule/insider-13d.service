@@ -1,0 +1,12 @@
+[Unit]
+Description=Insider Tracker — Schedule 13D ingest (structured XML)
+After=network.target
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/home/deploy/insider-tracker
+ExecStart=/home/deploy/insider-tracker/.venv/bin/python ingest_13d.py --since-last-run
+EnvironmentFile=-/home/deploy/insider-tracker/.env
+StandardOutput=journal
+StandardError=journal

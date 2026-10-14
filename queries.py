@@ -2331,7 +2331,7 @@ def get_ownership_positions(conn: psycopg.Connection, person_cik: str) -> list[d
     """
     rows = conn.execute(
         """
-        SELECT f.accession_no, f.form_type, f.filed_at, f.event_date,
+        SELECT f.accession_no, f.form_type, f.is_amendment, f.filed_at, f.event_date,
                f.issuer_cik, f.issuer_name, f.issuer_ticker,
                p.aggregate_owned, p.pct_class,
                LAG(p.aggregate_owned) OVER w AS prev_owned,
@@ -2356,7 +2356,9 @@ def get_ownership_positions(conn: psycopg.Connection, person_cik: str) -> list[d
         if pct is not None and float(pct) < 5:
             label = "below 5% (exit)"
         elif prev is None:
-            label = "new position"
+            # An amendment with no earlier row in our window is not a new
+            # stake, it is a stake whose original filing we never saw.
+            label = "amended (no prior in DB)" if d["is_amendment"] else "new position"
         elif owned is None:
             label = ""
         else:

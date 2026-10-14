@@ -1,0 +1,10 @@
+[Unit]
+Description=Insider Tracker — Schedule 13D ingest at 03:30 UTC (after the 03:00 Form 4 nightly)
+
+[Timer]
+OnCalendar=Mon-Sat 03:30
+Persistent=true
+Unit=insider-13d.service
+
+[Install]
+WantedBy=timers.target
