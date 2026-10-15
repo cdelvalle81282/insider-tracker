@@ -130,6 +130,58 @@
 </div>
 {% endif %}
 
+<!-- ── Outside positions (Schedule 13D) ───────────────────────────── -->
+{% if positions %}
+<details open class="mb-6">
+  <summary class="flex items-center gap-2 cursor-pointer select-none mb-3">
+    <span class="caret">▶</span>
+    <span class="sh" style="color:var(--text-2);">
+      <span class="sh-dot" style="background:var(--amber);"></span>
+      Outside Positions (Schedule 13D)
+    </span>
+    <span class="num" style="font-size:.74rem;color:var(--text-3);margin-left:2px;">({{ positions | length }})</span>
+  </summary>
+
+  <div class="tbl-wrap">
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="th text-left">Ticker</th>
+          <th class="th text-left">Company</th>
+          <th class="th text-center">Filing</th>
+          <th class="th text-right">Shares</th>
+          <th class="th text-right">% of Class</th>
+          <th class="th text-left">Change</th>
+          <th class="th text-right">Event</th>
+          <th class="th text-right">Filed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pos in positions %}
+        <tr>
+          <td class="td">
+            {% if pos.issuer_ticker %}
+            <a href="/issuer/{{ pos.issuer_ticker }}" class="ticker-link">{{ pos.issuer_ticker }}</a>
+            {% else %}<span style="color:var(--text-3);">n/a</span>{% endif %}
+          </td>
+          <td class="td" style="font-size:.82rem;">{{ pos.issuer_name or pos.issuer_cik }}</td>
+          <td class="td text-center" style="font-size:.78rem;color:var(--text-2);">{{ pos.form_type | replace('SCHEDULE ', '') }}</td>
+          <td class="td num text-right">{% if pos.aggregate_owned is not none %}{{ "{:,}".format(pos.aggregate_owned | int) }}{% else %}?{% endif %}</td>
+          <td class="td num text-right">{% if pos.pct_class is not none %}{{ "%.1f" | format(pos.pct_class | float) }}%{% else %}?{% endif %}</td>
+          <td class="td" style="font-size:.8rem;color:var(--text-2);">{{ pos.change_label }}</td>
+          <td class="td num text-right" style="color:var(--text-2);font-size:.82rem;white-space:nowrap;">{{ pos.event_date or '' }}</td>
+          <td class="td num text-right" style="color:var(--text-3);font-size:.82rem;white-space:nowrap;">{{ pos.filed_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p style="margin-top:.6rem;font-size:.72rem;color:var(--text-3);">
+    A 13D reports total holdings at a point in time, not individual trades, so "Change" compares against this person's previous 13D on the same company. Latest filing per company; structured filings from December 2024 onward only.
+  </p>
+</details>
+{% endif %}
+
 <!-- ── Trades table ───────────────────────────────────────────────── -->
 {% if not history %}
 <div class="text-center py-16" style="color:var(--text-3);">

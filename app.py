@@ -1403,11 +1403,20 @@ async def insider_view(
     history = queries.get_insider_full_history(db, cik, ctx=ctx)
     summary = queries.get_insider_summary(db, cik)
     perf_profile = queries.get_insider_perf_profile(db, cik)
+    # Newest-first, so the first row seen per issuer is that person's current
+    # stake there; older 13D/As on the same issuer only drive the change label.
+    positions: list[dict] = []
+    seen_issuers: set[str] = set()
+    for pos in queries.get_ownership_positions(db, cik):
+        if pos["issuer_cik"] not in seen_issuers:
+            seen_issuers.add(pos["issuer_cik"])
+            positions.append(pos)
     name = history[0]["insider_name"] if history else cik
     return templates.TemplateResponse(request, "insider.html", {
         "history": history,
         "summary": summary,
         "perf_profile": perf_profile,
+        "positions": positions,
         "name": name,
         "cik": cik,
     })
