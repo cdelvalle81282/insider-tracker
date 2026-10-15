@@ -30,42 +30,62 @@ import psycopg
 
 from db import get_cli_db
 
-_DROP = frozenset({
-    "JR", "SR", "II", "III", "IV", "MR", "MRS", "MS", "DR", "ESQ", "PHD", "MD", "CPA",
-    "LLC", "LP", "INC", "LTD", "CORP", "THE",
-})
+# Personal-name suffixes. Dropped for individuals only: "II"/"III" are what tell
+# "KKR Group Assets II GP" from "KKR Group Assets III GP", so entities keep them.
+_PERSON_SUFFIX = frozenset({"JR", "SR", "II", "III", "IV", "MR", "MRS", "MS", "DR", "ESQ", "PHD", "MD", "CPA"})
+_ENTITY_SUFFIX = frozenset({"LLC", "LP", "LLP", "INC", "LTD", "CORP", "THE"})
 
 WEAK_RULES = frozenset({"ownership_name", "form4_name"})
 
+Key = tuple[bool, frozenset]  # (is_individual, tokens)
 
-def _tokens(name: str) -> list[str]:
+
+def _tokens(name: str, individual: bool) -> list[str]:
     cleaned = re.sub(r"[^A-Z0-9 ]", " ", (name or "").upper())
-    return [t for t in cleaned.split() if t not in _DROP]
+    toks = cleaned.split()
+    if not individual:
+        # "L. P." / "L.L.C." arrive as runs of single letters; join them so they
+        # read the same as "LP" / "LLC" and drop out as suffixes below.
+        merged: list[str] = []
+        run = ""
+        for t in toks:
+            if len(t) == 1 and t.isalpha():
+                run += t
+                continue
+            if run:
+                merged.append(run)
+                run = ""
+            merged.append(t)
+        if run:
+            merged.append(run)
+        toks = merged
+    drop = _PERSON_SUFFIX if individual else _ENTITY_SUFFIX
+    return [t for t in toks if t not in drop]
 
 
-def key_core(name: str) -> frozenset[str] | None:
-    """Name as a set of tokens, ignoring order, initials and suffixes.
+def key_core(name: str, individual: bool) -> Key | None:
+    """Name as an order-free token set. For individuals, initials are ignored, so
+    "Kenneth R. Lehman" and "LEHMAN KENNETH R" collapse to the same key."""
+    toks = _tokens(name, individual)
+    if individual:
+        toks = [t for t in toks if len(t) > 1]
+    return (individual, frozenset(toks)) if len(toks) >= 2 else None
 
-    "Kenneth R. Lehman" and "LEHMAN KENNETH R" collapse to the same key.
-    """
-    toks = [t for t in _tokens(name) if len(t) > 1]
-    return frozenset(toks) if len(toks) >= 2 else None
 
-
-def key_full(name: str) -> frozenset[str] | None:
+def key_full(name: str, individual: bool) -> Key | None:
     """Like key_core but keeps initials and requires 3+ tokens (more specific)."""
-    toks = _tokens(name)
-    return frozenset(toks) if len(toks) >= 3 else None
+    toks = _tokens(name, individual)
+    return (individual, frozenset(toks)) if len(toks) >= 3 else None
 
 
 @dataclass
 class Maps:
     manual: dict[str, str] = field(default_factory=dict)
-    f4_issuer: dict[tuple[str, frozenset], set[str]] = field(default_factory=lambda: defaultdict(set))
-    own_issuer: dict[tuple[str, frozenset], set[str]] = field(default_factory=lambda: defaultdict(set))
-    own_core: dict[frozenset, set[str]] = field(default_factory=lambda: defaultdict(set))
-    own_full: dict[frozenset, set[str]] = field(default_factory=lambda: defaultdict(set))
-    f4_full: dict[frozenset, set[str]] = field(default_factory=lambda: defaultdict(set))
+    f4_issuer: dict[tuple[str, Key], set[str]] = field(default_factory=lambda: defaultdict(set))
+    own_issuer: dict[tuple[str, Key], set[str]] = field(default_factory=lambda: defaultdict(set))
+    own_core: dict[Key, set[str]] = field(default_factory=lambda: defaultdict(set))
+    own_full: dict[Key, set[str]] = field(default_factory=lambda: defaultdict(set))
+    f4_full: dict[Key, set[str]] = field(default_factory=lambda: defaultdict(set))
 
 
 def _unique(ciks: set[str] | None) -> str | None:
@@ -77,9 +97,9 @@ def resolve(name: str, issuer_cik: str, person_type: str | None, m: Maps) -> tup
     if name in m.manual:
         return m.manual[name], "manual"
 
-    core = key_core(name)
-    full = key_full(name)
     individual = person_type == "IN"
+    core = key_core(name, individual)
+    full = key_full(name, individual)
 
     if core:
         hit = _unique(m.f4_issuer.get((issuer_cik, core)))
@@ -113,7 +133,10 @@ def load_maps(conn: psycopg.Connection) -> Maps:
         """SELECT DISTINCT insider_cik, insider_name, issuer_cik FROM filings
            WHERE is_officer = 1 OR is_director = 1 OR is_ten_percent_owner = 1"""
     ).fetchall():
-        core, full = key_core(r["insider_name"] or ""), key_full(r["insider_name"] or "")
+        # Form 4 names are indexed as individuals only, so an entity 13D row can
+        # never be linked to a Form 4 insider by name (it needs ownership_* or manual).
+        core = key_core(r["insider_name"] or "", True)
+        full = key_full(r["insider_name"] or "", True)
         if core:
             m.f4_issuer[(r["issuer_cik"], core)].add(r["insider_cik"])
         if full:
@@ -124,12 +147,13 @@ def load_maps(conn: psycopg.Connection) -> Maps:
            FROM ownership_filing_person p JOIN ownership_filing f USING (accession_no)
            WHERE p.person_cik IS NOT NULL"""
     ).fetchall():
-        core, full = key_core(r["person_name"]), key_full(r["person_name"])
+        ind = r["person_type"] == "IN"
+        core, full = key_core(r["person_name"], ind), key_full(r["person_name"], ind)
         if core:
             m.own_issuer[(r["issuer_cik"], core)].add(r["person_cik"])
-            if r["person_type"] != "IN":
+            if not ind:
                 m.own_core[core].add(r["person_cik"])
-        if full and r["person_type"] == "IN":
+        if full and ind:
             m.own_full[full].add(r["person_cik"])
     return m
 
