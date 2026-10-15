@@ -263,6 +263,17 @@ def main(target_date, backfill, since_last_run, report_cik):
                         raise
                     conn = _fresh(conn)
 
+        # Attach CIKs to no-CIK reporting persons from the new filings. Non-fatal:
+        # an unresolved row only means a person is not linked yet.
+        try:
+            from resolve_13d_persons import resolve_persons
+            counts = resolve_persons(conn)
+            conn.commit()
+            click.echo("Resolved reporting persons: "
+                       + ", ".join(f"{k}={v}" for k, v in counts.most_common()))
+        except Exception as exc:
+            click.echo(f"Person resolution error (non-fatal): {exc}")
+
         _write_sentinel()
     finally:
         conn.close()

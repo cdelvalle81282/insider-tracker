@@ -2333,12 +2333,12 @@ def get_ownership_positions(conn: psycopg.Connection, person_cik: str) -> list[d
         """
         SELECT f.accession_no, f.form_type, f.is_amendment, f.filed_at, f.event_date,
                f.issuer_cik, f.issuer_name, f.issuer_ticker,
-               p.aggregate_owned, p.pct_class,
+               p.aggregate_owned, p.pct_class, p.resolved_via,
                LAG(p.aggregate_owned) OVER w AS prev_owned,
                LAG(p.pct_class)       OVER w AS prev_pct
         FROM ownership_filing_person p
         JOIN ownership_filing f USING (accession_no)
-        WHERE p.person_cik = %s
+        WHERE COALESCE(p.person_cik, p.resolved_cik) = %s
         WINDOW w AS (
             PARTITION BY f.issuer_cik
             ORDER BY COALESCE(f.event_date, f.filed_at), f.filed_at, f.accession_no
