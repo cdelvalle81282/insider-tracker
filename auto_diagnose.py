@@ -30,6 +30,9 @@ from ingest import INGEST_SENTINEL
 SERVICE = "insider-tracker.service"
 _LOG = logging.getLogger(__name__)
 
+# Was claude-opus-4-7 until 2026-11-18; Opus 5.5 is cheaper ($4/$20 vs $5/$25).
+DIAGNOSE_MODEL = "claude-opus-5-5"
+
 # Seconds to wait after restarting the service before checking its status.
 _RESTART_SETTLE = 3
 
@@ -152,7 +155,8 @@ def analyze(diagnostics: dict, alert_info: dict) -> dict:
         }
 
     import anthropic  # deferred — only installed on server
-    client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+    # Opus 5.5 always thinks, so allow more time than a bare answer needs.
+    client = anthropic.Anthropic(api_key=api_key, timeout=180.0)
 
     prompt = f"""You are an autonomous ops agent for the Insider Scanner application.
 Stack: FastAPI + PostgreSQL 16 + uvicorn (2 workers) on a DigitalOcean droplet.
@@ -179,12 +183,30 @@ Rules for safe_auto_fixes — only include these exact strings if clearly warran
 manual_actions should be specific, actionable steps a developer can take.
 Be conservative: prefer doing nothing over taking risky auto-actions."""
 
-    msg = client.messages.create(
-        model="claude-opus-4-7",
-        max_tokens=800,
+    # Opus 5.5: thinking is always on and counts toward max_tokens (the old 800
+    # cap would truncate), and effort defaults to medium, so set it explicitly.
+    # fallbacks="default" re-runs a safety-classifier decline on the model
+    # Anthropic recommends for that category; diagnostics full of crash and
+    # security wording are the kind of input that can trip the cyber classifier.
+    msg = client.beta.messages.create(
+        model=DIAGNOSE_MODEL,
+        max_tokens=8000,
+        output_config={"effort": "high"},
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = msg.content[0].text.strip()
+    if msg.stop_reason != "end_turn":
+        # refusal (whole fallback chain declined) or max_tokens: no usable JSON.
+        return {
+            "root_cause": f"Claude did not finish the diagnosis (stop_reason={msg.stop_reason})",
+            "severity": "unknown",
+            "safe_auto_fixes": [],
+            "manual_actions": ["Check server logs manually — auto-diagnosis did not complete"],
+            "diagnosis_summary": f"Auto-diagnosis stopped early ({msg.stop_reason}); no automatic action taken.",
+        }
+    # A response can start with thinking blocks; the answer is the text blocks.
+    raw = "".join(b.text for b in msg.content if b.type == "text").strip()
     # Strip markdown code fences if the model wrapped the JSON
     raw = re.sub(r"^```\w*\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw).strip()
